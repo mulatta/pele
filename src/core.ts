@@ -8,6 +8,7 @@ import type { DiagramModel } from './models.js';
 import { palette, withPalette } from './svg/palette.js';
 import { mountWith, type MountOptions, type Mounted } from './mount.js';
 import type { Diagram, RenderOptions, RenderResult } from './types.js';
+import { SceneSink, withSink, type Scene } from './scene/sink.js';
 
 export { PeleError } from './errors.js';
 export type { PeleErrorCode } from './errors.js';
@@ -18,6 +19,7 @@ export type { Diagram } from './types.js';
 export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
 export { enableZoom } from './zoom.js';
+export type { Scene, SceneShape, SceneText, SceneItem } from './scene/sink.js';
 export type { Zoom, ZoomOptions } from './zoom.js';
 
 const diagrams = new Map<DiagramType, Diagram<unknown>>();
@@ -185,6 +187,57 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
     }
     for (const link of rendered.links) link.id = decodeEntities(link.id);
     return { type, mermaidType, ...rendered };
+  });
+}
+
+// Diagram types whose renderer draws straight into a scene.
+const SCENE_TYPES = new Set<DiagramType>(['flowchart']);
+
+// Whether renderScene() can draw this text without going through SVG.
+export function sceneSupported(source: string | DiagramModel): boolean {
+  try {
+    const type = typeof source === 'string' ? detectType(source) : parsedFrom(source, {}).type;
+    return type !== null && SCENE_TYPES.has(type) && diagrams.has(type);
+  } catch {
+    return false;
+  }
+}
+
+export interface SceneResult {
+  type: DiagramType;
+  mermaidType: MermaidType;
+  scene: Scene;
+  width: number;
+  height: number;
+  links: RenderResult['links'];
+}
+
+// Draws a diagram as a renderer-neutral vector scene instead of SVG text. Throws a PeleError with
+// code 'unsupported' for a type that cannot (see sceneSupported); render() still draws those.
+export function renderScene(source: string | DiagramModel, options: RenderOptions = {}): SceneResult {
+  return guarded(() => {
+    const { type, mermaidType, diagram, model, config } = parsedFrom(source, options);
+    if (!SCENE_TYPES.has(type)) {
+      throw new PeleError(`${type} diagrams cannot be drawn as a scene yet.`, 'unsupported-diagram', { type, mermaidType });
+    }
+    const section = config[diagram.section ?? type];
+    const fixed = typeof section === 'object' && section !== null && !Array.isArray(section) && section.useMaxWidth === false;
+    const responsive = options.responsive ?? !fixed;
+    const resolve = options.icons;
+    const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
+    const sink = new SceneSink();
+    const rendered = tagErrors({ type, mermaidType }, () =>
+      withSink(sink, () =>
+        withPalette(palette(type, config), () =>
+          withMath(diagram.math ? options.math : undefined, () =>
+            withIcons(icons, () => diagram.render(model, config, { ...options, responsive, icons }))
+          )
+        )
+      )
+    );
+    if (!rendered.scene) throw new PeleError(`${type} drew no scene.`, 'unsupported-diagram', { type, mermaidType });
+    for (const link of rendered.links) link.id = decodeEntities(link.id);
+    return { type, mermaidType, scene: rendered.scene, width: rendered.width, height: rendered.height, links: rendered.links };
   });
 }
 

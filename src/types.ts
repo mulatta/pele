@@ -1,3 +1,4 @@
+import type { Scene } from './scene/sink.js';
 import type { DiagramType, MermaidType } from './detect.js';
 import type { Config } from './preprocess.js';
 import type { TextMeasurer } from './text/measurer.js';
@@ -59,6 +60,8 @@ export interface Rendered {
   width: number;
   height: number;
   links: LinkInfo[];
+  // Set instead of `svg` when the diagram was drawn with a scene sink.
+  scene?: Scene;
 }
 
 export interface RenderResult extends Rendered {
