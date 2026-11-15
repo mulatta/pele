@@ -226,9 +226,3 @@ export class SvgOut implements Out {
     return this.svg;
   }
 }
-
-// Ends a drawing that a renderer wrote as SVG text, handing the text over as one fragment.
-export function documentOf(out: Out, type: string, width: number, height: number, fontSize: number, options: RenderOptions, acc: Accessible, content: string): string {
-  out.fragment(content);
-  return out.done(type, width, height, fontSize, options, acc);
-}

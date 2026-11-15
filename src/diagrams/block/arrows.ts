@@ -1,5 +1,3 @@
-import { num } from '../../svg/builder.js';
-
 export const RIGHT = 1;
 export const LEFT = 2;
 export const UP = 4;
@@ -80,7 +78,8 @@ export function arrowSize(mask: number, tw: number, th: number): ArrowSize {
   };
 }
 
-export function drawArrow(mask: number, w: number, h: number, attrs: string): string {
+// The outline's corners as x, y pairs around the center.
+export function arrowPoints(mask: number, w: number, h: number): number[] {
   const axis = arrowAxis(mask);
   const x = w / 2;
   const y = h / 2;
@@ -121,7 +120,5 @@ export function drawArrow(mask: number, w: number, h: number, attrs: string): st
     p.push(x0, y1);
     if (mask & LEFT) p.push(x0, cy + ky, -x, cy, x0, cy - ky);
   }
-  let points = '';
-  for (let i = 0; i < p.length; i += 2) points += (i ? ' ' : '') + num(p[i]) + ',' + num(p[i + 1]);
-  return `<polygon points="${points}" stroke-linejoin="round"${attrs}/>`;
+  return p;
 }

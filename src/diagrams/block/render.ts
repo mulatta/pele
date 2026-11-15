@@ -1,9 +1,8 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
+import { Paint, type Out } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { ARROW, casingsSvg, edgeCasing, edgeLabelSvg, marker, markerTrim, overFills, type EdgePath, type Fill } from '../../svg/edges.js';
+import { num } from '../../svg/builder.js';
+import { ARROW, CASINGS_ATTRS, casingAttrs, marker, markerTrim, overFills, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { drawShape, shapeFilled, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -11,13 +10,26 @@ import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered } from '../../types.js';
 import { tighten, titleRoom } from '../common/fit-width.js';
-import { OVERHANG, arrowAxis, arrowMask, arrowSize, drawArrow } from './arrows.js';
+import { OVERHANG, arrowAxis, arrowMask, arrowPoints, arrowSize } from './arrows.js';
 import { layout, type Cell } from './layout.js';
 import type { Block, BlockModel } from './types.js';
 
 const GAP = 12;
 const WRAP = 200;
 const CORNER = 8;
+// Attribute text comes from a few styles, so a scene reads each once instead of once per use.
+const PAINTS = new Map<string, Paint>();
+function paint(attrs: string): Paint {
+  let p = PAINTS.get(attrs);
+  if (p === undefined) {
+    if (PAINTS.size >= 256) PAINTS.clear();
+    p = new Paint(attrs);
+    PAINTS.set(attrs, p);
+  }
+  return p;
+}
+
+const MARKED = new Set(['arrow_point', 'arrow_circle', 'arrow_cross']);
 const SHAPE_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
 const LINE_ATTRS = ' stroke="var(--_b)"';
 const NO_CLASSES: string[] = [];
@@ -256,13 +268,18 @@ function trace(p: number[], startTrim: number, endTrim: number): EdgePath {
   }
   startTrim = Math.min(startTrim, first);
   endTrim = Math.min(endTrim, last);
+  // The numbers as written, so that a scene reads what the text says.
+  const w = (v: number): number => Number(num(v));
+  const tokens = [77, 2, w(sx + ax * startTrim), w(sy + ay * startTrim)];
   let d = `M${num(sx + ax * startTrim)},${num(sy + ay * startTrim)}`;
   if (n === 6) {
     const r = Math.max(0, Math.min(CORNER, first - startTrim, last - endTrim));
     d += `L${num(p[2] - ax * r)},${num(p[3] - ay * r)}Q${num(p[2])},${num(p[3])} ${num(p[2] + bx * r)},${num(p[3] + by * r)}`;
+    tokens.push(76, 2, w(p[2] - ax * r), w(p[3] - ay * r), 81, 4, w(p[2]), w(p[3]), w(p[2] + bx * r), w(p[3] + by * r));
   }
   d += `L${num(ex - bx * endTrim)},${num(ey - by * endTrim)}`;
-  return { d, sx, sy, sdx: -ax, sdy: -ay, ex, ey, edx: bx, edy: by };
+  tokens.push(76, 2, w(ex - bx * endTrim), w(ey - by * endTrim));
+  return { d, tokens, sx, sy, sdx: -ax, sdy: -ay, ex, ey, edx: bx, edy: by };
 }
 
 // A self-loop is an arc around the top right corner of the block, or around the matching point on a
@@ -411,7 +428,6 @@ export function renderBlock(model: BlockModel, config: Config, options: RenderOp
 }
 
 function draw(out: Out, model: BlockModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const edgeSize = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -709,22 +725,27 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
   const width = Math.ceil(inner + 2 * pad);
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
 
-  let clusters = '';
-  let nodes = '';
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  // Layers, bottom to top. Each is made only when something can go in it, as a scene reads the attributes of every layer it makes.
+  const boxed = order.some((v) => v.kind === Kind.Composite && v !== root);
+  if (boxed) out.section('clusters', ' class="pele-clusters"');
+  if (boxed && routes.length > 0) out.section('casings', CASINGS_ATTRS);
+  if (routes.length > 0) out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('nodes', ' class="pele-nodes"', true);
+  if (routes.some((r) => r.label.width > 0)) out.section('labels', ` class="pele-edge-labels" font-size="${edgeSize}"`);
   const fills: Fill[] = [];
   for (let i = 1; i < order.length; i++) {
     const v = order[i];
     if (v.kind === Kind.Space) continue;
     const classes = classNames((v.block.classes ?? NO_CLASSES).join(' '));
-    const id = escText(v.block.id);
     if (v.kind === Kind.Composite) {
       const top = v.y - v.h / 2;
       if (paints(v.style.shape)) fills.push({ box: [v.x - v.w / 2, top, v.x + v.w / 2, top + v.h], shape: v.style.shape });
-      clusters +=
-        `<g class="pele-cluster${classes}" data-id="${id}"${srcAttrs(v.block.source)}>` +
-        `<rect x="${num(v.x - v.w / 2)}" y="${num(top)}" width="${num(v.w)}" height="${num(v.h)}" fill="var(--_a)"${setsFill(v.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(v.style.shape)}/>` +
-        labelSvg(v.label, v.x, top + (v.head + gap) / 2 + 2, ` class="pele-cluster-label"${inkFill(v.style, 'var(--_m)')}${v.style.text}`, icons) +
-        '</g>';
+      out.section('clusters');
+      out.group({ cls: `pele-cluster${classes}`, id: v.block.id, source: v.block.source });
+      out.rect(v.x - v.w / 2, top, v.w, v.h, ` fill="var(--_a)"${setsFill(v.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(v.style.shape)}`);
+      out.label(v.label, v.x, top + (v.head + gap) / 2 + 2, ` class="pele-cluster-label"${inkFill(v.style, 'var(--_m)')}${v.style.text}`, icons);
+      out.end();
       continue;
     }
     const arrow = v.kind === Kind.Arrow;
@@ -741,18 +762,23 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
       const room = v.label.width + (v.bw - v.nw);
       label = layoutLabel(v.block.label, false, measurer, v.label.size, room, textStyle);
     }
-    nodes +=
-      `<g class="pele-node pele-shape-${arrow ? 'block-arrow' : v.shape}${classes}" data-id="${id}"${srcAttrs(v.block.source)} transform="translate(${num(v.x)},${num(v.y)})">` +
-      (arrow
-        ? drawArrow(v.mask, v.bw, v.bh, SHAPE_ATTRS + v.style.shape)
-        : drawShape(v.shape, v.bw, v.bh, SHAPE_ATTRS + v.style.shape, LINE_ATTRS + v.style.line)) +
-      labelSvg(label, v.dx, v.dy, ` class="pele-label"${arrow || shapeFilled(v.shape) ? inkFill(v.style) : ''}${v.style.text}`, icons) +
-      '</g>';
+    out.section('nodes');
+    out.group({ cls: `pele-node pele-shape-${arrow ? 'block-arrow' : v.shape}${classes}`, id: v.block.id, source: v.block.source, x: v.x, y: v.y });
+    const attrs = SHAPE_ATTRS + v.style.shape;
+    if (arrow) out.polygon(arrowPoints(v.mask, v.bw, v.bh), paint(` stroke-linejoin="round"${attrs}`));
+    else if (v.shape === 'rect') out.rect(-v.bw / 2, -v.bh / 2, v.bw, v.bh, paint(rounded(attrs)));
+    else if (v.shape === 'rounded') out.rect(-v.bw / 2, -v.bh / 2, v.bw, v.bh, paint(` rx="${num(Math.min(12, v.bh / 2))}"${attrs}`));
+    else if (v.shape === 'stadium') out.rect(-v.bw / 2, -v.bh / 2, v.bw, v.bh, paint(` rx="${num(v.bh / 2)}"${attrs}`));
+    else if (v.shape === 'fr-rect') {
+      const x = v.bw / 2 - 8;
+      out.rect(-v.bw / 2, -v.bh / 2, v.bw, v.bh, paint(rounded(attrs)));
+      out.path(out.pen().M(-x, -v.bh / 2).V(v.bh / 2).M(x, -v.bh / 2).V(v.bh / 2), paint(` fill="none"${LINE_ATTRS + v.style.line}`));
+    } else if (v.shape === 'diam') out.polygon([0, -v.bh / 2, v.bw / 2, 0, 0, v.bh / 2, -v.bw / 2, 0], paint(attrs));
+    else out.fragment(drawShape(v.shape, v.bw, v.bh, attrs, LINE_ATTRS + v.style.line));
+    out.label(label, v.dx, v.dy, paint(` class="pele-label"${arrow || shapeFilled(v.shape) ? inkFill(v.style) : ''}${v.style.text}`), icons);
+    out.end();
   }
 
-  let casings = '';
-  let edges = '';
-  let labels = '';
   for (let i = 0; i < routes.length; i++) {
     const { edge, points, loop, label } = routes[i];
     const startType = edge.arrowTypeStart ?? '';
@@ -767,36 +793,46 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
       }
       path = trace(points, markerTrim(startType), markerTrim(endType));
     }
-    const over = overFills(path.d, [path.sx, path.sy, path.ex, path.ey], fills);
-    if (over === '') casings += edgeCasing(path, startType, endType, '', edge.thickness === 'thick');
-    const id = escText(edge.id);
-    edges +=
-      `<g class="pele-edge" data-id="${id}"${srcAttrs(edge.source)}${over ? ` stroke="${over}"` : ''}>` +
-      `<path d="${path.d}"${edge.thickness === 'thick' ? ' stroke-width="2.5"' : ''}${edge.pattern === 'dotted' ? ' stroke-dasharray="3 4"' : ''}/>` +
-      marker(startType, path.sx, path.sy, path.sdx, path.sdy, over || 'var(--_l)') +
-      marker(endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)') +
-      '</g>';
+    const thick = edge.thickness === 'thick';
+    const over = overFills(path.d, [path.sx, path.sy, path.ex, path.ey], fills, '', path.tokens);
+    // A marker is the same drawing wherever its tip is, so a scene reads it once per direction.
+    const marks = (fill: string, stroke: string | undefined, plain: boolean): void => {
+      for (const [type, x, y, dx, dy] of [
+        [startType, path.sx, path.sy, path.sdx, path.sdy],
+        [endType, path.ex, path.ey, path.edx, path.edy],
+      ] as const) {
+        if (!MARKED.has(type)) continue;
+        out.at(x, y, (px, py) => {
+          const m = marker(type, px, py, dx, dy, fill, stroke);
+          return plain ? m.replace(/ class="pele-marker"/g, '') : m;
+        });
+      }
+    };
+    const caseAttrs = over === '' ? casingAttrs('', thick) : undefined;
+    if (caseAttrs !== undefined) {
+      // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
+      out.into('casings', '', () => {
+        if (caseAttrs) out.group({ attrs: caseAttrs });
+        out.path(path.d, '', path.tokens);
+        marks('var(--_bg)', 'var(--_bg)', true);
+        if (caseAttrs) out.end();
+      });
+    }
+    out.section('edges');
+    out.group({ cls: 'pele-edge', id: edge.id, source: edge.source, attrs: over ? ` stroke="${over}"` : '' });
+    out.path(path.d, `${thick ? ' stroke-width="2.5"' : ''}${edge.pattern === 'dotted' ? ' stroke-dasharray="3 4"' : ''}`, path.tokens);
+    marks(over || 'var(--_l)', undefined, false);
+    out.end();
     if (label.width > 0) {
       const x = routes[i].lx + ox;
       const y = routes[i].ly + oy;
-      labels += edgeLabelSvg(edge.id, label, x, y, '', icons);
+      out.section('labels');
+      out.group({ cls: 'pele-edge-label', id: edge.id });
+      out.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+      out.label(label, x, y, '', icons);
+      out.end();
     }
   }
 
-  const svg = documentOf(out, 
-    'block',
-    width,
-    height,
-    size,
-    options,
-    model,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-      casingsSvg(casings) +
-      (edges ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edges}</g>` : '') +
-      `<g class="pele-nodes">${nodes}</g>` +
-      (labels ? `<g class="pele-edge-labels" font-size="${edgeSize}">${labels}</g>` : '')
-  );
-
-  return { svg, width, height, links: [] };
+  return { svg: out.done('block', width, height, size, options, model), width, height, links: [] };
 }
