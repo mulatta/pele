@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export type Cardinality = 'ZERO_OR_ONE' | 'ZERO_OR_MORE' | 'ONE_OR_MORE' | 'ONLY_ONE' | 'MD_PARENT';
 export type Identification = 'NON_IDENTIFYING' | 'IDENTIFYING';
 
@@ -23,6 +25,7 @@ export interface ErEntity {
   attributes: ErAttribute[];
   cssClasses: string;
   cssStyles: string[];
+  source?: SourceInfo;
 }
 
 // cardB sits at entityA's end of the line and cardA at entityB's, as in Mermaid.
@@ -38,6 +41,7 @@ export interface ErRelationship {
   roleA: string;
   entityB: string;
   relSpec: RelSpec;
+  source?: SourceInfo;
 }
 
 export interface ErClassDef {
@@ -54,6 +58,7 @@ export interface ErSubgraph {
   cssStyles: string[];
   dir: string | undefined;
   labelType: 'text' | 'string' | 'markdown';
+  source?: SourceInfo;
 }
 
 export type DocItem = string | { stmt: 'dir'; value: string };

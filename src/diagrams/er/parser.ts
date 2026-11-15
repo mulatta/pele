@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { ErDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -27,10 +27,12 @@ interface Frame {
   // What Mermaid's grammar hands to addSubGraph: the value of every statement inside. Besides entity
   // names that includes accessibility text and the keywords `style`, `class` and `classDef`.
   list: DocItem[];
+  line?: number;
 }
 
 export function parseEr(src: string, db: ErDb): void {
   const { types, texts, starts } = tokenize(src);
+  const lineAt = (k: number): number | undefined => sourceLine(src, starts[k]);
   let i = 0;
 
   const fail = (expected: string): never => {
@@ -142,6 +144,7 @@ export function parseEr(src: string, db: ErDb): void {
   };
 
   const entityStatement = (): string[] => {
+    const line = (db.line = lineAt(i));
     const a = entityName();
     let t = types[i];
     if (t === T.SQS) {
@@ -155,6 +158,7 @@ export function parseEr(src: string, db: ErDb): void {
       }
       const attrs = block();
       db.addEntity(a, alias);
+      if (line !== undefined) db.entityLines(a, line, lineAt(i - 1));
       if (attrs) db.addAttributes(a, attrs);
       if (classes) db.setClass([a], classes);
       return [a];
@@ -184,6 +188,7 @@ export function parseEr(src: string, db: ErDb): void {
     }
     const attrs = block();
     db.addEntity(a);
+    if (line !== undefined) db.entityLines(a, line, lineAt(i - 1));
     if (attrs) db.addAttributes(a, attrs);
     if (classes) db.setClass([a], classes);
     return [a];
@@ -207,8 +212,9 @@ export function parseEr(src: string, db: ErDb): void {
         return;
       case T.END_KW: {
         if (!nested) fail(LINE);
+        const end = lineAt(i);
         i++;
-        const id = db.addSubGraph({ text: frame.id }, frame.list, { text: frame.title });
+        const id = db.addSubGraph({ text: frame.id }, frame.list, { text: frame.title }, frame.line === undefined || end === undefined ? undefined : [frame.line, end]);
         frames.pop();
         frame = frames[frames.length - 1];
         nested = frames.length > 1;
@@ -216,6 +222,7 @@ export function parseEr(src: string, db: ErDb): void {
         break;
       }
       case T.SUBGRAPH: {
+        const line = lineAt(i);
         i++;
         const id = entityName();
         let title = id;
@@ -226,7 +233,7 @@ export function parseEr(src: string, db: ErDb): void {
           expect(T.SQE);
         }
         separator();
-        frame = { id, title, list: [] };
+        frame = { id, title, list: [], line };
         frames.push(frame);
         nested = true;
         break;

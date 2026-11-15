@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
 import { casing, casingsSvg, edgeInk, edgeLabelSvg, fillUnder, hollowOn, routePath, type Fill } from '../../svg/edges.js';
 import { ON_DARK, ON_LIGHT, ink, inkFill, paints } from '../../svg/ink.js';
@@ -134,6 +134,7 @@ export function renderEr(db: ErDb, config: Config, options: RenderOptions): Rend
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const graph = buildErGraph(db);
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('attributes');
   const size = options.fontSize ?? 16;
@@ -334,7 +335,7 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       const titleX = clusterTitleX(c, view.label.width, crossings, GROUP_PAD);
       if (paints(view.style.shape)) fills.push({ box: [x, y, x + c.w, y + c.h], shape: view.style.shape });
       clusters +=
-        `<g class="pele-cluster${classes}" data-id="${escText(node.id)}">` +
+        `<g class="pele-cluster${classes}" data-id="${escText(node.id)}"${srcAttrs(node.written)}>` +
         `<rect x="${num(x)}" y="${num(y)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>` +
         labelSvg(view.label, titleX, y + 8 + view.label.height / 2, ` class="pele-cluster-label"${inkFill(view.style, 'var(--_m)')}${view.style.text}`, icons) +
         '</g>';
@@ -404,7 +405,7 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
         name +
         `<g class="pele-er-attributes" font-size="${view.rowSize}">${cells}</g>`;
     }
-    nodesOut += `<g class="pele-node pele-entity${classes}" data-id="${escText(node.label)}" transform="translate(${num(
+    nodesOut += `<g class="pele-node pele-entity${classes}" data-id="${escText(node.label)}"${srcAttrs(node.written)} transform="translate(${num(
       c.x
     )},${num(c.y)})">${body}</g>`;
   }
@@ -484,7 +485,7 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     }
     const dashed = edge.pattern === 'dashed';
     edgesOut +=
-      `<g class="pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}" data-id="${escText(edge.id)}"${over ? ` stroke="${over}"` : ''}>` +
+      `<g class="pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}${over ? ` stroke="${over}"` : ''}>` +
       `<path d="${d}"${dashed ? ' stroke-dasharray="4 3"' : ''}/>` +
       start +
       end +
