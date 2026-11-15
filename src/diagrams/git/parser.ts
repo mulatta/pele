@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -96,7 +98,14 @@ export const GIT_TOKENS: readonly TokenType[] = [
 
 export type CommitTypeName = 'NORMAL' | 'REVERSE' | 'HIGHLIGHT';
 
-export interface CommitAst {
+// Where a statement that makes a commit or a branch is written (see SourceInfo), when sources are
+// recorded. It is not part of the tree the grammar describes, so like Langium's own bookkeeping
+// its name starts with `$`.
+export interface Written {
+  $source?: SourceInfo;
+}
+
+export interface CommitAst extends Written {
   $type: 'Commit';
   id?: string;
   message?: string;
@@ -104,13 +113,13 @@ export interface CommitAst {
   type?: CommitTypeName;
 }
 
-export interface BranchAst {
+export interface BranchAst extends Written {
   $type: 'Branch';
   name: string;
   order?: number;
 }
 
-export interface MergeAst {
+export interface MergeAst extends Written {
   $type: 'Merge';
   branch: string;
   id?: string;
@@ -123,7 +132,7 @@ export interface CheckoutAst {
   branch: string;
 }
 
-export interface CherryPickingAst {
+export interface CherryPickingAst extends Written {
   $type: 'CherryPicking';
   id?: string;
   tags: string[];
@@ -161,6 +170,17 @@ export function parseGit(src: string): GitGraphAst {
     if (r.kind !== T.normal && r.kind !== T.reverse && r.kind !== T.highlight) r.fail('NORMAL, REVERSE, or HIGHLIGHT');
     return r.take() as CommitTypeName;
   };
+  // A statement runs from token `first` to the last one read, over several lines when a string in
+  // it does. Its symbol is the name it gives what it makes, unless an escape changed how that reads.
+  const { starts, ends } = r.tokens;
+  const written = (node: Written, first: number, symbol?: string): void => {
+    const line = sourceLine(src, starts[first]);
+    if (line === undefined) return;
+    const last = ends[r.i - 1];
+    const end = sourceLine(src, last - 1) ?? line;
+    node.$source = end > line ? { line, end } : { line };
+    if (symbol && src.slice(starts[first], last).includes(symbol)) node.$source.symbol = symbol;
+  };
 
   while (r.kind === T.newline) r.i++;
   if (!r.accept(T.gitGraphColon)) {
@@ -193,7 +213,7 @@ export function parseGit(src: string): GitGraphAst {
         endOfLine();
         break;
       case T.commit: {
-        r.i++;
+        const first = r.i++;
         const node: CommitAst = { $type: 'Commit', tags: [] };
         for (;;) {
           if (r.accept(T.id)) node.id = string();
@@ -202,20 +222,22 @@ export function parseGit(src: string): GitGraphAst {
           else if (r.accept(T.msg) || r.kinds[r.i] === T.string) node.message = string();
           else break;
         }
+        written(node, first, node.id);
         endOfLine();
         ast.statements.push(node);
         break;
       }
       case T.branch: {
-        r.i++;
+        const first = r.i++;
         const node: BranchAst = { $type: 'Branch', name: name() };
         if (r.accept(T.order)) node.order = parseInt(r.expect(T.int));
+        written(node, first, node.name);
         endOfLine();
         ast.statements.push(node);
         break;
       }
       case T.merge: {
-        r.i++;
+        const first = r.i++;
         const node: MergeAst = { $type: 'Merge', branch: name(), tags: [] };
         for (;;) {
           if (r.accept(T.id)) node.id = string();
@@ -223,6 +245,7 @@ export function parseGit(src: string): GitGraphAst {
           else if (r.accept(T.type)) node.type = commitType();
           else break;
         }
+        written(node, first, node.id);
         endOfLine();
         ast.statements.push(node);
         break;
@@ -236,7 +259,7 @@ export function parseGit(src: string): GitGraphAst {
         break;
       }
       case T.cherryPick: {
-        r.i++;
+        const first = r.i++;
         const node: CherryPickingAst = { $type: 'CherryPicking', tags: [] };
         for (;;) {
           if (r.accept(T.id)) node.id = string();
@@ -244,6 +267,8 @@ export function parseGit(src: string): GitGraphAst {
           else if (r.accept(T.parent)) node.parent = string();
           else break;
         }
+        // The id written is the commit it copies; the copy gets an id of its own.
+        written(node, first);
         endOfLine();
         ast.statements.push(node);
         break;
