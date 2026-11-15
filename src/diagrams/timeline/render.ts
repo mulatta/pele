@@ -1,7 +1,5 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { rounded, seriesColor } from '../../svg/theme.js';
@@ -25,14 +23,11 @@ const SECTION_GAP = 8;
 const TAIL = 12;
 const ON_COLOR = ' fill="var(--_bg)"';
 const LINE = ' fill="none" stroke="var(--_b)"';
+const AXIS_LINE = ' fill="none" stroke="var(--_l)"';
 
 interface Group {
   section: number;
   periods: number[];
-}
-
-function box(x: number, y: number, w: number, h: number, attrs: string): string {
-  return `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}"${rounded(attrs)}/>`;
 }
 
 export function renderTimeline(model: TimelineModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -41,7 +36,6 @@ export function renderTimeline(model: TimelineModel, config: Config, options: Re
 }
 
 function draw(out: Out, model: TimelineModel, config: Config, options: RenderOptions, vertical: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -110,26 +104,31 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
 
   const sectionLabel = (group: Group, w: number): Label =>
     fitLabel(model.sections[group.section], measurer, size, w - 2 * PAD_X, Style.Bold);
-  const header = (group: Group, label: Label, x: number, y: number, w: number, h: number): string =>
-    box(x, y, w, h, ` fill="${seriesColor(group.section)}"`) +
-    labelSvg(label, x + w / 2, y + h / 2, ' font-weight="var(--_hw)"' + onColor(group.section));
-  const period = (i: number, group: Group, color: string, x: number, y: number, h: number): string =>
-    box(x, y, colW, h, ` fill="${color}"`) + labelSvg(periodLabels[i], x + colW / 2, y + h / 2, onColor(seriesOf(group, i)));
-  const event = (label: Label, color: string, x: number, y: number, h: number): string =>
-    '<g class="pele-node pele-event">' +
-    box(x, y, eventW, h, ` fill="${color}" fill-opacity="0.16"`) +
-    labelSvg(label, x + eventW / 2, y + h / 2, ` font-size="${small}"`) +
-    '</g>';
-  const dot = (x: number, y: number, color: string): string =>
-    `<circle class="pele-dot" cx="${num(x)}" cy="${num(y)}" r="4" fill="${color}" stroke="var(--_bg)" stroke-width="2"/>`;
-  const open = (group: Group): string =>
-    group.section >= 0
-      ? `<g class="pele-cluster pele-section" data-id="${escText(model.sections[group.section].trim())}"${srcAttrs(model.sectionSources?.[group.section])}>`
-      : '';
-  const openPeriod = (i: number): string =>
-    `<g class="pele-node pele-period" data-id="${escText(periods[i].text.trim())}"${srcAttrs(periods[i].source)}>`;
-
-  let body = '';
+  const header = (group: Group, label: Label, x: number, y: number, w: number, h: number): void => {
+    out.rect(x, y, w, h, rounded(` fill="${seriesColor(group.section)}"`));
+    out.label(label, x + w / 2, y + h / 2, ' font-weight="var(--_hw)"' + onColor(group.section));
+  };
+  const period = (i: number, group: Group, color: string, x: number, y: number, h: number): void => {
+    out.rect(x, y, colW, h, rounded(` fill="${color}"`));
+    out.label(periodLabels[i], x + colW / 2, y + h / 2, onColor(seriesOf(group, i)));
+  };
+  const event = (label: Label, color: string, x: number, y: number, h: number): void => {
+    out.group({ cls: 'pele-node pele-event' });
+    out.rect(x, y, eventW, h, rounded(` fill="${color}" fill-opacity="0.16"`));
+    out.label(label, x + eventW / 2, y + h / 2, ` font-size="${small}"`);
+    out.end();
+  };
+  const dot = (x: number, y: number, color: string): void =>
+    out.circle(x, y, 4, ` fill="${color}" stroke="var(--_bg)" stroke-width="2"`, { cls: 'pele-dot' });
+  const open = (group: Group): void => {
+    if (group.section >= 0)
+      out.group({ cls: 'pele-cluster pele-section', id: model.sections[group.section].trim(), source: model.sectionSources?.[group.section] });
+  };
+  const openPeriod = (i: number): void => out.group({ cls: 'pele-node pele-period', id: periods[i].text.trim(), source: periods[i].source });
+  // The title and the axis are known only after the body, and are painted before it.
+  out.section('title');
+  out.section('axis');
+  out.section('body');
   let height: number;
 
   if (vertical) {
@@ -138,11 +137,11 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
     const eventsX = spineX + SPINE;
     let y = top;
     for (const group of groups) {
-      body += open(group);
+      open(group);
       if (group.section >= 0) {
         const label = sectionLabel(group, bodyW);
         const h = chipHeight(label);
-        body += header(group, label, left, y, bodyW, h);
+        header(group, label, left, y, bodyW, h);
         y += h + SECTION_GAP + 4;
       }
       for (const i of group.periods) {
@@ -151,37 +150,35 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
         // A period and its first event share one center line, so the line between them runs straight.
         const first = eventLabels[i].length > 0 ? eventHeight(eventLabels[i][0]) : h;
         const cy = y + Math.max(h, first) / 2;
-        let d = `M${num(left + colW)},${num(cy)}H${num(axisX)}`;
-        let cards = '';
+        const d = out.pen().M(left + colW, cy).H(axisX);
+        const events: [Label, number, number][] = [];
         let ey = cy - first / 2;
         let last = cy;
         for (const label of eventLabels[i]) {
           const eh = eventHeight(label);
           last = ey + eh / 2;
-          d += `M${num(spineX)},${num(last)}H${num(eventsX)}`;
-          cards += event(label, color, eventsX, ey, eh);
+          d.M(spineX, last).H(eventsX);
+          events.push([label, ey, eh]);
           ey += eh + EVENT_GAP;
         }
-        if (cards) d += `M${num(axisX)},${num(cy)}H${num(spineX)}V${num(last)}`;
-        body +=
-          openPeriod(i) +
-          period(i, group, color, left, cy - h / 2, h) +
-          `<path class="pele-edge" d="${d}"${LINE}/>` +
-          dot(axisX, cy, color) +
-          cards +
-          '</g>';
+        if (events.length > 0) d.M(axisX, cy).H(spineX).V(last);
+        openPeriod(i);
+        period(i, group, color, left, cy - h / 2, h);
+        out.path(d, LINE, undefined, { cls: 'pele-edge' });
+        dot(axisX, cy, color);
+        for (const [label, at, eh] of events) event(label, color, eventsX, at, eh);
+        out.end();
         y = Math.max(cy + h / 2, ey - EVENT_GAP) + GAP;
       }
       if (group.periods.length === 0) y += GAP - SECTION_GAP - 4;
-      if (group.section >= 0) body += '</g>';
+      if (group.section >= 0) out.end();
     }
     if (groups.length > 0) y -= GAP;
     if (drawn) {
       const tip = y + TAIL + ARROW;
-      body =
-        `<path class="pele-axis" d="M${num(axisX)},${num(top)}V${num(tip - ARROW + 1)}" fill="none" stroke="var(--_l)"/>` +
-        marker('arrow_point', axisX, tip, 0, 1, 'var(--_l)') +
-        body;
+      out.section('axis');
+      out.path(out.pen().M(axisX, top).V(tip - ARROW + 1), AXIS_LINE, undefined, { cls: 'pele-axis' });
+      out.at(axisX, tip, (x, yy) => marker('arrow_point', x, yy, 0, 1, 'var(--_l)'));
       y = tip;
     }
     height = y + pad;
@@ -203,50 +200,48 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
     groups.forEach((group, g) => {
       const span = Math.max(group.periods.length, 1);
       const gx = left + slot * pitch;
-      body += open(group);
+      open(group);
       const label = sectionLabels[g];
-      if (label) body += header(group, label, gx, top, span * pitch - GAP, headerH);
+      if (label) header(group, label, gx, top, span * pitch - GAP, headerH);
       group.periods.forEach((i, k) => {
         const color = colorOf(group, i);
         const x = gx + k * pitch;
         const cx = x + colW / 2;
-        let d = `M${num(cx)},${num(periodsY + chipH)}V${num(eventLabels[i].length > 0 ? eventsY : axisY)}`;
-        let cards = '';
+        const d = out.pen().M(cx, periodsY + chipH).V(eventLabels[i].length > 0 ? eventsY : axisY);
+        const events: [Label, number, number][] = [];
         let ey = eventsY;
         for (const eventLabel of eventLabels[i]) {
           const eh = eventHeight(eventLabel);
-          if (ey > eventsY) d += `M${num(cx)},${num(ey - EVENT_GAP)}V${num(ey)}`;
-          cards += event(eventLabel, color, x, ey, eh);
+          if (ey > eventsY) d.M(cx, ey - EVENT_GAP).V(ey);
+          events.push([eventLabel, ey, eh]);
           ey += eh + EVENT_GAP;
         }
         bottom = Math.max(bottom, ey - EVENT_GAP);
-        body +=
-          openPeriod(i) +
-          period(i, group, color, x, periodsY, chipH) +
-          `<path class="pele-edge" d="${d}"${LINE}/>` +
-          dot(cx, axisY, color) +
-          cards +
-          '</g>';
+        openPeriod(i);
+        period(i, group, color, x, periodsY, chipH);
+        out.path(d, LINE, undefined, { cls: 'pele-edge' });
+        dot(cx, axisY, color);
+        for (const [label, at, eh] of events) event(label, color, x, at, eh);
+        out.end();
       });
-      if (group.section >= 0) body += '</g>';
+      if (group.section >= 0) out.end();
       slot += span;
     });
     if (drawn) {
       const tip = left + bodyW;
-      body =
-        `<path class="pele-axis" d="M${num(left)},${num(axisY)}H${num(tip - ARROW + 1)}" fill="none" stroke="var(--_l)"/>` +
-        marker('arrow_point', tip, axisY, 1, 0, 'var(--_l)') +
-        body;
+      out.section('axis');
+      out.path(out.pen().M(left, axisY).H(tip - ARROW + 1), AXIS_LINE, undefined, { cls: 'pele-axis' });
+      out.at(tip, axisY, (x, yy) => marker('arrow_point', x, yy, 1, 0, 'var(--_l)'));
     }
     height = bottom + pad;
   }
 
   const totalWidth = Math.ceil(width + 2 * pad);
   const totalHeight = Math.ceil(Math.max(height, pad * 2));
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + body;
+  out.section('title');
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
   return {
-    svg: documentOf(out, 'timeline', totalWidth, totalHeight, size, options, model, content),
+    svg: out.done('timeline', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],
