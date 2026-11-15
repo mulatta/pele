@@ -1,4 +1,4 @@
-import { PeleError, locate, syntaxError } from '../../errors.js';
+import { PeleError, locate, sourceLine, syntaxError } from '../../errors.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
 import type { StateStmt, Stmt } from './types.js';
@@ -50,20 +50,30 @@ export function parseState(src: string, db: StateBuilder): Stmt[] {
 
   let doc: Stmt[] = [];
   const outer: Stmt[][] = [];
+  // The line the statement being read starts on; a relation's states are named there too.
+  let line: number | undefined;
   // The grammar drops a statement whose value is the string it uses for a blank line.
   const add = (value: Stmt): void => {
-    if (value !== 'nl') doc.push(value);
+    if (value === 'nl') return;
+    if (typeof value !== 'string' && value.stmt === 'state') value.line ??= line;
+    if (typeof value !== 'string' && value.stmt === 'relation') {
+      value.line ??= line;
+      value.state1.line ??= line;
+      value.state2.line ??= line;
+    }
+    doc.push(value);
   };
   const open = (id: string, description: string): void => {
     i++;
     const inner: Stmt[] = [];
-    doc.push({ stmt: 'state', id, type: 'default', description, doc: inner });
+    doc.push({ stmt: 'state', id, type: 'default', description, doc: inner, line });
     outer.push(doc);
     doc = inner;
   };
 
   for (;;) {
     const t = types[i];
+    line = sourceLine(src, starts[i]);
     switch (t) {
       case T.NL:
         i++;
@@ -210,6 +220,8 @@ export function parseState(src: string, db: StateBuilder): Stmt[] {
         if (outer.length === 0) fail(`'$end', ${STATEMENT}`);
         i++;
         doc = outer.pop()!;
+        // The composite just closed is the last statement of the document it was opened in.
+        (doc[doc.length - 1] as StateStmt).end = line;
         break;
       case T.END:
         if (outer.length > 0) fail(`'STRUCT_STOP', ${STATEMENT}`);

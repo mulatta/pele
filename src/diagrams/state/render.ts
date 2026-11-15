@@ -1,6 +1,6 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { casingsSvg, edgeCasing, edgeLabelSvg, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { endSide } from '../../svg/shapes.js';
@@ -124,6 +124,7 @@ export function renderState(db: StateDb, config: Config, options: RenderOptions)
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(db: StateDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const graph = db.graph;
   // State diagrams follow the flowchart curve.
   const curve = (config.flowchart as Config | undefined)?.curve;
@@ -542,7 +543,7 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
       if (tooltip) body = `<title>${esc(tooltip)}</title>` + body;
       body = linked(body, safeUrl(unquote(link.url)), node.id, links, options, ' target="_blank"');
     }
-    const open = `<g class="${CLASSES[view.kind]}${classNames(node.cssClasses.replace(MERMAID_CLASSES, ''))}" data-id="${escText(node.id)}"`;
+    const open = `<g class="${CLASSES[view.kind]}${classNames(node.cssClasses.replace(MERMAID_CLASSES, ''))}" data-id="${escText(node.id)}"${srcAttrs(node.written)}`;
     if (view.kind === K.Composite) clusters += `${open}>${body}</g>`;
     else if (view.kind === K.Note) notesOut += `${open} transform="translate(${num(x)},${num(y)})">${body}</g>`;
     else nodesOut += `${open} transform="translate(${num(x)},${num(y)})">${body}</g>`;
@@ -654,7 +655,7 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
     if (over === '') casings += edgeCasing(path, 'none', endType);
     const kind = note ? `pele-note-edge" stroke="${over || 'var(--_b)'}" stroke-dasharray="3 4` : over ? `pele-transition" stroke="${over}` : 'pele-transition';
     edgesOut +=
-      `<g class="pele-edge ${kind}" data-id="${escText(edge.id)}">` +
+      `<g class="pele-edge ${kind}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
       `<path d="${path.d}"/>` +
       marker(endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)') +
       '</g>';

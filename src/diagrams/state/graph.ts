@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { StateClassDef, StateStmt, Stmt } from './types.js';
 
 export interface StateNode {
@@ -18,6 +19,7 @@ export interface StateNode {
   position?: string;
   noteFor?: string;
   colorIndex?: number;
+  written?: SourceInfo;
 }
 
 // Labels are markdown throughout, as in Mermaid.
@@ -28,6 +30,7 @@ export interface StateEdge {
   label: string;
   classes: string;
   pattern?: 'dashed';
+  written?: SourceInfo;
 }
 
 export interface StateGraph {
@@ -43,7 +46,15 @@ interface Draft {
   type: string | undefined;
   dir: string | undefined;
   colorIndex: number | undefined;
+  written?: SourceInfo;
 }
+
+// What the author wrote for a state: `[*]` for a start or an end, else its name.
+const written = (item: StateStmt): string => (item.start === undefined ? item.id : '[*]');
+
+// Where a statement is written: its line, and its last when it spans several.
+const lines = (item: StateStmt): SourceInfo =>
+  item.end !== undefined && item.line !== undefined && item.end > item.line ? { line: item.line, end: item.end } : { line: item.line };
 
 interface Frame {
   item: StateStmt | undefined;
@@ -97,7 +108,8 @@ export function buildStateGraph(
     }
   };
 
-  const visit = (parent: StateStmt | undefined, item: StateStmt, alt: boolean): void => {
+  // `named`: the state is only named, by a transition; a statement of its own defines it.
+  const visit = (parent: StateStmt | undefined, item: StateStmt, alt: boolean, named = false): void => {
     const id = item.id;
     if (id === 'root') return;
     const known = states.get(id);
@@ -120,6 +132,11 @@ export function buildStateGraph(
         colorIndex: undefined,
       };
       drafts.set(id, draft);
+    }
+    // A state comes from the last statement that defines it (that is what is drawn), else from
+    // the first that names it. A note is not the state.
+    if (item.line !== undefined && !item.note && (draft.written === undefined || !named)) {
+      draft.written = { ...lines(item), symbol: written(item) };
     }
 
     if (item.description) {
@@ -166,6 +183,7 @@ export function buildStateGraph(
       isGroup: draft.type === 'group',
       dir: draft.dir,
       colorIndex: draft.colorIndex,
+      written: draft.written,
     };
     if (node.shape === 'divider') node.label = '';
     if (parent && parent.id !== 'root') node.parentId = parent.id;
@@ -193,13 +211,14 @@ export function buildStateGraph(
     const noteNode = aside(`${id}----note-${counter++}`, 'note', 'statediagram-note', false);
     noteNode.parentId = `${id}----parent`;
     noteNode.noteFor = id;
+    if (item.line !== undefined) noteNode.written = { line: item.line };
     insert(aside(noteNode.parentId, 'noteGroup', draft.cssClasses, true));
     insert(noteNode);
     insert(node);
     const left = note.position === 'left of';
     const from = left ? noteNode.id : id;
     const to = left ? id : noteNode.id;
-    edges.push({ id: `${from}-${to}`, start: from, end: to, label: '', classes: 'transition note-edge', pattern: 'dashed' });
+    edges.push({ id: `${from}-${to}`, start: from, end: to, label: '', classes: 'transition note-edge', pattern: 'dashed', written: noteNode.written });
   };
 
   const stack: Frame[] = [{ item: undefined, doc: rootDoc, at: 0, alt: true }];
@@ -215,9 +234,16 @@ export function buildStateGraph(
       visit(frame.item, item, frame.alt);
       if (item.doc) stack.push({ item, doc: item.doc, at: 0, alt: !frame.alt });
     } else if (item.stmt === 'relation') {
-      visit(frame.item, item.state1, frame.alt);
-      visit(frame.item, item.state2, frame.alt);
-      edges.push({ id: `edge${counter++}`, start: item.state1.id, end: item.state2.id, label: item.description ?? '', classes: 'transition' });
+      visit(frame.item, item.state1, frame.alt, true);
+      visit(frame.item, item.state2, frame.alt, true);
+      edges.push({
+        id: `edge${counter++}`,
+        start: item.state1.id,
+        end: item.state2.id,
+        label: item.description ?? '',
+        classes: 'transition',
+        written: item.line === undefined ? undefined : { line: item.line, from: written(item.state1), to: written(item.state2) },
+      });
     }
   }
 
