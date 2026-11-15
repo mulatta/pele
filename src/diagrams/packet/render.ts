@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { esc, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -18,7 +17,6 @@ export function renderPacket(model: PacketModel, config: Config, options: Render
 }
 
 function draw(out: Out, model: PacketModel, config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const labelSize = Math.round(size * 0.875);
   const bitSize = Math.round(size * 0.625);
@@ -110,9 +108,13 @@ function draw(out: Out, model: PacketModel, config: Config, options: RenderOptio
     return byWidth.get(max);
   };
 
+  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
+  const totalHeight = Math.ceil(rowsHeight + titleHeight + 2 * pad);
   const left = pad + Math.max(0, (title.width - width) / 2);
-  let fields = '';
-  let bits = '';
+  // Layers are painted in the order they are made; Mermaid puts a packet's title under it.
+  out.section('fields', ` class="pele-packet-fields" font-size="${labelSize}" text-anchor="middle"`);
+  out.section('bits', ` class="pele-packet-bits" font-size="${bitSize}" fill="var(--_m)"`);
+  out.section('title');
   rows.forEach((row, index) => {
     const y = pad + tops[index] + numbers;
     const rowHeight = rowHeights[index];
@@ -122,40 +124,29 @@ function draw(out: Out, model: PacketModel, config: Config, options: RenderOptio
       const x = left + (descending ? bitsPerRow - first - count : first) * bitWidth;
       const w = count * bitWidth - gap;
       const text = down ? undefined : fit(block.label, w - 6);
-      fields +=
-        `<g class="pele-node" data-id="${block.start}-${block.end}"${srcAttrs(block.source)}>` +
-        `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(rowHeight)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
-        (down ? labelSvg(labels.get(block)!, x + w / 2, y + rowHeight / 2, '') : text && text.size <= rowHeight
-          ? `<text x="${num(x + w / 2)}" y="${num(y + rowHeight / 2 + text.size * 0.35)}"${
-              text.size === labelSize ? '' : ` font-size="${num(text.size)}"`
-            }>${esc(text.text)}</text>`
-          : '') +
-        '</g>';
+      out.section('fields');
+      out.group({ cls: 'pele-node', id: `${block.start}-${block.end}`, source: block.source });
+      out.rect(x, y, w, rowHeight, ` fill="var(--_s)" stroke="var(--_b)"${ROUNDED}`);
+      if (down) out.label(labels.get(block)!, x + w / 2, y + rowHeight / 2, '');
+      else if (text && text.size <= rowHeight) {
+        out.text(x + w / 2, y + rowHeight / 2 + text.size * 0.35, text.text, '', text.size === labelSize ? '' : ` font-size="${num(text.size)}"`);
+      }
+      out.end();
       if (!showBits) continue;
+      out.section('bits');
       const leading = descending ? block.end : block.start;
       const trailing = descending ? block.start : block.end;
       if (count === 1) {
-        bits += `<text x="${num(x + w / 2)}" y="${num(y - 4)}" text-anchor="middle">${leading}</text>`;
+        out.text(x + w / 2, y - 4, String(leading), '', ' text-anchor="middle"');
       } else {
-        bits +=
-          `<text x="${num(x)}" y="${num(y - 4)}">${leading}</text>` +
-          `<text x="${num(x + w)}" y="${num(y - 4)}" text-anchor="end">${trailing}</text>`;
+        out.text(x, y - 4, String(leading), '');
+        out.text(x + w, y - 4, String(trailing), '', ' text-anchor="end"');
       }
     }
   });
 
-  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
-  const totalHeight = Math.ceil(rowsHeight + titleHeight + 2 * pad);
-  const content =
-    (fields ? `<g class="pele-packet-fields" font-size="${labelSize}" text-anchor="middle">${fields}</g>` : '') +
-    (bits ? `<g class="pele-packet-bits" font-size="${bitSize}" fill="var(--_m)">${bits}</g>` : '') +
-    // Mermaid puts a packet's title under it.
-    labelSvg(title, totalWidth / 2, totalHeight - pad - title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.section('title');
+  out.label(title, totalWidth / 2, totalHeight - pad - title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
-  return {
-    svg: documentOf(out, 'packet', totalWidth, totalHeight, size, options, model, content),
-    width: totalWidth,
-    height: totalHeight,
-    links: [],
-  };
+  return { svg: out.done('packet', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
 }
