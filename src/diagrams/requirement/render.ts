@@ -1,10 +1,11 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle } from '../../svg/builder.js';
 import { edgeLabelSvg, routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { classNames, resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -153,14 +154,14 @@ function spreadEnds(cnodes: CNode[], cedges: CEdge[], views: NodeView[]): void {
   }
 }
 
-export function renderRequirement(model: RequirementModel, _config: Config, options: RenderOptions): Rendered {
-  if (!runsAcross(model.direction)) return draw(model, _config, options, false);
-  return turnToFit(options, (down) => draw(model, _config, options, down));
+export function renderRequirement(model: RequirementModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  if (!runsAcross(model.direction)) return draw(out, model, _config, options, false);
+  return turnToFit(options, (down, o) => draw(o, model, _config, options, down), out);
 }
 
 // `turned` draws a diagram that runs across as one that runs down.
-function draw(model: RequirementModel, _config: Config, options: RenderOptions, turned: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: RequirementModel, _config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const graph = buildRequirementGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -366,7 +367,7 @@ function draw(model: RequirementModel, _config: Config, options: RenderOptions, 
     labelsOut += edgeLabelSvg(edge.id, label, labelX, labelY, '');
   }
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'requirement',
     width,
     height,

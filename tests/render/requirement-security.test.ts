@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PeleError, render } from '../../src/index.js';
 import { RequirementDb } from '../../src/diagrams/requirement/db.js';
 import { renderRequirement } from '../../src/diagrams/requirement/render.js';
+import { SvgOut } from '../../src/draw/svg.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
 import { PAYLOADS, assertInert } from '../support/inert.js';
@@ -112,7 +113,7 @@ describe('inert requirement output', () => {
       db.defineClass([payload], [payload, `fill:${payload}`, `stroke:${payload}`, `color:${payload}`, `font-family:${payload}`]);
       db.setClass([payload, 'e'], [payload]);
       db.setCssStyle(['e'], [`fill:${payload},stroke-dasharray:${payload}`, `font-size:${payload}`, `${payload}:red`]);
-      assertInert(renderRequirement(db, {}, options).svg, JSON.stringify(payload));
+      assertInert(renderRequirement(db, {}, options, new SvgOut(options)).svg, JSON.stringify(payload));
     }
   }, 120_000);
 

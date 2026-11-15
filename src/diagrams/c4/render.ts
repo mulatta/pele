@@ -1,10 +1,11 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, casingsSvg, edgeCasing, marker, markerTrim, overFills, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { drawShape } from '../../svg/shapes.js';
 import { resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel } from '../../text/label.js';
@@ -41,20 +42,28 @@ function link(body: string, url: string | undefined, id: string, links: LinkInfo
   return linked(body, sanitizeUrl(url.includes('\u00b6\u00df') ? url.replace(/\ufb02\u00b0\u00b0?/g, '#').replace(/\u00b6\u00df/g, ';') : url), id, links, options);
 }
 
-export function renderC4(db: C4Db, _config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => {
-    if (!tight) return draw(db, _config, options, false)[0];
-    let [best, squeezed] = draw(db, _config, options, true, NARROW_GAP);
-    for (let gap = NARROW_GAP + WIDEN; squeezed > 0 && gap <= NARROW_GAP + 3 * WIDEN; gap += WIDEN) {
-      const [wider, left] = draw(db, _config, options, true, gap);
-      if (left < squeezed) [best, squeezed] = [wider, left];
-    }
-    return best;
-  });
+export function renderC4(db: C4Db, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(
+    options,
+    (tight, o) => {
+      if (!tight) return draw(o, db, _config, options, false)[0];
+      // Each gap is an attempt of its own; the one that squeezes least is kept.
+      let kept = o.fork();
+      let [best, squeezed] = draw(kept, db, _config, options, true, NARROW_GAP);
+      for (let gap = NARROW_GAP + WIDEN; squeezed > 0 && gap <= NARROW_GAP + 3 * WIDEN; gap += WIDEN) {
+        const attempt = o.fork();
+        const [wider, left] = draw(attempt, db, _config, options, true, gap);
+        if (left < squeezed) [best, squeezed, kept] = [wider, left, attempt];
+      }
+      o.adopt(kept);
+      return best;
+    },
+    out
+  );
 }
 
-function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean, gap = NARROW_GAP): [Rendered, number] {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight: boolean, gap = NARROW_GAP): [Rendered, number] {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -291,7 +300,8 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
   const ox = pad - minX + (inner - (maxX - minX)) / 2;
   const oy = pad + titleHeight - minY;
 
-  const svg = svgDocument(
+  const svg = documentOf(
+    out,
     'c4',
     width,
     height,

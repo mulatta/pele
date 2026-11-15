@@ -1,11 +1,12 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor, type IconResolver } from '../../svg/builder.js';
 import { markCrossings, type Crossings } from '../../svg/cluster.js';
 import { casing, casingsSvg, edgeInk, edgeLabelSvg, fillUnder, hollowOn, marker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -199,14 +200,14 @@ function figure(view: View, icons: IconResolver | undefined): string {
   return out;
 }
 
-export function renderUsecase(model: UsecaseModel, config: Config, options: RenderOptions): Rendered {
-  if (!runsAcross(model.direction)) return draw(model, config, options, false);
-  return turnToFit(options, (down) => draw(model, config, options, down));
+export function renderUsecase(model: UsecaseModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  if (!runsAcross(model.direction)) return draw(out, model, config, options, false);
+  return turnToFit(options, (down, o) => draw(o, model, config, options, down), out);
 }
 
 // `turned` draws a diagram that runs across as one that runs down.
-function draw(model: UsecaseModel, config: Config, options: RenderOptions, turned: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const graph = buildUsecaseGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -531,7 +532,7 @@ function draw(model: UsecaseModel, config: Config, options: RenderOptions, turne
     }
   }
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'usecase',
     width,
     height,

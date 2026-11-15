@@ -1,10 +1,11 @@
 import { cnode, compoundLayout, direction, inheritCrossedDirections, shiftLayout, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
 import { casingsSvg, edgeCasing, edgeLabelSvg, loopPath, marker, markerTrim, overFills, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { PAD_X, PAD_Y, drawShape, insetRoute, shapeFilled, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -67,13 +68,13 @@ interface NodeView {
   loops: number;
 }
 
-export function renderAgentflow(db: AgentflowDb, config: Config, options: RenderOptions): Rendered {
-  if (!runsAcross(db.direction)) return draw(db, config, options, false);
-  return turnToFit(options, (down) => draw(db, config, options, down));
+export function renderAgentflow(db: AgentflowDb, config: Config, options: RenderOptions, out: Out): Rendered {
+  if (!runsAcross(db.direction)) return draw(out, db, config, options, false);
+  return turnToFit(options, (down, o) => draw(o, db, config, options, down), out);
 }
 
 // `turned` draws a diagram that runs across as one that runs down.
-function draw(db: AgentflowDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
+function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
   const graph = agentGraph(db, config);
   const size = options.fontSize ?? 16;
   const edgeSize = Math.round(size * 0.875);
@@ -82,7 +83,7 @@ function draw(db: AgentflowDb, config: Config, options: RenderOptions, turned: b
   const minWidth = numberOption(config, 'minNodeWidth', 120);
   const pad = options.padding ?? 8;
   const icons = options.icons;
-  const srcAttrs = sourceAttrsFor(options);
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
 
   const index = new Map<string, number>();
   const views: NodeView[] = [];
@@ -394,7 +395,7 @@ function draw(db: AgentflowDb, config: Config, options: RenderOptions, turned: b
   }
   held.forEach((h, i) => put(h.edge, h.label, heldPaths[i], heldLabels[2 * i], heldLabels[2 * i + 1]));
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'agentflow',
     width,
     height,

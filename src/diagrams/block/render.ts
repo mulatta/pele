@@ -1,9 +1,10 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, casingsSvg, edgeCasing, edgeLabelSvg, marker, markerTrim, overFills, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { drawShape, shapeFilled, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -405,12 +406,12 @@ function widen(parents: View[], s: View, t: View, vertical: boolean, short: numb
   return true;
 }
 
-export function renderBlock(model: BlockModel, config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => draw(model, config, options, tight));
+export function renderBlock(model: BlockModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(options, (tight, o) => draw(o, model, config, options, tight), out);
 }
 
-function draw(model: BlockModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: BlockModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const edgeSize = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -782,7 +783,7 @@ function draw(model: BlockModel, config: Config, options: RenderOptions, tight: 
     }
   }
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'block',
     width,
     height,

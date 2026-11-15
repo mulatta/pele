@@ -1,8 +1,9 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import type { Config } from '../../preprocess.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { edgeLabelSvg, marker, markerTrim } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label, type Span } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -207,12 +208,12 @@ function pathData(p: number[], startTrim: number, endTrim: number): string {
   return d + `L${num(xs[n - 1])},${num(ys[n - 1])}`;
 }
 
-export function renderArchitecture(model: ArchitectureModel, config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => draw(model, config, options, tight));
+export function renderArchitecture(model: ArchitectureModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(options, (tight, o) => draw(o, model, config, options, tight), out);
 }
 
-function draw(model: ArchitectureModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: ArchitectureModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const iconSize = setting(config, 'iconSize', 48, 8, 512);
   const size = setting(config, 'fontSize', options.fontSize ?? 16, 4, 128);
   const groupPad = Math.min(setting(config, 'padding', 20, 0, 256), tight ? 12 : Infinity);
@@ -561,7 +562,7 @@ function draw(model: ArchitectureModel, config: Config, options: RenderOptions, 
     (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round" stroke-linejoin="round">${edgesOut}</g>` : '') +
     (labelsOut ? `<g class="pele-edge-labels" font-size="${small}">${labelsOut}</g>` : '') +
     (nodesOut ? `<g class="pele-nodes">${nodesOut}</g>` : '');
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'architecture',
     width,
     height,
