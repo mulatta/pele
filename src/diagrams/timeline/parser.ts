@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { TimelineDb } from './db.js';
 import { T, TOKEN_NAMES, tokenize } from './lexer.js';
 
@@ -11,6 +11,12 @@ export function parseTimeline(src: string, db: TimelineDb): void {
   const fail = (i: number, expected: string): never => {
     const got = types[i] === T.END ? '1' : TOKEN_NAMES[types[i]];
     throw syntaxError('timeline', src, starts[i], `Expecting ${expected}, got '${got}'`);
+  };
+
+  // Where token `k` is written. A bare `section` takes its name from the next line.
+  const lines = (k: number): void => {
+    db.line = sourceLine(src, starts[k]);
+    db.end = sourceLine(src, starts[k] + texts[k].length - 1);
   };
 
   const head = types[0];
@@ -37,12 +43,15 @@ export function parseTimeline(src: string, db: TimelineDb): void {
         db.getCommonDb().setAccDescription(text.trim());
         break;
       case T.section:
+        lines(i);
         db.addSection(text.substring(8));
         break;
       case T.period:
+        lines(i);
         db.addTask(text, 0, '');
         break;
       case T.event:
+        lines(i);
         db.addEvent(text.substring(2));
         break;
       case T.EOF:

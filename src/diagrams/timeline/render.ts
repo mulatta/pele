@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
 import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
@@ -40,6 +40,7 @@ export function renderTimeline(model: TimelineModel, config: Config, options: Re
 }
 
 function draw(model: TimelineModel, config: Config, options: RenderOptions, vertical: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -121,8 +122,11 @@ function draw(model: TimelineModel, config: Config, options: RenderOptions, vert
   const dot = (x: number, y: number, color: string): string =>
     `<circle class="pele-dot" cx="${num(x)}" cy="${num(y)}" r="4" fill="${color}" stroke="var(--_bg)" stroke-width="2"/>`;
   const open = (group: Group): string =>
-    group.section >= 0 ? `<g class="pele-cluster pele-section" data-id="${escText(model.sections[group.section].trim())}">` : '';
-  const openPeriod = (i: number): string => `<g class="pele-node pele-period" data-id="${escText(periods[i].text.trim())}">`;
+    group.section >= 0
+      ? `<g class="pele-cluster pele-section" data-id="${escText(model.sections[group.section].trim())}"${srcAttrs(model.sectionSources?.[group.section])}>`
+      : '';
+  const openPeriod = (i: number): string =>
+    `<g class="pele-node pele-period" data-id="${escText(periods[i].text.trim())}"${srcAttrs(periods[i].source)}>`;
 
   let body = '';
   let height: number;
