@@ -1,15 +1,15 @@
 import type { Out } from '../../draw/out.js';
 import type { RenderOptions, Rendered } from '../../types.js';
 
-// Draws one attempt into a fresh output of the kind `out` is, when there is one.
-function attempt(out: Out | undefined, draw: (out: Out) => Rendered): [Rendered, Out | undefined] {
-  const fresh = out?.fork();
-  return [draw(fresh as Out), fresh];
+// Draws one attempt into a fresh output of the kind `out` is.
+function attempt(out: Out, draw: (out: Out) => Rendered): [Rendered, Out] {
+  const fresh = out.fork();
+  return [draw(fresh), fresh];
 }
 
 // Keeps the attempt that was chosen.
-function keep(out: Out | undefined, [rendered, drawn]: [Rendered, Out | undefined]): Rendered {
-  if (out && drawn) out.adopt(drawn);
+function keep(out: Out, [rendered, drawn]: [Rendered, Out]): Rendered {
+  out.adopt(drawn);
   return rendered;
 }
 
@@ -22,7 +22,7 @@ export function fitWidth(
   natural: number,
   least: number,
   draw: (plot: number, narrow: boolean, out: Out) => Rendered,
-  out?: Out
+  out: Out
 ): Rendered {
   let result = attempt(out, (o) => draw(natural, false, o));
   const available = options.maxWidth;
@@ -55,7 +55,7 @@ const BREAKPOINT = 640;
 
 // For a diagram that can run across or down: draws it across, and down instead when the host
 // allows it, the width it has is under the breakpoint, across does not fit, and down is narrower.
-export function turnToFit(options: RenderOptions, draw: (down: boolean, out: Out) => Rendered, out?: Out): Rendered {
+export function turnToFit(options: RenderOptions, draw: (down: boolean, out: Out) => Rendered, out: Out): Rendered {
   const across = attempt(out, (o) => draw(false, o));
   const available = options.maxWidth;
   if (options.autoDirection === false || available === undefined || !(available > 0) || across[0].width <= available) return keep(out, across);
@@ -71,7 +71,7 @@ export function runsAcross(direction: string | undefined): boolean {
 
 // Draws a diagram with room to spare, and tightly instead when that does not fit the width the
 // host has and tight is narrower.
-export function tighten(options: RenderOptions, draw: (tight: boolean, out: Out) => Rendered, out?: Out): Rendered {
+export function tighten(options: RenderOptions, draw: (tight: boolean, out: Out) => Rendered, out: Out): Rendered {
   const loose = attempt(out, (o) => draw(false, o));
   const available = options.maxWidth;
   if (available === undefined || !(available > 0) || loose[0].width <= available) return keep(out, loose);

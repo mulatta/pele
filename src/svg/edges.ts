@@ -1,5 +1,4 @@
 import { ease } from '../layout/layered.js';
-import { Z, L, M, circleCmds, type SceneOut } from '../draw/scene.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver } from '../types.js';
 import { escText, labelSvg, num } from './builder.js';
@@ -244,20 +243,6 @@ export function marker(type: string, x: number, y: number, dx: number, dy: numbe
     return `<circle class="pele-marker" cx="${num(m.cx)}" cy="${num(m.cy)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
   }
   return `<path class="pele-marker" d="M${num(m.x0)},${num(m.y0)}L${num(m.x1)},${num(m.y1)}M${num(m.x2)},${num(m.y2)}L${num(m.x3)},${num(m.y3)}"/>`;
-}
-
-// The same marker, straight into a scene.
-export function sceneMarker(sink: SceneOut, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): void {
-  const m = markerShape(type, x, y, dx, dy);
-  if (!m) return;
-  if (m.kind === 'point') {
-    sink.shape([M, m.x, m.y, L, m.ax, m.ay, L, m.bx, m.by, Z], { fill: color, stroke });
-  } else if (m.kind === 'circle') {
-    sink.shape(circleCmds(m.cx, m.cy, m.r), { fill: color, stroke });
-  } else {
-    // A cross is only a stroke, in the edge's color.
-    sink.shape([M, m.x0, m.y0, L, m.x1, m.y1, M, m.x2, m.y2, L, m.x3, m.y3], { fill: 'none' });
-  }
 }
 
 const TENS = Array.from({ length: 23 }, (_, i) => Number(`1e${i}`));

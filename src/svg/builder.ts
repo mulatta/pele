@@ -1,5 +1,4 @@
 import { decodeEntities } from '../text/entities.js';
-import { activeSink } from '../draw/scene.js';
 import { Style } from '../text/measurer.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver, MathMarkup, SourceInfo } from '../types.js';
@@ -65,11 +64,6 @@ export function num(value: number): string {
 
 // Writes a measured label as SVG text centered on (cx, cy).
 export function labelSvg(label: Label, cx: number, cy: number, attrs: string, icons?: IconResolver): string {
-  const sink = activeSink();
-  if (sink) {
-    sink.label(label, cx, cy, attrs);
-    return '';
-  }
   const lines = label.lines;
   if (lines.length === 0) return '';
   const lh = label.lineHeight;

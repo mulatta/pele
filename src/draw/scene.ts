@@ -1,12 +1,11 @@
 // Scene output: a renderer-neutral vector scene written while a diagram is
 // drawn, instead of SVG text that a host would have to parse again.
 //
-// A renderer that supports it checks `activeSink()`: when it is set, the
-// renderer reports its structure (sections, items, translations) and the
-// geometry it already holds as numbers. Labels go in straight from their
-// measured layout. Shape outlines and markers are small SVG fragments that
-// are parsed once per distinct fragment and cached, so no document-sized SVG
-// is ever built or read.
+// A renderer draws into it through the Out calls: structure (sections, items,
+// translations) and the geometry it holds as numbers go in as they are, labels
+// straight from their measured layout. SVG fragments (a shape's outline, a
+// marker) are read the way the SVG they are part of would be, and small ones
+// are cached, as the same pieces come again.
 //
 // The data matches herdr-scene's scene contract, version 2: paint stays a
 // token (`var(--_s)`) for the host's theme to resolve.
@@ -291,9 +290,6 @@ export function parsePathData(d: string): Path {
 const ellipse = (cx: number, cy: number, rx: number, ry: number): Path => [
   M, cx - rx, cy, A, rx, ry, 0, 0, 1, cx + rx, cy, A, rx, ry, 0, 0, 1, cx - rx, cy, Z,
 ];
-export const ellipseCmds = ellipse;
-export const circleCmds = (cx: number, cy: number, r: number): Path => ellipse(cx, cy, r, r);
-export const polygonCmds = (list: number[]): Path => points(list, true);
 
 function roundRect(x: number, y: number, w: number, h: number, rx: number, ry: number): Path {
   rx = Math.min(rx, w / 2);
@@ -337,13 +333,6 @@ export function shift(cmds: Path, dx: number, dy: number): Path {
     }
   }
   return o;
-}
-
-// How many commands a path holds.
-export function cmdCount(cmds: Path): number {
-  let n = 0;
-  for (let i = 0; i < cmds.length; i += 1 + ARGC[cmds[i]]) n++;
-  return n;
 }
 
 function cmdsBox(cmds: Path): Box {
@@ -601,31 +590,9 @@ export class SceneOut implements Out {
   readonly numbers = true;
   private items: SceneItem[] = [];
   private skipped: Record<string, number> = {};
-  // Geometry a helper handed over while its fragment was still being written; the fragment holds
-  // a placeholder for it, so the parts of a shape are added in the order they are written.
-  private deferred: (() => void)[] = [];
 
-  constructor(private rootLook: Look = sceneRoot(16)) {
+  constructor(private readonly rootLook: Look = sceneRoot(16)) {
     this.section('main');
-  }
-
-  // Starts over: a renderer that draws a diagram twice to compare keeps only the last attempt's
-  // output, and takes each attempt's scene with finish().
-  reset(rootLook?: Look): void {
-    if (rootLook) this.rootLook = rootLook;
-    this.sections.clear();
-    this.items = [];
-    this.skipped = {};
-    this.deferred = [];
-    this.framing = null;
-    this.currentName = '';
-    this.section('main');
-  }
-
-  // Keeps `draw` for the fragment being written and returns its placeholder.
-  defer(draw: () => void): string {
-    this.deferred.push(draw);
-    return `\u0000${this.deferred.length - 1}\u0000`;
   }
 
   // Switches to a named layer of the picture, creating it with the given inherited attributes.
@@ -663,10 +630,6 @@ export class SceneOut implements Out {
 
   // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
   // where it comes from in the text, read as `data-` attributes would be (see sourceAttrs).
-  begin(id: string | undefined, kind: string, dx = 0, dy = 0, attrs = '', source?: SourceInfo): void {
-    this.open(id, kind, dx, dy, attrs ? parseLook(attrs) : null, source);
-  }
-
   private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo): void {
     const f = this.top;
     if (f.hidden) {
@@ -746,15 +709,6 @@ export class SceneOut implements Out {
   // A small SVG fragment: a shape's outline, an arrowhead.
   fragment(svg: string): void {
     if (!svg) return;
-    if (svg.includes('\u0000')) {
-      // Placeholders sit between whole elements: written text, then held geometry, in turn.
-      const parts = svg.split('\u0000');
-      for (let i = 0; i < parts.length; i++) {
-        if (i % 2) this.deferred[Number(parts[i])]?.();
-        else if (parts[i]) this.fragment(parts[i]);
-      }
-      return;
-    }
     for (const op of parseFragment(svg)) {
       switch (op.op) {
         case 'begin':
@@ -830,9 +784,9 @@ export class SceneOut implements Out {
     this.touch({ x0, y0: t.y - base.size, x1: x0 + w, y1: t.y + base.size * 0.25 });
   }
 
-  // The scene, with sections painted in `order` (others after, in creation order).
-  finish(order: string[], width: number, height: number): Scene {
-    const names = order.length === 0 ? this.sections.keys() : [...order.filter((n) => this.sections.has(n)), ...[...this.sections.keys()].filter((n) => !order.includes(n))];
+  // The scene, with sections painted in the order they were made.
+  private finish(width: number, height: number): Scene {
+    const names = this.sections.keys();
     const shapes: SceneShape[] = [];
     const texts: SceneText[] = [];
     // Items in the order the SVG writes them, section by section, as a host reading it would
@@ -874,39 +828,6 @@ export class SceneOut implements Out {
       const b = this.items[i].box;
       if (b) box(b);
     }
-  }
-
-  // One unwrapped line of text at (x, y) with the given anchor, as a <text> element without
-  // tspans: a member of a class, a cardinality.
-  textAt(x: number, y: number, text: string, attrs: string, anchor: 'start' | 'middle' | 'end'): void {
-    const look = merge(this.top.look, parseLook(attrs));
-    const base = {
-      size: len(look['font-size'], 16),
-      weight: weight(look['font-weight'], 400),
-      italic: look['font-style'] === 'italic',
-      paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
-    };
-    this.put(x, y, [{ text }], base, anchor);
-  }
-
-  // One line of a label as start-anchored text at (x, y), the baseline, for a renderer that sets
-  // its own columns (a table cell) instead of centering the label.
-  startText(line: Label['lines'][number], size: number, x: number, y: number, attrs = ''): void {
-    const look = merge(this.top.look, parseLook(attrs));
-    const base = {
-      size,
-      weight: weight(look['font-weight'], 400),
-      italic: look['font-style'] === 'italic',
-      paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
-    };
-    const spans = line.map((s) => {
-      const out: SceneSpan = { text: s.text };
-      if (s.style & Style.Bold) out.weight = 700;
-      if (s.style & Style.Italic) out.italic = true;
-      if (s.style & Style.Mono) out.mono = true;
-      return out;
-    });
-    this.put(x, y, spans, base, 'start');
   }
 
   // ---------------------------------------------------------------- Out
@@ -965,7 +886,7 @@ export class SceneOut implements Out {
   raw(): void {}
 
   done(_type: string, width: number, height: number): string {
-    this.scene = this.finish([], width, height);
+    this.scene = this.finish(width, height);
     return '';
   }
 }
@@ -977,21 +898,4 @@ function textBase(look: Look, size: number): { size: number; weight: number; ita
     italic: look['font-style'] === 'italic',
     paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
   };
-}
-
-let active: SceneOut | null = null;
-
-// The sink of the scene being drawn, or null while drawing SVG.
-export function activeSink(): SceneOut | null {
-  return active;
-}
-
-export function withSink<T>(sink: SceneOut, draw: () => T): T {
-  const before = active;
-  active = sink;
-  try {
-    return draw();
-  } finally {
-    active = before;
-  }
 }
