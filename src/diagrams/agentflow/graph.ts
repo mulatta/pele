@@ -2,6 +2,7 @@ import { assignColorSlots } from './colorSlots.js';
 import type { AgentflowDb } from './db.js';
 import { normaliseNodeShapes, resolveShapeAlias } from './shapes.js';
 import type { LabelType, Metadata } from './types.js';
+import type { SourceInfo } from '../../types.js';
 import type { YamlValue } from '../../util/yaml.js';
 
 export interface GraphNode {
@@ -23,6 +24,7 @@ export interface GraphNode {
   // What a node is, which picks its palette slot.
   kind?: string;
   metadata?: Metadata;
+  source?: SourceInfo;
 }
 
 export interface GraphEdge {
@@ -45,6 +47,7 @@ export interface GraphEdge {
   animation: YamlValue | undefined;
   curve: string | undefined;
   metadata: Metadata | undefined;
+  source?: SourceInfo;
 }
 
 export interface AgentGraph {
@@ -156,6 +159,7 @@ export function buildAgentGraph(db: AgentflowDb, paletteLength: number, defaultC
       dir: sg.dir,
       isGroup: !collapsed,
       metadata: collapsed ? { ...sg.metadata, containerType: sg.type } : sg.metadata,
+      source: sg.source,
     };
     nodes.push(node);
     byId.set(sg.id, node);
@@ -186,6 +190,7 @@ export function buildAgentGraph(db: AgentflowDb, paletteLength: number, defaultC
       metadata: vertex.metadata,
       isGroup: false,
       shape: type === 'square' || type === undefined ? 'squareRect' : type,
+      source: vertex.source,
     };
     nodes.push(node);
     byId.set(vertex.id, node);
@@ -220,6 +225,7 @@ export function buildAgentGraph(db: AgentflowDb, paletteLength: number, defaultC
       animation: raw.animation,
       curve: raw.interpolate || db.defaultInterpolate || defaultCurve,
       metadata: raw.metadata,
+      source: raw.source,
     });
   });
 

@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { YamlValue } from '../../util/yaml.js';
 
 export type LabelType = 'text' | 'string' | 'markdown';
@@ -34,6 +35,7 @@ export interface AgentNode {
   linkTarget?: string;
   metadata?: Metadata;
   isConnector?: boolean;
+  source?: SourceInfo;
 }
 
 export interface AgentEdge {
@@ -53,6 +55,7 @@ export interface AgentEdge {
   animate?: YamlValue;
   animation?: YamlValue;
   metadata?: Metadata;
+  source?: SourceInfo;
 }
 
 export interface AgentClassDef {
@@ -70,6 +73,7 @@ export interface AgentSubgraph {
   labelType: LabelType;
   type: 'flow';
   metadata?: Metadata;
+  source?: SourceInfo;
 }
 
 export interface LinkInfo {
