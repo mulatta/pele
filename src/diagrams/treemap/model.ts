@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { TreemapAst } from './parser.js';
 
 export interface TreemapNode {
@@ -7,6 +8,7 @@ export interface TreemapNode {
   value?: number;
   classSelector?: string;
   cssCompiledStyles?: string[];
+  source?: SourceInfo;
 }
 
 export interface TreemapItem {
@@ -16,6 +18,7 @@ export interface TreemapItem {
   value?: number;
   classSelector?: string;
   cssCompiledStyles?: string[];
+  source?: SourceInfo;
 }
 
 export interface TreemapModel {
@@ -37,6 +40,7 @@ export function buildHierarchy(items: TreemapItem[]): TreemapNode[] {
     node.classSelector = item.classSelector;
     if (item.cssCompiledStyles) node.cssCompiledStyles = item.cssCompiledStyles;
     if (leaf && item.value !== undefined) node.value = item.value;
+    if (item.source) node.source = item.source;
 
     while (stack.length > 0 && stack[stack.length - 1].level >= item.level) stack.pop();
     if (stack.length === 0) roots.push(node);
@@ -69,6 +73,7 @@ export function buildTreemap(ast: TreemapAst, title: string | undefined): Treema
       value: item.$type === 'Leaf' ? item.value : undefined,
       classSelector: item.classSelector,
       cssCompiledStyles: styles && styles.length > 0 ? styles : undefined,
+      source: row.source,
     });
   }
 

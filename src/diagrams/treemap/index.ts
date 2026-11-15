@@ -5,6 +5,6 @@ import { renderTreemap } from './render.js';
 
 export const treemap: Diagram<TreemapModel> = {
   type: 'treemap',
-  parse: (source, _config, title) => buildTreemap(parseTreemap(source), title),
+  parse: (source, _config, title) => buildTreemap(parseTreemap(source, true), title),
   render: renderTreemap,
 };
