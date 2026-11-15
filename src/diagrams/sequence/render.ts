@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
 import { ink } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
@@ -220,6 +220,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
+  const srcAttrs = sourceAttrsFor(options);
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('messages');
   const messageMeasurer: TextMeasurer = monospaced ? { width: (t, s, style) => measurer.width(t, s, style | Style.Mono) } : measurer;
   const icons = options.icons;
@@ -655,7 +656,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     return (
       `<g class="pele-node pele-actor pele-actor-${col.kind}${footer ? ' pele-actor-footer' : ''}${
         typeof cls === 'string' ? classNames(cls) : ''
-      }" data-id="${escText(col.id)}">` +
+      }" data-id="${escText(col.id)}"${srcAttrs(col.actor.source)}>` +
       drawActor(col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : '') +
       '</g>'
     );
@@ -691,12 +692,15 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
       }
     } else if (frame) {
       stack.pop();
+      // Asked for sources, a block is a part too: it has no name, so it goes by its first entry's id.
+      const start = messages[frame.dividers[0]];
+      const part = options.sourceInfo ? ` data-id="i${escText(start.id)}"${srcAttrs(start.source)}` : '';
       const bottom = y + 12;
       const x = num(frame.x0);
       const w = num(frame.x1 - frame.x0);
       if (frame.kind === 'rect') {
         const fill = frame.fill ? resolveStyle([`fill:${frame.fill}`]).shape : '';
-        rectsOut.push(`<rect class="pele-rect" x="${x}" y="${num(frame.top)}" width="${w}" height="${num(bottom - frame.top)}"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>`);
+        rectsOut.push(`<rect class="pele-rect"${part} x="${x}" y="${num(frame.top)}" width="${w}" height="${num(bottom - frame.top)}"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>`);
       } else {
         let inner = `<rect x="${x}" y="${num(frame.top)}" width="${w}" height="${num(bottom - frame.top)}" fill="none"${ROUNDED}/>`;
         for (let k = 0; k < frame.dividerY.length; k++) {
@@ -717,7 +721,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
             frame.top + Math.max(TAB_H, frame.title.height) / 2,
             true
           );
-        framesOut += `<g class="pele-frame pele-frame-${frame.kind}">${inner}</g>`;
+        framesOut += `<g class="pele-frame pele-frame-${frame.kind}"${part}>${inner}</g>`;
       }
       y = bottom;
     } else if (type === LINETYPE.ALT_ELSE || type === LINETYPE.PAR_AND || type === LINETYPE.CRITICAL_OPTION) {
@@ -736,7 +740,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
       else if (m.placement === PLACEMENT.LEFTOF) x += leftEdge(a) - a.x;
       extend(x, x + view.w);
       notesOut +=
-        `<g class="pele-note" data-id="i${escText(m.id)}">` +
+        `<g class="pele-note" data-id="i${escText(m.id)}"${srcAttrs(m.source)}>` +
         `<rect x="${num(x)}" y="${num(top)}" width="${num(view.w)}" height="${num(h)}"${ROUNDED}/>` +
         labelSvg(view.label, x + view.w / 2, top + h / 2, ' class="pele-label" stroke="none" fill="var(--_fg)"', icons) +
         '</g>';
@@ -853,7 +857,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
         }
         if (creating) y = lineY + b.size.h / 2 - 6;
       }
-      edgesOut += `<g class="pele-edge pele-message" data-id="i${escText(m.id)}"${line ? ` stroke="${line}"` : ''}>${inner}</g>`;
+      edgesOut += `<g class="pele-edge pele-message" data-id="i${escText(m.id)}"${srcAttrs(m.source)}${line ? ` stroke="${line}"` : ''}>${inner}</g>`;
       y = Math.max(y, lineY);
       if (a.destroyAt === i) y = Math.max(y, destroy(a, lineY));
       if (b.destroyAt === i && b !== a) y = Math.max(y, destroy(b, lineY));
@@ -877,7 +881,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     actorsOut += actorSvg(col, col.top, false);
     const end = col.lifeEnd >= 0 ? col.lifeEnd : y;
     if (end > col.lifeStart) {
-      lifelines += `<path class="pele-lifeline" data-id="${escText(col.id)}" d="M${num(col.x)},${num(col.lifeStart)}V${num(end)}"/>`;
+      lifelines += `<path class="pele-lifeline" data-id="${escText(col.id)}"${srcAttrs(col.actor.source)} d="M${num(col.x)},${num(col.lifeStart)}V${num(end)}"/>`;
     }
   }
 
@@ -886,7 +890,7 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     const [x0, x1] = boxEdges(run);
     const fill = run.box.fill === 'transparent' ? '' : resolveStyle([`fill:${run.box.fill}`]).shape;
     boxesOut +=
-      `<g class="pele-cluster pele-box"${run.box.name ? ` data-id="${escText(run.box.name)}"` : ''}>` +
+      `<g class="pele-cluster pele-box"${run.box.name ? ` data-id="${escText(run.box.name)}"` : ''}${srcAttrs(run.box.source)}>` +
       `<rect x="${num(x0)}" y="0" width="${num(x1 - x0)}" height="${num(bottom + boxPad)}" fill="var(--_a)" stroke="var(--_b)"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>` +
       labelSvg(run.title, (x0 + x1) / 2, boxPad / 2 + 2 + run.title.height / 2, ` class="pele-cluster-label"${inkOn(run.box.fill) || ' fill="var(--_m)"'}`, icons) +
       '</g>';

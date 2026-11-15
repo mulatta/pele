@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 // The message kinds, numbered as in Mermaid.
 export const enum LINETYPE {
   SOLID = 0,
@@ -75,6 +77,7 @@ export interface SeqBox {
   wrap: boolean;
   fill: string;
   actorKeys: string[];
+  source?: SourceInfo;
 }
 
 export interface SeqActor {
@@ -89,6 +92,7 @@ export interface SeqActor {
   // The id of the page element named by a `details` statement. Pele has no page to read it from.
   details?: string;
   type: string;
+  source?: SourceInfo;
 }
 
 export interface SeqNumbering {
@@ -108,6 +112,7 @@ export interface SeqMessage {
   placement?: number;
   centralConnection?: number;
   answer?: unknown;
+  source?: SourceInfo;
 }
 
 export interface SeqNote {
@@ -145,6 +150,10 @@ export interface SeqStatement {
   sequenceIndex?: number;
   sequenceIndexStep?: number;
   sequenceVisible?: boolean;
+  // The line of the text the statement starts on, and for a block (a box, a loop, alt, ...) the
+  // line of its `end`.
+  line?: number;
+  end?: number;
 }
 
 export type SeqItem = SeqStatement | string | SeqItem[];

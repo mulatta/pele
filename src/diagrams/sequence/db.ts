@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { parseYaml, type YamlValue } from '../../util/yaml.js';
 import { isCssColor } from './colors.js';
 import {
@@ -60,6 +61,9 @@ function entries(value: unknown): [string, unknown][] {
   return value !== null && typeof value === 'object' ? Object.entries(value) : [];
 }
 
+// A model compared with Mermaid's has no source key at all unless sources were asked for.
+const sourced = (source: SourceInfo | undefined): { source?: SourceInfo } => (source === undefined ? {} : { source });
+
 export class SeqDb implements SequenceModel {
   readonly type = 'sequence' as const;
   actors = new Map<string, SeqActor>();
@@ -78,6 +82,10 @@ export class SeqDb implements SequenceModel {
   private wrapEnabled: boolean | undefined;
   private sequenceWrap: boolean;
   private active = new Map<string, number>();
+  // The line of the statement being applied: what it adds comes from there.
+  private line: number | undefined;
+  // For a statement that opens a block (a box, a loop, alt, ...): the line of its `end`.
+  private end: number | undefined;
 
   constructor(options: SeqDbOptions = {}) {
     this.wrapEnabled = options.wrap;
@@ -118,7 +126,7 @@ export class SeqDb implements SequenceModel {
   }
 
   addBox(data: SeqBoxData): void {
-    this.currentBox = { name: data.text, wrap: data.wrap ?? this.autoWrap(), fill: data.color, actorKeys: [] };
+    this.currentBox = { name: data.text, wrap: data.wrap ?? this.autoWrap(), fill: data.color, actorKeys: [], ...sourced(this.sourceOf(undefined, undefined)) };
     this.boxes.push(this.currentBox);
   }
 
@@ -172,6 +180,7 @@ export class SeqDb implements SequenceModel {
       links: new Map(),
       properties: new Map(),
       type: type ?? 'participant',
+      ...sourced(this.line === undefined ? undefined : { line: this.line, symbol: id }),
     });
     if (this.prevActor) {
       const prev = this.actors.get(this.prevActor);
@@ -189,6 +198,7 @@ export class SeqDb implements SequenceModel {
       message: message.text,
       wrap: message.wrap ?? this.autoWrap(),
       answer,
+      ...sourced(this.sourceOf(from, to)),
     });
   }
 
@@ -217,8 +227,16 @@ export class SeqDb implements SequenceModel {
       type,
       activate,
       centralConnection: centralConnection ?? 0,
+      ...sourced(this.sourceOf(from, to)),
     });
     return true;
+  }
+
+  // Where a message comes from: the statement's lines, and its two ends when it has both.
+  private sourceOf(from: string | undefined, to: string | undefined): SourceInfo | undefined {
+    if (this.line === undefined) return undefined;
+    const at: SourceInfo = this.end !== undefined && this.end > this.line ? { line: this.line, end: this.end } : { line: this.line };
+    return from !== undefined && to !== undefined ? { ...at, from, to } : at;
   }
 
   addNote(actor: string | string[], placement: number, message: { text: string; wrap?: boolean }): void {
@@ -234,6 +252,7 @@ export class SeqDb implements SequenceModel {
       wrap,
       type: LINETYPE.NOTE,
       placement,
+      ...sourced(this.line === undefined ? undefined : { line: this.line }),
     });
   }
 
@@ -302,6 +321,8 @@ export class SeqDb implements SequenceModel {
   }
 
   private applyOne(param: SeqStatement): void {
+    this.line = param.line;
+    this.end = param.end;
     const actor = param.actor as string;
     switch (param.type) {
       case 'sequenceIndex':
