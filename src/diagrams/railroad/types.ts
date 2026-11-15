@@ -1,6 +1,9 @@
+import type { SourceInfo } from '../../types.js';
+
 export type RailroadNode =
   | { type: 'terminal'; value: string }
-  | { type: 'nonterminal'; name: string }
+  // `source`: where this reference to the rule is written.
+  | { type: 'nonterminal'; name: string; source?: SourceInfo }
   | { type: 'special'; text: string }
   | { type: 'sequence'; elements: RailroadNode[] }
   | { type: 'choice'; alternatives: RailroadNode[] }
@@ -11,6 +14,7 @@ export type RailroadNode =
 export interface RailroadRule {
   name: string;
   definition: RailroadNode;
+  source?: SourceInfo;
 }
 
 // Which of Mermaid's four grammars the text was written in.

@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   DIRECTIVE,
   Reader,
@@ -103,6 +105,24 @@ export function unescape(text: string): string {
   return out;
 }
 
+// Where the tokens from `first` to the last one read are written, under `symbol`, when the host
+// asks for sources. They may run over several lines.
+export function stated(r: Reader, first: number, symbol: string | undefined): SourceInfo | undefined {
+  const { src, starts, ends } = r.tokens;
+  const line = sourceLine(src, starts[first]);
+  const end = sourceLine(src, ends[r.i - 1] - 1);
+  if (line === undefined || end === undefined) return undefined;
+  const source: SourceInfo = end > line ? { line, end } : { line };
+  if (symbol !== undefined) source.symbol = symbol;
+  return source;
+}
+
+// A position kept in a syntax tree under `$`, apart from what the grammar reads, as Langium
+// keeps its `$cstNode`.
+export interface Stated {
+  $source?: SourceInfo;
+}
+
 export interface Grammar<Type extends string, Rule> {
   $type: Type;
   title?: string;
@@ -113,7 +133,7 @@ export interface Grammar<Type extends string, Rule> {
 
 // Parses the keyword, then any titles and accessibility statements, then rules to the end of the text.
 // Every table starts with its keyword and has TITLE, ACC_TITLE, and ACC_DESCR in a row from `meta`.
-export function parseGrammar<Type extends string, Rule>(
+export function parseGrammar<Type extends string, Rule extends { name: string } & Stated>(
   src: string,
   types: readonly TokenType[],
   $type: Type,
@@ -138,7 +158,14 @@ export function parseGrammar<Type extends string, Rule>(
       break;
     }
   }
-  while (r.kind !== -1) ast.rules.push(rule(r));
+  while (r.kind !== -1) {
+    const first = r.i;
+    const parsed = rule(r);
+    // A rule runs from its name to its semicolon.
+    const source = stated(r, first, parsed.name);
+    if (source !== undefined) parsed.$source = source;
+    ast.rules.push(parsed);
+  }
   return ast;
 }
 
@@ -167,7 +194,8 @@ export function parts<T>(node: T): readonly T[] {
 }
 
 export const terminal = (value: string): RailroadNode => ({ type: 'terminal', value });
-export const nonterminal = (name: string): RailroadNode => ({ type: 'nonterminal', name });
+export const nonterminal = (name: string, source: SourceInfo | undefined): RailroadNode =>
+  source === undefined ? { type: 'nonterminal', name } : { type: 'nonterminal', name, source };
 export const special = (text: string): RailroadNode => ({ type: 'special', text });
 export const optional = (element: RailroadNode): RailroadNode => ({ type: 'optional', element });
 export const repetition = (element: RailroadNode, min: number, max = Infinity): RailroadNode => ({ type: 'repetition', element, min, max });
@@ -183,10 +211,14 @@ export function choice(alternatives: RailroadNode[]): RailroadNode {
 
 // Turns each rule's syntax tree into the common model, given how one node is built from its parts.
 export function toRules<Part>(
-  ast: { rules: { name: string; definition: Part }[] },
+  ast: { rules: ({ name: string; definition: Part } & Stated)[] },
   build: (part: Part, kids: RailroadNode[]) => RailroadNode
 ): RailroadRule[] {
-  return ast.rules.map((rule) => ({ name: rule.name, definition: fold(rule.definition, parts, build) }));
+  return ast.rules.map((rule) => {
+    const out: RailroadRule = { name: rule.name, definition: fold(rule.definition, parts, build) };
+    if (rule.$source !== undefined) out.source = rule.$source;
+    return out;
+  });
 }
 
 // Rebuilds a tree bottom-up without recursion, so that nesting depth is bounded by memory, not by the stack.

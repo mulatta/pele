@@ -12,10 +12,12 @@ import {
   parseGrammar,
   repetition,
   sequence,
+  stated,
   terminal,
   title,
   toRules,
   type Grammar,
+  type Stated,
 } from './common.js';
 import type { RailroadNode, RailroadRule } from './types.js';
 
@@ -68,7 +70,7 @@ export const ABNF_TOKENS: readonly TokenType[] = [
 
 export type AbnfPrimary =
   | { $type: 'AbnfStringLiteral' | 'AbnfNumVal'; value: string }
-  | { $type: 'AbnfRuleName'; name: string }
+  | ({ $type: 'AbnfRuleName'; name: string } & Stated)
   | { $type: 'AbnfGroup' | 'AbnfOptionalGroup'; element: AbnfAlternation };
 
 export interface AbnfElement {
@@ -87,7 +89,7 @@ export interface AbnfAlternation {
   alternatives: AbnfConcatenation[];
 }
 
-export interface AbnfRule {
+export interface AbnfRule extends Stated {
   $type: 'AbnfRule';
   name: string;
   definition: AbnfAlternation;
@@ -125,9 +127,11 @@ function alternation(r: Reader): AbnfAlternation {
       case T.number:
         primary = { $type: 'AbnfNumVal', value: r.take() };
         break;
-      case T.name:
-        primary = { $type: 'AbnfRuleName', name: r.take() };
+      case T.name: {
+        const name = r.take();
+        primary = { $type: 'AbnfRuleName', name, $source: stated(r, r.i - 1, name) };
         break;
+      }
       case T.group:
       case T.option: {
         r.i++;
@@ -200,7 +204,7 @@ function node(part: Part, kids: RailroadNode[]): RailroadNode {
     case 'AbnfNumVal':
       return terminal(part.value);
     case 'AbnfRuleName':
-      return nonterminal(part.name);
+      return nonterminal(part.name, part.$source);
     case 'AbnfGroup':
       return kids[0];
     case 'AbnfOptionalGroup':

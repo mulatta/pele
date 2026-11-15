@@ -15,11 +15,13 @@ import {
   repetition,
   sequence,
   special,
+  stated,
   terminal,
   title,
   toRules,
   unescape,
   type Grammar,
+  type Stated,
 } from './common.js';
 import type { RailroadNode, RailroadRule } from './types.js';
 
@@ -104,7 +106,7 @@ export const EBNF_TOKENS: readonly TokenType[] = [
 
 export type EbnfPrimary =
   | { $type: 'EbnfTerminal'; value: string }
-  | { $type: 'EbnfNonTerminal'; name: string }
+  | ({ $type: 'EbnfNonTerminal'; name: string } & Stated)
   | { $type: 'EbnfSpecial'; text: string }
   | { $type: 'EbnfGroup' | 'EbnfOptional' | 'EbnfRepetition'; element: EbnfChoice };
 
@@ -128,7 +130,7 @@ export interface EbnfChoice {
   alternatives: EbnfSequence[];
 }
 
-export interface EbnfRule {
+export interface EbnfRule extends Stated {
   $type: 'EbnfRule';
   name: string;
   definition: EbnfChoice;
@@ -166,9 +168,11 @@ function definition(r: Reader): EbnfChoice {
       case T.string:
         primary = { $type: 'EbnfTerminal', value: unescape(r.take()) };
         break;
-      case T.id:
-        primary = { $type: 'EbnfNonTerminal', name: r.take() };
+      case T.id: {
+        const name = r.take();
+        primary = { $type: 'EbnfNonTerminal', name, $source: stated(r, r.i - 1, name) };
         break;
+      }
       case T.special:
         primary = { $type: 'EbnfSpecial', text: r.take().slice(1, -1).trim() };
         break;
@@ -259,7 +263,7 @@ function node(part: Part, kids: RailroadNode[]): RailroadNode {
     case 'EbnfTerminal':
       return terminal(part.value);
     case 'EbnfNonTerminal':
-      return nonterminal(part.name);
+      return nonterminal(part.name, part.$source);
     case 'EbnfSpecial':
       return special(part.text);
     case 'EbnfGroup':
