@@ -1,6 +1,5 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ink } from '../../svg/ink.js';
 import { resolveStyle, seriesColor, type ResolvedStyle } from '../../svg/theme.js';
@@ -162,12 +161,17 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
   const placed: Circle[] = circles.map((c) => ({ id: c.id, x: c.x * scale + ox, y: c.y * scale + oy, r: c.r * scale }));
 
-  let sets = '';
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  // Layers are painted in the order they are made; an empty one is left out.
+  out.section('sets', ' class="pele-venn-sets"', true);
+  out.section('overlaps', ' class="pele-venn-overlaps"');
+  out.section('labels', ' class="pele-venn-labels"');
+  out.section('sets');
   placed.forEach((c, i) => {
     const color = seriesColor(i);
     const region = regions.get(c.id);
     const style = region?.style ?? NO_STYLE;
-    sets += `<circle class="pele-venn-set" data-id="${escText(c.id)}"${srcAttrs(region?.source)} cx="${num(c.x)}" cy="${num(c.y)}" r="${num(c.r)}" fill="${color}" fill-opacity="0.2" stroke="${color}"${style.shape}/>`;
+    out.circle(c.x, c.y, c.r, ` fill="${color}" fill-opacity="0.2" stroke="${color}"${style.shape}`, { cls: 'pele-venn-set', id: c.id, source: region?.source });
   });
 
   const painted = [...regions.values()].filter((r) => r.sets.length > 1 && r.style.shape !== '');
@@ -179,14 +183,15 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     return fill;
   };
 
-  let overlaps = '';
-  let labels = '';
   for (const region of regions.values()) {
-    const id = escText(region.sets.join('|'));
+    const id = region.sets.join('|');
     // An overlap is only drawn when a style gives it a look of its own; otherwise the circles show it.
     if (region.sets.length > 1 && region.style.shape !== '') {
       const d = regionPath(region.inside.map((i) => placed[i]), num);
-      if (d !== '') overlaps += `<path class="pele-venn-overlap" data-id="${id}"${srcAttrs(region.source)} d="${d}" fill="none"${region.style.shape}/>`;
+      if (d !== '') {
+        out.section('overlaps');
+        out.path(d, ` fill="none"${region.style.shape}`, undefined, { cls: 'pele-venn-overlap', id, source: region.source });
+      }
     }
     let total = 0;
     for (const line of region.lines) total += line.label.height;
@@ -194,7 +199,8 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     const x = region.spot.x * scale + ox;
     let y = region.spot.y * scale + oy - total / 2;
     const fill = under(region);
-    let content = '';
+    out.section('labels');
+    out.group({ cls: 'pele-venn-region', id, source: region.source });
     for (const line of region.lines) {
       const own = line.id === undefined ? region.style.text : styleOf(line.id).text;
       const color = ink(fill, own);
@@ -202,23 +208,13 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
         line.id === undefined
           ? ` class="pele-label"${line.size === size ? '' : ` font-size="${line.size}"`}${color ? ` fill="${color}"` : ''}${own}`
           : ` class="pele-venn-text" data-id="${escText(line.id)}"${srcAttrs(line.source)} font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
-      content += labelSvg(line.label, x, y + line.label.height / 2, attrs);
+      // A text with its own data-id is an item, which only a fragment can make from attributes.
+      if (line.id === undefined) out.label(line.label, x, y + line.label.height / 2, attrs);
+      else out.fragment(labelSvg(line.label, x, y + line.label.height / 2, attrs));
       y += line.label.height;
     }
-    labels += `<g class="pele-venn-region" data-id="${id}"${srcAttrs(region.source)}>${content}</g>`;
+    out.end();
   }
 
-  const svg = documentOf(out, 
-    'venn',
-    width,
-    height,
-    size,
-    options,
-    {},
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      `<g class="pele-venn-sets">${sets}</g>` +
-      (overlaps ? `<g class="pele-venn-overlaps">${overlaps}</g>` : '') +
-      (labels ? `<g class="pele-venn-labels">${labels}</g>` : '')
-  );
-  return { svg, width, height, links: [] };
+  return { svg: out.done('venn', width, height, size, options, {}), width, height, links: [] };
 }
