@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { escText, num, sourceAttrsFor } from '../../svg/builder.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -46,7 +45,13 @@ export function closedRoundCurve(points: Point[], tension: number): string {
   return d + ' Z';
 }
 
-function polygon(points: Point[]): string {
+function flat(points: Point[]): number[] {
+  const out: number[] = [];
+  for (const p of points) out.push(p.x, p.y);
+  return out;
+}
+
+function polygonText(points: Point[]): string {
   let out = '';
   for (const p of points) out += (out ? ' ' : '') + num(p.x) + ',' + num(p.y);
   return out;
@@ -90,31 +95,24 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
   let y0 = -height / 2 - option(config, 'marginTop', 16, 0, 2000);
   let y1 = height / 2 + option(config, 'marginBottom', 16, 0, 2000);
 
-  let grid = '';
-  for (let i = 0; i < ticks; i++) {
-    const r = Math.min(radius, (radius * (i + 1)) / ticks);
-    if (graticule === 'circle') grid += `<circle r="${num(r)}"/>`;
-    else grid += `<polygon points="${polygon(unit.map((u) => ({ x: u.x * r, y: u.y * r })))}"/>`;
-  }
-
-  let spokes = '';
-  let labels = '';
+  const spokes = out.pen();
+  const labels: { label: Label; cx: number; cy: number; i: number }[] = [];
   unit.forEach((u, i) => {
     const reach = radius * axisScale;
-    spokes += `M0,0L${num(u.x * reach)},${num(u.y * reach)}`;
+    spokes.M(0, 0).L(u.x * reach, u.y * reach);
     const label = layoutLabel(axes[i].label, false, measurer, small, 4000);
     const at = radius * labelFactor + 6;
     // Each label hangs off its axis on the side away from the center.
     const cx = u.x * at + (u.x > 0.01 ? label.width / 2 : u.x < -0.01 ? -label.width / 2 : 0);
     const cy = u.y * at + (u.y > 0.01 ? label.height / 2 : u.y < -0.01 ? -label.height / 2 : 0);
-    labels += `<g class="pele-axis-label" data-id="${escText(axes[i].name)}"${srcAttrs(axes[i].source)}>${labelSvg(label, cx, cy, '')}</g>`;
+    labels.push({ label, cx, cy, i });
     x0 = Math.min(x0, cx - label.width / 2);
     x1 = Math.max(x1, cx + label.width / 2);
     y0 = Math.min(y0, cy - label.height / 2);
     y1 = Math.max(y1, cy + label.height / 2);
   });
 
-  let shapes = '';
+  const shapes: { index: number; points: Point[] }[] = [];
   curves.forEach((curve, index) => {
     // Mermaid leaves out a curve that does not have a value for every axis.
     if (curve.entries.length !== count) return;
@@ -123,12 +121,7 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
       const safe = Number.isFinite(r) ? r : 0;
       return { x: unit[i].x * safe, y: unit[i].y * safe };
     });
-    const color = seriesColor(index);
-    const attrs = ` class="pele-curve" data-id="${escText(curve.name)}"${srcAttrs(curve.source)} fill="${color}" stroke="${color}"`;
-    shapes +=
-      graticule === 'circle'
-        ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
-        : `<polygon${attrs} points="${polygon(points)}"/>`;
+    shapes.push({ index, points });
   });
 
   const legend: Label[] = model.options.showLegend
@@ -148,38 +141,62 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
     y0 = Math.min(y0, -legendHeight / 2);
     y1 = Math.max(y1, legendHeight / 2);
   }
-  let legendOut = '';
-  legend.forEach((label, index) => {
-    const y = legendTop + index * ROW + ROW / 2;
-    const color = seriesColor(index);
-    legendOut +=
-      `<g class="pele-legend-item" data-id="${escText(curves[index].name)}"${srcAttrs(curves[index].source)}>` +
-      `<rect x="${num(legendX)}" y="${num(y - SWATCH / 2)}" width="${SWATCH}" height="${SWATCH}" rx="2" fill="${color}" fill-opacity="0.4" stroke="${color}"/>` +
-      labelSvg(label, legendX + SWATCH + 8 + label.width / 2, y, '') +
-      '</g>';
-  });
-
   const title = layoutLabel(model.title, false, measurer, size, titleRoom(options), Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 8 : 0;
   const bodyWidth = Math.max(x1 - x0, title.width);
   const totalWidth = Math.ceil(bodyWidth + 2 * pad);
   const totalHeight = Math.ceil(y1 - y0 + titleHeight + 2 * pad);
-  const origin = `translate(${num(pad + (bodyWidth - (x1 - x0)) / 2 - x0)},${num(pad + titleHeight - y0)})`;
 
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g transform="${origin}">` +
-    (grid ? `<g class="pele-graticule" fill="none" stroke="var(--_a)">${grid}</g>` : '') +
-    (spokes ? `<path class="pele-axes" d="${spokes}" fill="none" stroke="var(--_b)"/>` : '') +
-    (shapes ? `<g class="pele-curves" fill-opacity="0.2" stroke-width="1.5" stroke-linejoin="round">${shapes}</g>` : '') +
-    (labels ? `<g class="pele-axis-labels" font-size="${small}">${labels}</g>` : '') +
-    (legendOut ? `<g class="pele-legend" font-size="${small}">${legendOut}</g>` : '') +
-    '</g>';
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.shift(pad + (bodyWidth - (x1 - x0)) / 2 - x0, pad + titleHeight - y0);
+  if (ticks > 0) {
+    out.group({ cls: 'pele-graticule', attrs: ' fill="none" stroke="var(--_a)"' });
+    for (let i = 0; i < ticks; i++) {
+      const r = Math.min(radius, (radius * (i + 1)) / ticks);
+      // The circle has no center attributes, which a typed circle would write.
+      if (graticule === 'circle') out.fragment(`<circle r="${num(r)}"/>`);
+      else out.polygon(flat(unit.map((u) => ({ x: u.x * r, y: u.y * r }))), '');
+    }
+    out.end();
+  }
+  if (count > 0) out.path(spokes, ' fill="none" stroke="var(--_b)"', undefined, { cls: 'pele-axes' });
+  if (shapes.length > 0) {
+    out.group({ cls: 'pele-curves', attrs: ' fill-opacity="0.2" stroke-width="1.5" stroke-linejoin="round"' });
+    for (const { index, points } of shapes) {
+      const curve = curves[index];
+      const color = seriesColor(index);
+      const attrs = ` class="pele-curve" data-id="${escText(curve.name)}"${srcAttrs(curve.source)} fill="${color}" stroke="${color}"`;
+      // The fill comes before the geometry, which typed shapes do not write.
+      out.fragment(
+        graticule === 'circle'
+          ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
+          : `<polygon${attrs} points="${polygonText(points)}"/>`
+      );
+    }
+    out.end();
+  }
+  if (labels.length > 0) {
+    out.group({ cls: 'pele-axis-labels', attrs: ` font-size="${small}"` });
+    for (const { label, cx, cy, i } of labels) {
+      out.group({ cls: 'pele-axis-label', id: axes[i].name, source: axes[i].source });
+      out.label(label, cx, cy, '');
+      out.end();
+    }
+    out.end();
+  }
+  if (legend.length > 0) {
+    out.group({ cls: 'pele-legend', attrs: ` font-size="${small}"` });
+    legend.forEach((label, index) => {
+      const y = legendTop + index * ROW + ROW / 2;
+      const color = seriesColor(index);
+      out.group({ cls: 'pele-legend-item', id: curves[index].name, source: curves[index].source });
+      out.rect(legendX, y - SWATCH / 2, SWATCH, SWATCH, ` rx="2" fill="${color}" fill-opacity="0.4" stroke="${color}"`);
+      out.label(label, legendX + SWATCH + 8 + label.width / 2, y, '');
+      out.end();
+    });
+    out.end();
+  }
+  out.end();
 
-  return {
-    svg: documentOf(out, 'radar', totalWidth, totalHeight, size, options, model, content),
-    width: totalWidth,
-    height: totalHeight,
-    links: [],
-  };
+  return { svg: out.done('radar', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
 }
