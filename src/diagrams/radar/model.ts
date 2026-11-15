@@ -1,15 +1,18 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { RadarAst } from './parser.js';
 
 export interface RadarAxis {
   name: string;
   label: string;
+  source?: SourceInfo;
 }
 
 export interface RadarCurve {
   name: string;
   label: string;
   entries: number[];
+  source?: SourceInfo;
 }
 
 export interface RadarOptions {
@@ -37,7 +40,11 @@ function invalid(message: string): PeleError {
 }
 
 export function buildRadar(ast: RadarAst, title: string | undefined): RadarModel {
-  const axes = ast.axes.map((axis) => ({ name: axis.name, label: axis.label ?? axis.name }));
+  const axes = ast.axes.map((axis) => {
+    const out: RadarAxis = { name: axis.name, label: axis.label ?? axis.name };
+    if (axis.source) out.source = axis.source;
+    return out;
+  });
 
   const curves = ast.curves.map((curve) => {
     let entries: number[];
@@ -55,7 +62,9 @@ export function buildRadar(ast: RadarAst, title: string | undefined): RadarModel
         return value;
       });
     }
-    return { name: curve.name, label: curve.label ?? curve.name, entries };
+    const out: RadarCurve = { name: curve.name, label: curve.label ?? curve.name, entries };
+    if (curve.source) out.source = curve.source;
+    return out;
   });
 
   const options: RadarOptions = { showLegend: true, ticks: 5, max: null, min: 0, graticule: 'circle' };
