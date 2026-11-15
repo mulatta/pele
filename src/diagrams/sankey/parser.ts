@@ -1,5 +1,6 @@
-import { inputOffset, replacements, syntaxError, type Edit, type PeleError } from '../../errors.js';
+import { inputOffset, inputOffsets, replacements, sourceLine, syntaxError, type Edit, type PeleError } from '../../errors.js';
 import { decodeEntities } from '../../text/entities.js';
+import type { SourceInfo } from '../../types.js';
 import type { SankeyDb } from './db.js';
 import { T, TOKEN_NAMES, tokenize } from './lexer.js';
 
@@ -76,10 +77,16 @@ export function prepareTextForParsing(text: string, steps?: Edit[][]): string {
   return trimmed;
 }
 
-// Report errors in `source`, the text before prepareTextForParsing.
-export function parseSankey(src: string, db: SankeyDb, source = src): void {
+// Report errors in `source`, the text before prepareTextForParsing. With `lines`, each link and
+// node records where it is written in `source` (see sourceLine); the tests that compare the calls
+// into the model with Mermaid's parse without.
+export function parseSankey(src: string, db: SankeyDb, source = src, lines = false): void {
   const { types, texts, starts } = tokenize(src);
   let i = 0;
+  // sourceLine answers only when sources are asked for. Each link then keeps the offsets in `src`
+  // where its names start and end and where its value ends, to map back to `source` at once.
+  const record = lines && sourceLine(source, 0) !== undefined;
+  const marks: number[] = [];
 
   const error = (at: number, detail: string): PeleError => {
     const steps: Edit[][] = [];
@@ -110,6 +117,9 @@ export function parseSankey(src: string, db: SankeyDb, source = src): void {
     return text;
   };
 
+  // The last character of the field just read: its closing quote, or the last of its text.
+  const fieldEnd = (): number => starts[i - 1] + texts[i - 1].length - 1;
+
   const name = (): string => {
     const start = starts[i];
     const text = field().trim().replaceAll('""', '"');
@@ -117,6 +127,7 @@ export function parseSankey(src: string, db: SankeyDb, source = src): void {
     if (RE_INVALID_XML.test(decodeEntities(text))) {
       throw error(start, 'Invalid XML character in node name');
     }
+    if (record) marks.push(start, fieldEnd());
     return text;
   };
 
@@ -131,6 +142,7 @@ export function parseSankey(src: string, db: SankeyDb, source = src): void {
     // Keep Mermaid's numeric prefixes, but reject non-finite values.
     const value = parseFloat(field());
     if (!Number.isFinite(value)) throw error(start, 'Expecting a number');
+    if (record) marks.push(fieldEnd());
     const source = db.findOrCreateNode(from);
     const target = db.findOrCreateNode(to);
     db.addLink(source, target, value);
@@ -139,4 +151,43 @@ export function parseSankey(src: string, db: SankeyDb, source = src): void {
   }
   if (types[i] === T.EOF) i++;
   if (types[i] !== T.END) fail("'NEWLINE', 'EOF'");
+  if (record) placeLinks(db, source, src === source ? marks : mapped(source, marks));
+}
+
+// Offsets in the text prepareTextForParsing made of `source`, as offsets in `source`.
+function mapped(source: string, offsets: number[]): number[] {
+  const steps: Edit[][] = [];
+  prepareTextForParsing(source, steps);
+  return inputOffsets(steps, offsets);
+}
+
+// `at`: for each link in order, the offsets in `source` where its two names start and end and
+// where its value ends. A link runs from its first name to its value, and a node comes from the
+// name of the link that first names it.
+function placeLinks(db: SankeyDb, source: string, at: number[]): void {
+  const lines = (from: number, to: number): SourceInfo | undefined => {
+    const line = sourceLine(source, at[from]);
+    const end = sourceLine(source, at[to]);
+    return line === undefined || end === undefined ? undefined : end > line ? { line, end } : { line };
+  };
+  // A name as written: inside its quotes, with quotes in it doubled and the line breaks the parser
+  // collapsed.
+  const written = (from: number): string => {
+    const field = source.slice(at[from], at[from + 1] + 1);
+    return (field.startsWith('"') ? field.slice(1, -1) : field).trim();
+  };
+  db.links.forEach((link, k) => {
+    const m = 5 * k;
+    const from = written(m);
+    const to = written(m + 2);
+    const whole = lines(m, m + 4);
+    if (whole) link.written = { ...whole, from, to };
+    link.source.written ??= named(lines(m, m + 1), from);
+    link.target.written ??= named(lines(m + 2, m + 3), to);
+  });
+}
+
+// A blank name, which Mermaid accepts, names nothing to look for.
+function named(lines: SourceInfo | undefined, name: string): SourceInfo | undefined {
+  return lines === undefined || name === '' ? lines : { ...lines, symbol: name };
 }

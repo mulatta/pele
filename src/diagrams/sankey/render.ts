@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { resolveStyle, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
@@ -58,6 +58,7 @@ export function renderSankey(model: SankeyModel, config: Config, options: Render
 }
 
 function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const least = Math.round(size * 0.625);
   // Labels shrink with a chart narrowed to fit, as they would if the whole picture were scaled down.
@@ -157,7 +158,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
     const id = model.nodes[i].id;
     const name = decodeEntities(id);
     const height = Math.max(node.height, 1);
-    nodesOut += `<rect class="pele-sankey-node" data-id="${escText(id)}" x="${num(node.x)}" y="${num(node.y)}" width="${num(
+    nodesOut += `<rect class="pele-sankey-node" data-id="${escText(id)}"${srcAttrs(model.nodes[i].written)} x="${num(node.x)}" y="${num(node.y)}" width="${num(
       nodeWidth
     )}" height="${num(height)}" rx="${num(Math.min(2, height / 2))}" fill="${seriesColor(i)}"${nodeStyle(i)}/>`;
 
@@ -188,7 +189,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
     const position = ` x="${num(x)}" y="${num(y + small * 0.35)}" text-anchor="${after ? 'start' : 'end'}"`;
     const text = esc(name) + (value ? ` <tspan class="pele-sankey-value" fill="var(--_m)">${esc(value)}</tspan>` : '');
     labelsOut +=
-      `<g class="pele-label" data-id="${escText(id)}">` +
+      `<g class="pele-label" data-id="${escText(id)}"${srcAttrs(model.nodes[i].written)}>` +
       (outlined
         ? `<text${position} fill="none" stroke="var(--_bg)" stroke-width="3" stroke-linejoin="round">${esc(name)}${
             value ? ' ' + esc(value) : ''
@@ -204,7 +205,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
   const gradient = linkColor === 'gradient' && /^[\w-]+$/.test(idPrefix);
   const gradients = new Map<string, string>();
   let linksOut = '';
-  for (const link of links) {
+  links.forEach((link, k) => {
     const end = linkColor === 'target' ? link.target : link.source;
     const half = Math.max(link.thickness, 1) / 2;
     const x0 = nodes[link.source].x + nodeWidth;
@@ -224,7 +225,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
     const from = escText(model.nodes[link.source].id);
     const to = escText(model.nodes[link.target].id);
     linksOut +=
-      `<path class="pele-sankey-link" data-id="${from}-&gt;${to}" d="M${num(x0)},${num(link.sourceY - half)}C${mid},${num(
+      `<path class="pele-sankey-link" data-id="${from}-&gt;${to}"${srcAttrs(model.links[k].written)} d="M${num(x0)},${num(link.sourceY - half)}C${mid},${num(
         link.sourceY - half
       )} ${mid},${num(link.targetY - half)} ${num(x1)},${num(link.targetY - half)}L${num(x1)},${num(
         link.targetY + half
@@ -232,7 +233,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
         link.sourceY + half
       )}Z" ${paint}>` +
       `<title>${from} → ${to}: ${esc(prefix)}${rounded(link.value)}${esc(suffix)}</title></path>`;
-  }
+  });
 
   const title = layoutLabel(model.title, false, measurer, size, titleRoom(options), Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 12 : 0;
