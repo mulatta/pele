@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { breakLabel, leftLabelSvg, literalLabel } from '../common/literal-label.js';
@@ -70,12 +71,12 @@ function lines(rows: string[], x: number, y: number, step: number, attrs: string
   return body === '' ? '' : `<text${attrs} xml:space="preserve">${body}</text>`;
 }
 
-export function renderEventModel(model: EventModelingModel, _config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, _config, options, down));
+export function renderEventModel(model: EventModelingModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, _config, options, down), out);
 }
 
-function draw(model: EventModelingModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
-  if (down) return verticalEventModel(model, options);
+function draw(out: Out, model: EventModelingModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
+  if (down) return verticalEventModel(out, model, options);
   const size = options.fontSize ?? 16;
   const nameSize = Math.round(size * 0.875);
   const small = Math.round(size * 0.8125);
@@ -84,7 +85,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
   const smallStep = Math.round(small * 1.5);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
-  const srcAttrs = sourceAttrsFor(options);
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const widest = (rows: string[], fontSize: number, style: number): number => {
     let width = 0;
     for (const row of rows) width = Math.max(width, measurer.width(row, fontSize, style));
@@ -243,7 +244,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
     labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + lanes + edges + nodes + cards;
 
   return {
-    svg: svgDocument('eventmodeling', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'eventmodeling', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],
@@ -254,13 +255,13 @@ const RAIL_GAP = 8;
 const CARD_MIN = 120;
 const ARROW_ROOM = 20;
 
-function verticalEventModel(model: EventModelingModel, options: RenderOptions): Rendered {
+function verticalEventModel(out: Out, model: EventModelingModel, options: RenderOptions): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const mono = Math.round(size * 0.75);
   const pad = options.padding ?? 8;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
-  const srcAttrs = sourceAttrsFor(options);
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const room = Math.max(160, (options.maxWidth ?? 320) - 2 * pad);
   // A relation that skips a card runs down a rail beside the cards. Relations into one card
   // share a rail; others whose runs overlap take the next rail out, so that no two follow the
@@ -366,5 +367,5 @@ function verticalEventModel(model: EventModelingModel, options: RenderOptions): 
   }
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(bottom + pad);
   const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + edges + nodes + cards;
-  return { svg: svgDocument('eventmodeling', totalWidth, height, size, options, model, content), width: totalWidth, height, links: [] };
+  return { svg: documentOf(out, 'eventmodeling', totalWidth, height, size, options, model, content), width: totalWidth, height, links: [] };
 }

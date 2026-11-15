@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { CRITICAL, ROUNDED, resolveStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -69,8 +70,8 @@ interface Bar {
   inside: boolean;
 }
 
-export function renderGantt(model: GanttDb, config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderGantt(model: GanttDb, config: Config, options: RenderOptions, out: Out): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -136,7 +137,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     const width = Math.ceil(Math.max(title.width, 1) + 2 * pad);
     const height = Math.ceil(Math.max(title.height, 1) + 2 * pad);
     const content = labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-    return { svg: svgDocument('gantt', width, height, size, options, model, content), width, height, links: [] };
+    return { svg: documentOf(out, 'gantt', width, height, size, options, model, content), width, height, links: [] };
   }
 
   const sectionLabels = new Map<string, Label>();
@@ -367,5 +368,5 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     `<g class="pele-axis" font-size="${tickSize}" fill="var(--_m)">${axisBottom}${axisTop}</g>` +
     (vertLabels ? `<g class="pele-vert-labels" font-size="${num(labelSize)}">${vertLabels}</g>` : '');
 
-  return { svg: svgDocument('gantt', width, height, size, options, model, content), width, height, links };
+  return { svg: documentOf(out, 'gantt', width, height, size, options, model, content), width, height, links };
 }

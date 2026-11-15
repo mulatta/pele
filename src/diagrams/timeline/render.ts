@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { rounded, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
@@ -34,13 +35,13 @@ function box(x: number, y: number, w: number, h: number, attrs: string): string 
   return `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}"${rounded(attrs)}/>`;
 }
 
-export function renderTimeline(model: TimelineModel, config: Config, options: RenderOptions): Rendered {
-  if (model.direction === 'TD') return draw(model, config, options, true);
-  return turnToFit(options, (down) => draw(model, config, options, down));
+export function renderTimeline(model: TimelineModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  if (model.direction === 'TD') return draw(out, model, config, options, true);
+  return turnToFit(options, (down, o) => draw(o, model, config, options, down), out);
 }
 
-function draw(model: TimelineModel, config: Config, options: RenderOptions, vertical: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: TimelineModel, config: Config, options: RenderOptions, vertical: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -245,7 +246,7 @@ function draw(model: TimelineModel, config: Config, options: RenderOptions, vert
   const content =
     labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + body;
   return {
-    svg: svgDocument('timeline', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'timeline', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

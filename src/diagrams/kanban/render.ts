@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor, textStyle, type IconResolver } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { CRITICAL, ROUNDED, classNames } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, withHeights, type Label, type Span } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -118,8 +119,8 @@ interface Card {
 
 const has = (name: string | undefined): boolean => !!name && iconMarkup(name) !== '';
 
-export function renderKanban(model: KanbanModel, config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderKanban(model: KanbanModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const line = Math.round(size * 1.5);
@@ -216,7 +217,7 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
   const left = pad + (width - boardWidth) / 2;
   const edge = columnWidth - COLUMN_PAD - 4;
 
-  let out = '';
+  let drawn = '';
   for (let index = 0; index < sections.length; index++) {
     const section = sections[index];
     const row = Math.floor(index / perRow);
@@ -274,7 +275,7 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
       y += card.height + CARD_GAP;
     }
 
-    out +=
+    drawn +=
       `<g class="pele-cluster pele-column${classNames(section.cssClasses ?? '')}" data-id="${escText(section.id)}"${srcAttrs(section.source)} transform="translate(${num(
         left + (index % perRow) * (columnWidth + COLUMN_GAP)
       )},${num(pad + titleHeight + rowTops[row])})">${body}</g>`;
@@ -282,10 +283,10 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
 
   const totalWidth = Math.ceil(width + 2 * pad);
   const totalHeight = Math.ceil(boardHeight + titleHeight + 2 * pad);
-  const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + out;
+  const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + drawn;
 
   return {
-    svg: svgDocument('kanban', totalWidth, totalHeight, size, options, {}, content),
+    svg: documentOf(out, 'kanban', totalWidth, totalHeight, size, options, {}, content),
     width: totalWidth,
     height: totalHeight,
     links,

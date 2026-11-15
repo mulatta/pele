@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -35,18 +36,18 @@ function face(x: number, y: number, mood: keyof typeof MOUTHS): string {
   );
 }
 
-export function renderJourney(model: JourneyModel, _config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, _config, options, down));
+export function renderJourney(model: JourneyModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, _config, options, down), out);
 }
 
-function draw(model: JourneyModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
-  if (down) return verticalJourney(model, options);
+  if (down) return verticalJourney(out, model, options);
   const tasks = model.tasks;
   const n = tasks.length;
 
@@ -56,7 +57,7 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
   names.forEach((name, i) => actor.set(name, i));
   // An actor is only named, by tasks; its legend entry comes from the first task that names it.
   const named = new Map<string, SourceInfo>();
-  if (options.sourceInfo) {
+  if (out.sources) {
     for (const task of tasks) {
       const line = task.source?.line;
       if (line === undefined) continue;
@@ -221,15 +222,15 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
   const content =
     labelSvg(title, pad + width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + body;
   return {
-    svg: svgDocument('journey', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'journey', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],
   };
 }
 
-function verticalJourney(model: JourneyModel, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function verticalJourney(out: Out, model: JourneyModel, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -279,5 +280,5 @@ function verticalJourney(model: JourneyModel, options: RenderOptions): Rendered 
   const totalWidth = Math.ceil(width + 2 * pad);
   const height = Math.ceil(Math.max(pad + title.height, y - (model.tasks.length ? 16 : 0)) + pad);
   const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + body;
-  return { svg: svgDocument('journey', totalWidth, height, size, options, model, content), width: totalWidth, height, links: [] };
+  return { svg: documentOf(out, 'journey', totalWidth, height, size, options, model, content), width: totalWidth, height, links: [] };
 }

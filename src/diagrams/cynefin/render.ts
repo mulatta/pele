@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -61,7 +62,7 @@ function setting(config: Config, key: string, fallback: number, min: number, max
   return typeof value === 'number' && value >= min && value <= max ? value : fallback;
 }
 
-export function renderCynefin(model: CynefinModel, config: Config, options: RenderOptions): Rendered {
+export function renderCynefin(model: CynefinModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const itemSize = Math.round(size * 0.875);
@@ -72,7 +73,7 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
   const amplitude = setting(config, 'boundaryAmplitude', 8, 0, 50);
   const seed = resolveSeed(setting(config, 'seed', 0, -1e15, 1e15), options.idPrefix ?? 'pele');
   const itemLine = Math.round(itemSize * 1.5);
-  const srcAttrs = sourceAttrsFor(options);
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   // A domain's region and its block both stand for the domain: its last block, else the first
   // transition that names it.
   const domainSource = (name: DomainName): SourceInfo | undefined => model.domains.get(name)?.source ?? model.named?.get(name);
@@ -296,7 +297,7 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
     (edges ? `<g class="pele-edges">${edges}</g>` : '');
 
   return {
-    svg: svgDocument('cynefin', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'cynefin', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

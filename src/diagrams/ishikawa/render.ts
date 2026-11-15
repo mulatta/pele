@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { breakLabel } from '../common/literal-label.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -129,17 +130,17 @@ function arrange(node: IshikawaNode, up: boolean, measurer: TextMeasurer, size: 
   return { node, label, boxW, boxH: label.height + 2 * BOX_PAD_Y, bones, rise: rise + BONE_END, reach };
 }
 
-export function renderIshikawa(model: IshikawaModel, _config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, _config, options, down));
+export function renderIshikawa(model: IshikawaModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, _config, options, down), out);
 }
 
-function draw(model: IshikawaModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: IshikawaModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
-  if (down) return verticalCauses(model, options);
+  if (down) return verticalCauses(out, model, options);
   const root = model.root;
   const title = layoutLabel(model.title, false, measurer, size, 4000, Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 12 : 0;
@@ -235,7 +236,7 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
   const ox = pad + (inner - (maxX - minX)) / 2 - minX;
   const oy = pad + titleHeight - minY;
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'ishikawa',
     width,
     height,
@@ -248,8 +249,8 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
   return { svg, width, height, links: [] };
 }
 
-function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function verticalCauses(out: Out, model: IshikawaModel, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -290,5 +291,5 @@ function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered 
   }
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(Math.max(pad + title.height, y - 12) + pad);
   const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + edges + nodes;
-  return { svg: svgDocument('ishikawa', totalWidth, height, size, options, {}, content), width: totalWidth, height, links: [] };
+  return { svg: documentOf(out, 'ishikawa', totalWidth, height, size, options, {}, content), width: totalWidth, height, links: [] };
 }
