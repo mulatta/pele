@@ -1,5 +1,5 @@
 import { ease } from '../layout/layered.js';
-import { Z, L, M, activeSink, circleCmds, type SceneOut } from '../draw/scene.js';
+import { Z, L, M, circleCmds, type SceneOut } from '../draw/scene.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver } from '../types.js';
 import { escText, labelSvg, num } from './builder.js';
@@ -57,7 +57,9 @@ export function routePath(
   startTrim: number,
   endTrim: number,
   startReach = startTrim > 0 ? startTrim + LEAD : 0,
-  endReach = endTrim > 0 ? endTrim + LEAD : 0
+  endReach = endTrim > 0 ? endTrim + LEAD : 0,
+  // Whether to write the path data; without it, `d` is empty and `tokens` holds the path.
+  text = true
 ): EdgePath {
   const linear = curve === 'linear';
   const stepped = curve === 'step' || curve === 'stepBefore' || curve === 'stepAfter';
@@ -138,10 +140,8 @@ export function routePath(
     last++;
   }
 
-  // Keep tokens to avoid parsing d when checking fills. A scene takes the tokens alone, so the
-  // path data is not written while one is drawn.
+  // Keep tokens to avoid parsing d when checking fills.
   const tokens: number[] = [];
-  const text = activeSink() === null;
   const tok = (v: number): string => {
     tokens.push(written(v));
     return text ? num(v) : '';
@@ -534,14 +534,14 @@ export function casingsSvg(casings: string): string {
 
 // An edge label on a patch of the background, so the line does not run through the text.
 export function edgeLabelSvg(id: string, label: Label, x: number, y: number, attrs: string, icons?: IconResolver): string {
-  return `<g class="pele-edge-label" data-id="${escText(id)}">` + edgeLabelPatch(label, x, y) + labelSvg(label, x, y, attrs, icons) + '</g>';
-}
-
-// The patch under an edge label centered on (x, y).
-export function edgeLabelPatch(label: Label, x: number, y: number): string {
   const w = label.width + 8;
   const h = label.height;
-  return `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>`;
+  return (
+    `<g class="pele-edge-label" data-id="${escText(id)}">` +
+    `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>` +
+    labelSvg(label, x, y, attrs, icons) +
+    '</g>'
+  );
 }
 
 // A self-loop beside a node of drawn size w by h: out of the side that lies across the flow and

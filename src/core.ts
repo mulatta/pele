@@ -8,7 +8,7 @@ import type { DiagramModel } from './models.js';
 import { palette, withPalette } from './svg/palette.js';
 import { mountWith, type MountOptions, type Mounted } from './mount.js';
 import type { Diagram, RenderOptions, RenderResult } from './types.js';
-import { SceneOut, withSink, type Scene } from './draw/scene.js';
+import { SceneOut, sceneRoot, withSink, type Scene } from './draw/scene.js';
 import { SvgOut } from './draw/svg.js';
 
 export { PeleError } from './errors.js';
@@ -210,7 +210,7 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
 // Diagram types whose renderer draws straight into a scene.
 const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er']);
 // Of those, the ones that draw through an output rather than the scene sink.
-const OUT_TYPES = new Set<DiagramType>(['flowchart', 'swimlane']);
+const OUT_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'class', 'state', 'er', 'sequence']);
 
 // Whether renderScene() can draw this text without going through SVG.
 export function sceneSupported(source: string | DiagramModel): boolean {
@@ -245,7 +245,7 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
     const drawing = { ...options, responsive, icons };
-    const sink = new SceneOut({ fill: 'var(--_fg)', 'font-size': String(options.fontSize ?? 16) });
+    const sink = new SceneOut(sceneRoot(options.fontSize ?? 16));
     const draw = () =>
       withPalette(palette(type, config), () =>
         withMath(diagram.math ? options.math : undefined, () => withIcons(icons, () => diagram.render(model, config, drawing, sink)))

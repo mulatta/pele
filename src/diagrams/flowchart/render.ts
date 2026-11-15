@@ -4,7 +4,7 @@ import type { LayeredOptions } from '../../layout/layered.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, casingAttrs, edgeLabelPatch, loopPath, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, casingAttrs, loopPath, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { drawShape, endSide, insetRoute, shapeFilled, shapeHasLabel, shapeSize, shapeSpan } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -259,9 +259,7 @@ function drawNodes(
       if (struck) out.into('cluster-titles', '', () => out.fragment(struckTitle(view.label, titleX, titleY, titleAttrs, escText(node.id), cnodes, i, icons)));
       out.section('clusters');
       out.group({ cls: `pele-cluster${classes}`, id: node.id, source: node.source });
-      out.fragment(
-        `<rect x="${num(x - c.w / 2)}" y="${num(y - c.h / 2)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>`
-      );
+      out.rect(x - c.w / 2, y - c.h / 2, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
       if (!struck) out.label(view.label, titleX, titleY, titleAttrs, icons);
       out.end();
       continue;
@@ -372,7 +370,7 @@ function drawEdges(
         const arrives = reach.of(ce.dst, endSide(route, route.length - 3, cnodes[ce.dst]));
         insetRoute(route, 0, views[ce.src], cnodes[ce.src]);
         insetRoute(route, route.length - 3, views[ce.dst], cnodes[ce.dst]);
-        path = routePath(route, edge.curve, markerTrim(startType), markerTrim(endType), leaves, arrives);
+        path = routePath(route, edge.curve, markerTrim(startType), markerTrim(endType), leaves, arrives, !out.numbers);
       }
       const over = overFills(path.d, [path.sx, path.sy, path.ex, path.ey], fills, style?.line, path.tokens);
       const color = over || (style?.stroke && edge.thickness !== 'invisible' ? esc(style.stroke) : 'var(--_l)');
@@ -404,7 +402,7 @@ function drawEdges(
     if (label.width > 0) {
       out.section('labels');
       out.group({ cls: 'pele-edge-label', id: edge.id });
-      out.fragment(edgeLabelPatch(label, ce.labelX, ce.labelY));
+      out.rect(ce.labelX - (label.width + 8) / 2, ce.labelY - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
       out.label(label, ce.labelX, ce.labelY, style?.text ?? '', icons);
       out.end();
     }

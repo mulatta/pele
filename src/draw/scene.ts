@@ -152,6 +152,37 @@ const weight = (v: string | undefined, fallback: number): number => {
   return len(v, fallback);
 };
 
+const NO_LOOK: Look = {};
+const merges = new WeakMap<Look, WeakMap<Look, Look>>();
+
+// `own` over `base`. Looks are never changed once made, so a merge is kept for the next drawing.
+function merge(base: Look, own: Look): Look {
+  if (own === NO_LOOK || own === base) return base;
+  let made = merges.get(base);
+  if (!made) {
+    made = new WeakMap();
+    merges.set(base, made);
+  }
+  let look = made.get(own);
+  if (!look) {
+    look = { ...base, ...own };
+    made.set(own, look);
+  }
+  return look;
+}
+
+const roots = new Map<number, Look>();
+
+// What a scene of the given font size inherits at its root.
+export function sceneRoot(size: number): Look {
+  let look = roots.get(size);
+  if (!look) {
+    look = { fill: 'var(--_fg)', 'font-size': String(size) };
+    roots.set(size, look);
+  }
+  return look;
+}
+
 // ---------------------------------------------------------------- geometry
 
 const NUM = /[-+]?(?:\d*\.\d+|\d+\.?)(?:e[-+]?\d+)?/gi;
@@ -338,7 +369,7 @@ function cmdsBox(cmds: Path): Box {
 // What a fragment draws, in the fragment's own coordinates, to be replayed into the group it is
 // drawn in: a group opens (an item when it has an id) and closes, a shape, a run of text.
 type Op =
-  | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look }
+  | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look; source: SourceInfo | undefined }
   | { op: 'end' }
   | { op: 'shape'; cmds: Path; look: Look }
   | { op: 'text'; x: number; y: number; anchor: string | undefined; spans: SceneSpan[]; look: Look }
@@ -395,6 +426,17 @@ const unescape = (s: string): string =>
         e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (XML[e] ?? all)
       )
     : s;
+
+// Where an element comes from, read from the `data-` attributes sourceAttrs writes.
+function sourceOf(a: Record<string, string>): SourceInfo | undefined {
+  const info: SourceInfo = {};
+  if (a['data-line'] !== undefined) info.line = Number(a['data-line']);
+  if (a['data-end'] !== undefined) info.end = Number(a['data-end']);
+  if (a['data-symbol'] !== undefined) info.symbol = unescape(a['data-symbol']);
+  if (a['data-from'] !== undefined) info.from = unescape(a['data-from']);
+  if (a['data-to'] !== undefined) info.to = unescape(a['data-to']);
+  return Object.keys(info).length > 0 ? info : undefined;
+}
 
 const textOf = (el: Element): string => el.children.filter((c): c is string => typeof c === 'string').map(unescape).join('');
 
@@ -453,7 +495,7 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
     const group = el.tag === 'g' || el.tag === 'a';
     // A group, or an element that is an item or moved: what is in it is drawn in its frame.
     const framed = group || id !== undefined || dx !== 0 || dy !== 0;
-    if (framed) ops.push({ op: 'begin', id, kind: a.class ?? el.tag, dx, dy, look: group ? look : {} });
+    if (framed) ops.push({ op: 'begin', id, kind: a.class ?? el.tag, dx, dy, look: group ? look : {}, source: id === undefined ? undefined : sourceOf(a) });
     let cmds: Path | null = null;
     let own = look;
     switch (el.tag) {
@@ -523,9 +565,16 @@ function parseFragment(svg: string): Op[] {
 
 interface Section {
   look: Look;
-  shapes: SceneShape[];
-  texts: SceneText[];
-  items: number[];
+  // Inside the frame, and the frame's move when the section was made.
+  framed: boolean;
+  dx: number;
+  dy: number;
+  // What it holds, made when the first is added: many sections stay empty.
+  shapes: SceneShape[] | null;
+  texts: SceneText[] | null;
+  items: number[] | null;
+  // The frames of the section with no group open, kept for each switch back to it.
+  base: Frame[];
 }
 
 interface Frame {
@@ -542,14 +591,19 @@ export class SceneOut implements Out {
   scene: Scene | null = null;
   private sections = new Map<string, Section>();
   private current!: Section;
+  private currentName = '';
   private frames: Frame[] = [];
+  // The move of sections made from the first call of frame() on.
+  private framing: { x: number; y: number } | null = null;
+  readonly sources = true;
+  readonly numbers = true;
   private items: SceneItem[] = [];
   private skipped: Record<string, number> = {};
   // Geometry a helper handed over while its fragment was still being written; the fragment holds
   // a placeholder for it, so the parts of a shape are added in the order they are written.
   private deferred: (() => void)[] = [];
 
-  constructor(private rootLook: Look = { fill: 'var(--_fg)', 'font-size': '16' }) {
+  constructor(private rootLook: Look = sceneRoot(16)) {
     this.section('main');
   }
 
@@ -561,6 +615,8 @@ export class SceneOut implements Out {
     this.items = [];
     this.skipped = {};
     this.deferred = [];
+    this.framing = null;
+    this.currentName = '';
     this.section('main');
   }
 
@@ -571,27 +627,35 @@ export class SceneOut implements Out {
   }
 
   // Switches to a named layer of the picture, creating it with the given inherited attributes.
-  section(name: string, attrs = ''): void {
+  section(name: string, attrs = '', _always = false, within?: string): void {
+    // Already there, with no group open: nothing to switch.
+    if (this.frames.length === 1 && this.currentName === name) return;
+    this.currentName = name;
     let s = this.sections.get(name);
     if (!s) {
-      s = { look: { ...this.rootLook, ...parseLook(attrs) }, shapes: [], texts: [], items: [] };
+      const outer = within === undefined ? undefined : this.sections.get(within);
+      const f = this.framing;
+      s = { look: attrs ? merge(outer ? outer.look : this.rootLook, parseLook(attrs)) : outer ? outer.look : this.rootLook, framed: f !== null, dx: f ? f.x : 0, dy: f ? f.y : 0, shapes: null, texts: null, items: null, base: [] };
+      s.base.push({ item: -1, dx: s.dx, dy: s.dy, look: s.look });
       this.sections.set(name, s);
     }
     this.current = s;
-    this.frames = [{ item: -1, dx: 0, dy: 0, look: s.look }];
+    this.frames = s.base;
   }
 
   // Runs `draw` in another section and comes back.
   into(name: string, attrs: string, draw: () => void): void {
     const back = this.current;
+    const backName = this.currentName;
     const frames = this.frames;
     this.section(name, attrs);
     draw();
     this.current = back;
+    this.currentName = backName;
     this.frames = frames;
   }
 
-  private get frame(): Frame {
+  private get top(): Frame {
     return this.frames[this.frames.length - 1];
   }
 
@@ -602,7 +666,7 @@ export class SceneOut implements Out {
   }
 
   private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo): void {
-    const f = this.frame;
+    const f = this.top;
     if (f.hidden) {
       this.frames.push(f);
       return;
@@ -619,9 +683,9 @@ export class SceneOut implements Out {
       }
       this.items.push(it);
       item = this.items.length - 1;
-      this.current.items.push(item);
+      (this.current.items ??= []).push(item);
     }
-    this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look: own ? { ...f.look, ...own } : f.look });
+    this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look: own ? merge(f.look, own) : f.look });
   }
 
   end(): void {
@@ -633,7 +697,7 @@ export class SceneOut implements Out {
   }
 
   private touch(box: Box): void {
-    const i = this.frame.item;
+    const i = this.top.item;
     if (i < 0) return;
     const it = this.items[i];
     if (!it.box) it.box = { ...box };
@@ -646,23 +710,23 @@ export class SceneOut implements Out {
   }
 
   // Adds geometry in the current group's coordinates, painted by `look` over the inherited one.
-  shape(cmds: Path, own: Look = {}): void {
-    const f = this.frame;
+  shape(cmds: Path, own: Look = NO_LOOK): void {
+    const f = this.top;
     if (!cmds.length || f.hidden) return;
-    const look = own === f.look ? own : { ...f.look, ...own };
+    const look = merge(f.look, own);
     const placed = shift(cmds, f.dx, f.dy);
     const box = cmdsBox(placed);
     const opacity = len(look.opacity, 1);
     const fill = look.fill;
     if (fill && fill !== 'none' && fill !== 'transparent') {
-      this.current.shapes.push({ kind: 'fill', paint: fill, opacity: opacity * len(look['fill-opacity'], 1), cmds: placed, box, item: f.item });
+      (this.current.shapes ??= []).push({ kind: 'fill', paint: fill, opacity: opacity * len(look['fill-opacity'], 1), cmds: placed, box, item: f.item });
     }
     const stroke = look.stroke;
     const width = len(look['stroke-width'], 1);
     if (stroke && stroke !== 'none' && stroke !== 'transparent' && width > 0) {
       const dash = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : null;
       const p = width / 2;
-      this.current.shapes.push({
+      (this.current.shapes ??= []).push({
         kind: 'stroke', paint: stroke, opacity: opacity * len(look['stroke-opacity'], 1), width, dash: dash?.length ? dash : null,
         cmds: placed, box: { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p }, item: f.item,
       });
@@ -671,6 +735,7 @@ export class SceneOut implements Out {
   }
 
   rect(x: number, y: number, w: number, h: number, attrs = ''): void {
+    if (!(w > 0 && h > 0)) return;
     const look = parseLook(attrs);
     const rx = len(look.rx, 0);
     this.shape(roundRect(x, y, w, h, rx, rx), look);
@@ -691,7 +756,7 @@ export class SceneOut implements Out {
     for (const op of parseFragment(svg)) {
       switch (op.op) {
         case 'begin':
-          this.open(op.id, op.kind, op.dx, op.dy, op.look);
+          this.open(op.id, op.kind, op.dx, op.dy, op.look, op.source);
           break;
         case 'end':
           this.end();
@@ -700,9 +765,9 @@ export class SceneOut implements Out {
           this.shape(op.cmds, op.look);
           break;
         case 'text': {
-          const look = { ...this.frame.look, ...op.look };
+          const look = merge(this.top.look, op.look);
           const anchor = op.anchor ?? look['text-anchor'] ?? 'start';
-          this.text(op.x, op.y, op.spans, textBase(look, len(look['font-size'], 16)), anchor as 'start' | 'middle' | 'end');
+          this.put(op.x, op.y, op.spans, textBase(look, len(look['font-size'], 16)), anchor as 'start' | 'middle' | 'end');
           break;
         }
         case 'skip':
@@ -715,8 +780,8 @@ export class SceneOut implements Out {
   label(label: Label, cx: number, cy: number, attrs = ''): void {
     const lines = label.lines;
     if (lines.length === 0) return;
-    const f = this.frame;
-    const look = { ...f.look, ...parseLook(attrs) };
+    const f = this.top;
+    const look = merge(f.look, parseLook(attrs));
     const base = {
       size: label.size,
       weight: weight(look['font-weight'], 400),
@@ -743,21 +808,21 @@ export class SceneOut implements Out {
         for (const s of line) {
           if (s.math) this.skip('math');
           else if (s.icon !== undefined) this.skip('icon');
-          else if (s.text !== '') this.text(x, y, [span(s)], base, 'start');
+          else if (s.text !== '') this.put(x, y, [span(s)], base, 'start');
           x += s.width;
         }
       } else if (line.length) {
-        this.text(cx, y, line.map(span), base, 'middle');
+        this.put(cx, y, line.map(span), base, 'middle');
       }
       top += h;
     }
   }
 
-  private text(x: number, y: number, spans: SceneSpan[], base: { size: number; weight: number; italic: boolean; paint: string }, anchor: 'start' | 'middle' | 'end'): void {
-    const f = this.frame;
+  private put(x: number, y: number, spans: SceneSpan[], base: { size: number; weight: number; italic: boolean; paint: string }, anchor: 'start' | 'middle' | 'end'): void {
+    const f = this.top;
     if (f.hidden || !spans.some((s) => s.text.trim())) return;
     const t: SceneText = { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
-    this.current.texts.push(t);
+    (this.current.texts ??= []).push(t);
     const w = spans.reduce((n, s) => n + s.text.length, 0) * base.size * 0.55;
     const x0 = anchor === 'middle' ? t.x - w / 2 : anchor === 'end' ? t.x - w : t.x;
     this.touch({ x0, y0: t.y - base.size, x1: x0 + w, y1: t.y + base.size * 0.25 });
@@ -765,41 +830,67 @@ export class SceneOut implements Out {
 
   // The scene, with sections painted in `order` (others after, in creation order).
   finish(order: string[], width: number, height: number): Scene {
-    const names = [...order.filter((n) => this.sections.has(n)), ...[...this.sections.keys()].filter((n) => !order.includes(n))];
+    const names = order.length === 0 ? this.sections.keys() : [...order.filter((n) => this.sections.has(n)), ...[...this.sections.keys()].filter((n) => !order.includes(n))];
     const shapes: SceneShape[] = [];
     const texts: SceneText[] = [];
     // Items in the order the SVG writes them, section by section, as a host reading it would
     // number them (where two overlap, the later one is on top).
     const items: SceneItem[] = [];
     const at = new Array<number>(this.items.length);
+    const f = this.framing;
     for (const n of names) {
       const s = this.sections.get(n)!;
-      shapes.push(...s.shapes);
-      texts.push(...s.texts);
-      for (const i of s.items) at[i] = items.push(this.items[i]) - 1;
+      if (!s.shapes && !s.texts && !s.items) continue;
+      // A frame moved after the section was drawn moves what it holds.
+      if (s.framed && f && (f.x !== s.dx || f.y !== s.dy)) this.move(s, f.x - s.dx, f.y - s.dy);
+      if (s.shapes) for (const x of s.shapes) shapes.push(x);
+      if (s.texts) for (const x of s.texts) texts.push(x);
+      if (s.items) for (const i of s.items) at[i] = items.push(this.items[i]) - 1;
     }
     for (const x of shapes) if (x.item >= 0) x.item = at[x.item];
     for (const x of texts) if (x.item >= 0) x.item = at[x.item];
     return { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, skipped: this.skipped };
   }
 
+  private move(s: Section, dx: number, dy: number): void {
+    const box = (b: Box): void => {
+      b.x0 += dx;
+      b.x1 += dx;
+      b.y0 += dy;
+      b.y1 += dy;
+    };
+    for (const x of s.shapes ?? []) {
+      // shift copies: a shape's path can be shared with the fragment cache.
+      x.cmds = shift(x.cmds, dx, dy);
+      box(x.box);
+    }
+    for (const t of s.texts ?? []) {
+      t.x += dx;
+      t.y += dy;
+    }
+    for (const i of s.items ?? []) {
+      const b = this.items[i].box;
+      if (b) box(b);
+    }
+  }
+
   // One unwrapped line of text at (x, y) with the given anchor, as a <text> element without
   // tspans: a member of a class, a cardinality.
   textAt(x: number, y: number, text: string, attrs: string, anchor: 'start' | 'middle' | 'end'): void {
-    const look = { ...this.frame.look, ...parseLook(attrs) };
+    const look = merge(this.top.look, parseLook(attrs));
     const base = {
       size: len(look['font-size'], 16),
       weight: weight(look['font-weight'], 400),
       italic: look['font-style'] === 'italic',
       paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
     };
-    this.text(x, y, [{ text }], base, anchor);
+    this.put(x, y, [{ text }], base, anchor);
   }
 
   // One line of a label as start-anchored text at (x, y), the baseline, for a renderer that sets
   // its own columns (a table cell) instead of centering the label.
   startText(line: Label['lines'][number], size: number, x: number, y: number, attrs = ''): void {
-    const look = { ...this.frame.look, ...parseLook(attrs) };
+    const look = merge(this.top.look, parseLook(attrs));
     const base = {
       size,
       weight: weight(look['font-weight'], 400),
@@ -813,7 +904,7 @@ export class SceneOut implements Out {
       if (s.style & Style.Mono) out.mono = true;
       return out;
     });
-    this.text(x, y, spans, base, 'start');
+    this.put(x, y, spans, base, 'start');
   }
 
   // ---------------------------------------------------------------- Out
@@ -829,12 +920,12 @@ export class SceneOut implements Out {
   group(g: Group): void {
     let dx = g.x ?? 0;
     let dy = g.y ?? 0;
-    const attrs = g.attrs ?? '';
+    const attrs = g.before === undefined ? (g.attrs ?? '') : g.before + (g.attrs ?? '');
     if (attrs.includes('transform="')) {
       const t = RE_TRANSLATE.exec(/ transform="([^"]*)"/.exec(attrs)?.[1] ?? '');
       if (!t) {
         this.skip('transform');
-        this.frames.push({ ...this.frame, hidden: true });
+        this.frames.push({ ...this.top, hidden: true });
         return;
       }
       dx += Number(t[1]);
@@ -847,11 +938,23 @@ export class SceneOut implements Out {
     this.open(undefined, '', x, y, null);
   }
 
+  frame(x: number, y: number): void {
+    if (this.framing) {
+      this.framing.x = x;
+      this.framing.y = y;
+    } else this.framing = { x, y };
+  }
+
   link(): void {
     this.open(undefined, '', 0, 0, null);
   }
 
   tooltip(): void {}
+
+  text(x: number, y: number, text: string, attrs: string, after = ''): void {
+    const look = merge(this.top.look, parseLook(after ? attrs + after : attrs));
+    this.put(x, y, [{ text }], textBase(look, len(look['font-size'], 16)), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
+  }
 
   path(d: string, attrs = '', tokens?: number[]): void {
     this.shape(tokens ? tokensToCmds(tokens) : parsePathData(d), parseLook(attrs));

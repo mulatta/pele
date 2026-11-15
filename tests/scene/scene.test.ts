@@ -15,9 +15,9 @@ const corpora = readdirSync('tests/corpus')
 // interface, for the types it drew then.
 const baseline = JSON.parse(readFileSync('tests/scene/baseline.json', 'utf8')) as Record<string, unknown>;
 
-const drawn = (src: string) => {
+const drawn = (src: string, extra: { maxWidth?: number }) => {
   try {
-    return { scene: renderScene(src, options).scene, svg: render(src, { ...options, sourceInfo: true }).svg };
+    return { scene: renderScene(src, { ...options, ...extra }).scene, svg: render(src, { ...options, ...extra, sourceInfo: true }).svg };
   } catch {
     return null;
   }
@@ -27,9 +27,12 @@ describe('scene output', () => {
   it.each(corpora)('draws what the SVG shows for $file', ({ file, sources }) => {
     for (const src of sources) {
       if (!sceneSupported(src)) continue;
-      const out = drawn(src);
-      if (out === null) continue;
-      expect(sceneDifference(out.scene, svgToScene(out.svg)), `${file}: ${JSON.stringify(src).slice(0, 120)}`).toBeNull();
+      // Narrow, a diagram is drawn more than once to fit.
+      for (const extra of [{}, { maxWidth: 300 }]) {
+        const out = drawn(src, extra);
+        if (out === null) continue;
+        expect(sceneDifference(out.scene, svgToScene(out.svg)), `${file} ${JSON.stringify(extra)}: ${JSON.stringify(src).slice(0, 120)}`).toBeNull();
+      }
     }
   });
 
