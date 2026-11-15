@@ -1,4 +1,4 @@
-import { PeleError, syntaxError } from '../../errors.js';
+import { PeleError, sourceLine, syntaxError } from '../../errors.js';
 import type { VennDb } from './db.js';
 import { T, TOKEN_NAMES, VennLexer } from './lexer.js';
 
@@ -7,10 +7,15 @@ const VALUE = "'NUMERIC', 'IDENTIFIER', 'STRING', 'HEXCOLOR', 'RGBCOLOR', 'RGBAC
 
 // Ports Mermaid's venn grammar. A token is read only when the grammar has to look at one to
 // decide, because the lexer asks the model whether an indented `text` continues a set, and the
-// statements are what tell the model so.
-export function parseVenn(src: string, db: VennDb): void {
+// statements are what tell the model so. With `lines`, the sets, overlaps and texts record where
+// they are written (see sourceLine); the tests that compare the calls into the model with
+// Mermaid's parse without.
+export function parseVenn(src: string, db: VennDb, lines = false): void {
   const lexer = new VennLexer(src, db);
   let type = -1;
+  // Where the statement being read starts, and where the last token taken ends.
+  let first = 0;
+  let last = 0;
 
   const peek = (): number => (type === -1 ? (type = lexer.next()) : type);
 
@@ -21,7 +26,17 @@ export function parseVenn(src: string, db: VennDb): void {
 
   const take = (): string => {
     type = -1;
+    last = lexer.end;
     return lexer.text;
+  };
+
+  // Tells the model where the statement read so far is written. A label in brackets may run over
+  // several lines.
+  const written = (): void => {
+    if (!lines) return;
+    const line = sourceLine(src, first);
+    const end = sourceLine(src, last - 1);
+    db.source = line === undefined || end === undefined ? undefined : end > line ? { line, end } : { line };
   };
 
   const expect = (wanted: number): string => {
@@ -54,6 +69,7 @@ export function parseVenn(src: string, db: VennDb): void {
       if (ids.length < 2) throw new PeleError('union requires multiple identifiers', 'semantic', { type: 'venn' });
       db.validateUnionIdentifiers(ids);
     }
+    written();
     db.addSubsetData(ids, label, size);
     db.setIndentMode(true);
   };
@@ -64,6 +80,7 @@ export function parseVenn(src: string, db: VennDb): void {
     if (kind !== T.IDENTIFIER && kind !== T.STRING && kind !== T.NUMERIC) fail("'NUMERIC', 'IDENTIFIER', 'STRING'");
     const id = take();
     const label = kind !== T.NUMERIC && peek() === T.BRACKET_LABEL ? take() : undefined;
+    written();
     db.addTextData(sets(), id, label);
   };
 
@@ -94,6 +111,7 @@ export function parseVenn(src: string, db: VennDb): void {
     const statement = peek();
     if (statement === T.EOF) return;
     if (statement < T.NEWLINE || statement > T.STYLE || statement === T.VENN) fail(STATEMENT);
+    first = lexer.start;
     take();
     if (statement === T.TITLE) db.setDiagramTitle(lexer.text.slice(6));
     else if (statement === T.SET) subset([identifier()], false);

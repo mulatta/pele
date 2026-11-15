@@ -8,7 +8,7 @@ export const venn: Diagram<VennDb> = {
   parse(source, _config, title) {
     const db = new VennDb();
     if (title) db.title = title;
-    parseVenn(source, db);
+    parseVenn(source, db, true);
     return db;
   },
   render: renderVenn,

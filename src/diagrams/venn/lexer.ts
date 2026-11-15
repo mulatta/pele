@@ -87,6 +87,11 @@ export class VennLexer {
     return true;
   }
 
+  // Where the token `next` returned last ends: a label's text leaves out its brackets.
+  get end(): number {
+    return this.at;
+  }
+
   private keyword(at: number, word: string): boolean {
     return this.word(at, word) && !isWord(this.src.charCodeAt(at + word.length));
   }
