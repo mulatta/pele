@@ -1,9 +1,7 @@
 // A named import, so the bundler keeps the version string and drops the rest of the file.
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import { version } from '../../../package.json';
 import type { Config } from '../../preprocess.js';
-import { labelSvg } from '../../svg/builder.js';
 import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered } from '../../types.js';
@@ -20,9 +18,8 @@ export function renderInfo(model: InfoModel, _config: Config, options: RenderOpt
 
   const width = Math.ceil(Math.max(title.width, text.width) + 2 * pad);
   const height = Math.ceil(titleHeight + text.height + 2 * pad);
-  const content =
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    labelSvg(text, width / 2, pad + titleHeight + text.height / 2, ' class="pele-version" fill="var(--_m)"');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.label(text, width / 2, pad + titleHeight + text.height / 2, ' class="pele-version" fill="var(--_m)"');
 
-  return { svg: documentOf(out, 'info', width, height, size, options, model, content), width, height, links: [] };
+  return { svg: out.done('info', width, height, size, options, model), width, height, links: [] };
 }
