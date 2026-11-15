@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 // One shape for blocks, edges, and the statements that set columns, classes, and styles, as in Mermaid.
 export interface Block {
   id: string;
@@ -21,6 +23,7 @@ export interface Block {
   css?: string;
   styleClass?: string;
   stylesStr?: string;
+  source?: SourceInfo;
 }
 
 // A statement with links is a list: block, edge, block, and so on.
