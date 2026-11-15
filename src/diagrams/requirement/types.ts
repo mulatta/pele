@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export interface Requirement {
   name: string;
   type: string;
@@ -7,6 +9,7 @@ export interface Requirement {
   verifyMethod: string;
   cssStyles: string[];
   classes: string[];
+  source?: SourceInfo;
 }
 
 export interface RequirementElement {
@@ -15,12 +18,14 @@ export interface RequirementElement {
   docRef: string;
   cssStyles: string[];
   classes: string[];
+  source?: SourceInfo;
 }
 
 export interface Relation {
   type: string;
   src: string;
   dst: string;
+  source?: SourceInfo;
 }
 
 export interface RequirementClass {
