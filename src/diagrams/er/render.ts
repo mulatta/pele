@@ -17,6 +17,7 @@ import type { ErDb } from './db.js';
 import { parseGenericTypes } from '../common/generics.js';
 import { buildErGraph, type ErGraphEdge, type ErGraphNode } from './graph.js';
 import { MARKER_LENGTH, erMarker } from './markers.js';
+import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
 
 const NODE_SEP = 48;
 const EDGE_SEP = 20;
@@ -37,6 +38,10 @@ const NO_LOOPS: Loop[] = [];
 const PORT_GAP = 18;
 const PORT_MARGIN = 14;
 const BOX_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
+// Paint layers of an ER scene, bottom to top, as the SVG stacks its groups.
+const SCENE_ORDER = ['title', 'clusters', 'casings', 'edges', 'labels', 'nodes'];
+// What casingsSvg puts on its group: the page color, CASE px wider than a line.
+const CASING_ATTRS = ' fill="none" stroke="var(--_bg)" stroke-width="5"';
 
 function numberOption(config: Config, key: string, fallback: number): number {
   const value = (config.er as Config | undefined)?.[key];
@@ -79,9 +84,14 @@ interface Loop {
 function textLeft(label: Label, x: number, y: number, attrs: string, icons: IconResolver | undefined, mono = 0): string {
   const lines = label.lines;
   if (lines.length === 0) return '';
+  const sink = activeSink();
   const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
   // The short form collapses repeated spaces in monospace text.
   if (only && only.icon === undefined && only.math === undefined && only.style === mono && !(mono && only.text.includes('  '))) {
+    if (sink) {
+      sink.startText(lines[0], label.size, x, y, attrs);
+      return '';
+    }
     return `<text${textStyle(attrs, mono)} x="${num(x)}" y="${num(y)}">${esc(only.text)}</text>`;
   }
   const shared = sharedStyle(label);
@@ -99,6 +109,19 @@ function textLeft(label: Label, x: number, y: number, attrs: string, icons: Icon
     y = middle + shift;
     let hasIcon = false;
     for (const span of line) if (span.icon !== undefined) hasIcon = true;
+    if (sink) {
+      // A line is one text, unless an icon splits it into spans each placed on its own.
+      if (!hasIcon) sink.startText(line, label.size, x, y, attrs);
+      else {
+        let px = x;
+        for (const span of line) {
+          if (span.icon !== undefined) sink.skip('icon');
+          else if (span.text !== '') sink.startText([span], label.size, px, y, attrs);
+          px += span.width;
+        }
+      }
+      continue;
+    }
     let sx = x;
     let placed = false;
     for (const span of line) {
@@ -117,6 +140,7 @@ function textLeft(label: Label, x: number, y: number, attrs: string, icons: Icon
       sx += span.width;
     }
   }
+  if (sink) return '';
   return `<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>${extra}`;
 }
 
@@ -319,6 +343,9 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     for (const e of cedges) markCrossings(crossings, e.route);
   }
 
+  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text.
+  const sink = activeSink();
+  sink?.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
   let clusters = '';
   const fills: Fill[] = [];
   let nodesOut = '';
@@ -334,6 +361,14 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       const y = c.y - c.h / 2;
       const titleX = clusterTitleX(c, view.label.width, crossings, GROUP_PAD);
       if (paints(view.style.shape)) fills.push({ box: [x, y, x + c.w, y + c.h], shape: view.style.shape });
+      if (sink) {
+        sink.section('clusters');
+        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.written);
+        sink.rect(x, y, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
+        labelSvg(view.label, titleX, y + 8 + view.label.height / 2, ` class="pele-cluster-label"${inkFill(view.style, 'var(--_m)')}${view.style.text}`, icons);
+        sink.end();
+        continue;
+      }
       clusters +=
         `<g class="pele-cluster${classes}" data-id="${escText(node.id)}"${srcAttrs(node.written)}>` +
         `<rect x="${num(x)}" y="${num(y)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>` +
@@ -350,9 +385,13 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     const color = inkFill(view.style);
     const muted = color || ' fill="var(--_m)"';
     const shape = `x="${num(x0)}" y="${num(y0)}" width="${num(w)}" height="${num(h)}"`;
+    if (sink) {
+      sink.section('nodes');
+      sink.begin(node.label, `pele-node pele-entity${classes}`, c.x, c.y, '', node.written);
+    }
     let name = labelSvg(view.label, 0, view.rows.length > 0 ? y0 + view.headH / 2 : 0, ` class="pele-label"${color}${text}`, icons);
     const display = decodeEntities(node.alias || node.label);
-    if (/ internal-link(?: |$)/.test(classes + ' ') && name !== '' && options.links !== false) {
+    if (/ internal-link(?: |$)/.test(classes + ' ') && (name !== '' || (sink !== null && view.label.lines.length > 0)) && options.links !== false) {
       // The name ends up in an href, so it gets the same check as a URL.
       const safe = internalLink(display, options);
       const target = esc(display);
@@ -405,6 +444,12 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
         name +
         `<g class="pele-er-attributes" font-size="${view.rowSize}">${cells}</g>`;
     }
+    if (sink) {
+      // The label and the cells were written as they were laid out; the rest is the outline.
+      sink.fragment(body);
+      sink.end();
+      continue;
+    }
     nodesOut += `<g class="pele-node pele-entity${classes}" data-id="${escText(node.label)}"${srcAttrs(node.written)} transform="translate(${num(
       c.x
     )},${num(c.y)})">${body}</g>`;
@@ -434,6 +479,8 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     let d: string;
     let start: string;
     let end: string;
+    // The route as routePath kept its numbers, which a scene takes instead of path data.
+    let tokens: number[] | undefined;
     const loop = loopOf[i];
     if (loop) {
       const c = cnodes[ce.src];
@@ -473,18 +520,37 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       const stub = direct ? 0 : MARKER_LENGTH;
       const path = routePath(route, undefined, stub, stub);
       d = stub > 0 ? `M${num(path.sx)},${num(path.sy)}L${path.d.slice(1)}L${num(path.ex)},${num(path.ey)}` : path.d;
+      if (sink) {
+        // The stub is drawn as the line from the untrimmed start to the trimmed one, and on to the end.
+        const t = path.tokens ?? [];
+        tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
+      }
       start = erMarker(edge.arrowTypeStart, path.sx, path.sy, path.sdx, path.sdy);
       end = erMarker(edge.arrowTypeEnd, path.ex, path.ey, path.edx, path.edy);
     }
-    const under = fillUnder(d, [], fills);
+    const under = fillUnder(d, [], fills, tokens);
     const over = under ? edgeInk(under) : under;
-    if (over === '') casings += casing(d, start + end);
+    const cmds = sink ? (tokens ? tokensToCmds(tokens) : parsePathData(d)) : [];
+    if (sink && over === '') {
+      sink.into('casings', CASING_ATTRS, () => {
+        sink.begin(undefined, '');
+        sink.shape(cmds);
+        sink.fragment(start + end);
+        sink.end();
+      });
+    } else if (over === '') casings += casing(d, start + end);
     if (under && over) {
       start = hollowOn(start, under);
       end = hollowOn(end, under);
     }
     const dashed = edge.pattern === 'dashed';
-    edgesOut +=
+    if (sink) {
+      sink.section('edges', ' fill="none" stroke="var(--_l)"');
+      sink.begin(edge.id, `pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}`, 0, 0, over ? ` stroke="${over}"` : '', edge.written);
+      sink.shape(cmds, parseLook(dashed ? ' stroke-dasharray="4 3"' : ''));
+      sink.fragment(start + end);
+      sink.end();
+    } else edgesOut +=
       `<g class="pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}${over ? ` stroke="${over}"` : ''}>` +
       `<path d="${d}"${dashed ? ' stroke-dasharray="4 3"' : ''}/>` +
       start +
@@ -493,8 +559,21 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     if (label.width > 0) {
       const x = ce.labelX;
       const y = ce.labelY;
-      labelsOut += edgeLabelSvg(edge.id, label, x, y, '', icons);
+      if (sink) {
+        // As edgeLabelSvg: the label on a patch of the page color.
+        sink.section('labels', ` font-size="${smallSize}"`);
+        sink.begin(edge.id, 'pele-edge-label');
+        sink.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+        labelSvg(label, x, y, '', icons);
+        sink.end();
+      } else labelsOut += edgeLabelSvg(edge.id, label, x, y, '', icons);
     }
+  }
+
+  if (sink) {
+    sink.section('title');
+    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+    return { svg: '', width, height, links, scene: sink.finish(SCENE_ORDER, width, height) };
   }
 
   const svg = svgDocument(

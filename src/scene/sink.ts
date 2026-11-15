@@ -685,6 +685,26 @@ export class SceneSink {
     };
     this.text(x, y, [{ text }], base, anchor);
   }
+
+  // One line of a label as start-anchored text at (x, y), the baseline, for a renderer that sets
+  // its own columns (a table cell) instead of centering the label.
+  startText(line: Label['lines'][number], size: number, x: number, y: number, attrs = ''): void {
+    const look = { ...this.frame.look, ...parseLook(attrs) };
+    const base = {
+      size,
+      weight: weight(look['font-weight'], 400),
+      italic: look['font-style'] === 'italic',
+      paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+    };
+    const spans = line.map((s) => {
+      const out: SceneSpan = { text: s.text };
+      if (s.style & Style.Bold) out.weight = 700;
+      if (s.style & Style.Italic) out.italic = true;
+      if (s.style & Style.Mono) out.mono = true;
+      return out;
+    });
+    this.text(x, y, spans, base, 'start');
+  }
 }
 
 let active: SceneSink | null = null;
