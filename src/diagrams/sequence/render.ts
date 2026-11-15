@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, escText, num, sourceAttrs } from '../../svg/builder.js';
+import { escText, num, sourceAttrs } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
 import { ink } from '../../svg/ink.js';
 import { FONT_MONO, ROUNDED, classNames, resolveStyle, rounded } from '../../svg/theme.js';
@@ -9,7 +9,7 @@ import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.j
 import type { RenderOptions, Rendered } from '../../types.js';
 import { breakLabel } from '../common/literal-label.js';
 import { tighten, titleRoom } from '../common/fit-width.js';
-import type { Out } from '../../draw/out.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
 import { actorKind, actorSize, drawActor, isFigure, type ActorSize } from './actors.js';
 import type { SeqDb } from './db.js';
 import { LINETYPE, PLACEMENT, type SeqActor, type SeqBox, type SeqMessage, type SeqNumbering } from './types.js';
@@ -205,6 +205,8 @@ function head(type: Head, x: number, y: number, dir: number, up: number, color: 
       return '';
   }
 }
+
+const CENTRAL = { cls: 'pele-central' };
 
 function trim(type: Head): number {
   return type === Head.Arrow ? ARROW - 1 : type === Head.Cross ? 4 : 0;
@@ -644,9 +646,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
     extend(x, x + ACT_W);
     activationsDraw.push(() => {
       out.section('activations');
-      out.fragment(
-        `<rect class="pele-activation" data-id="${escText(col.id)}" x="${num(x)}" y="${num(start)}" width="${ACT_W}" height="${num(bottom - start)}" rx="2"/>`
-      );
+      out.rect(x, start, ACT_W, bottom - start, ' rx="2"', { cls: 'pele-activation', id: col.id });
     });
     return bottom;
   };
@@ -656,9 +656,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
     const cy = lineY + 16;
     col.lifeEnd = cy;
     out.section('destroys');
-    out.fragment(
-      `<path class="pele-destroy" data-id="${escText(col.id)}" d="M${num(cx - 6)},${num(cy - 6)}L${num(cx + 6)},${num(cy + 6)}M${num(cx + 6)},${num(cy - 6)}L${num(cx - 6)},${num(cy + 6)}"/>`
-    );
+    out.path(out.pen().M(cx - 6, cy - 6).L(cx + 6, cy + 6).M(cx + 6, cy - 6).L(cx - 6, cy + 6), '', undefined, { cls: 'pele-destroy', id: col.id });
     return cy + 6;
   };
   const drawActorAt = (col: Column, top: number, footer: boolean): void => {
@@ -672,12 +670,14 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
     out.fragment(drawActor(col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : ''));
     out.end();
   };
-  const badge = (i: number, cx: number, cy: number, w: number): string =>
-    `<g class="pele-sequence-number"><rect x="${num(cx - w / 2)}" y="${num(cy - BADGE_H / 2)}" width="${num(w)}" height="${BADGE_H}" rx="${
-      BADGE_H / 2
-    }" fill="var(--_l)" stroke="none"/><text x="${num(cx)}" y="${num(cy + tiny * 0.35)}" text-anchor="middle" font-size="${tiny}" fill="var(--_bg)" stroke="none">${esc(
-      String(numbering.index[i])
-    )}</text></g>`;
+  const badgeRect = new Paint(` rx="${BADGE_H / 2}" fill="var(--_l)" stroke="none"`);
+  const badgeText = ` text-anchor="middle" font-size="${tiny}" fill="var(--_bg)" stroke="none"`;
+  const badge = (i: number, cx: number, cy: number, w: number): void => {
+    out.group({ cls: 'pele-sequence-number' });
+    out.rect(cx - w / 2, cy - BADGE_H / 2, w, BADGE_H, badgeRect);
+    out.text(cx, cy + tiny * 0.35, String(numbering.index[i]), '', badgeText);
+    out.end();
+  };
 
   let y = headBottom + 6;
   for (let i = 0; i < count; i++) {
@@ -780,14 +780,13 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
       const circleFrom = cc === LINETYPE.CENTRAL_CONNECTION_REVERSE || cc === LINETYPE.CENTRAL_CONNECTION_DUAL;
       let line: string | undefined;
       let color = 'var(--_l)';
-      const circle = (cx: number, cy: number): string =>
-        `<circle class="pele-central" cx="${num(cx)}" cy="${num(cy)}" r="${CENTRAL_R}" fill="${color}" stroke="none"/>`;
+      const circle = (cx: number, cy: number): void => out.circle(cx, cy, CENTRAL_R, ` fill="${color}" stroke="none"`, CENTRAL);
       const tailAtEnd = st.atStart && !st.atEnd;
       const headTrim = trim(st.head);
       // What follows the line: its heads, then connection circles and the number.
-      let inner = '';
-      let heads: string;
-      let d: string;
+      const inner: (() => void)[] = [];
+      let heads: () => void;
+      let d: Pen;
       let lineY: number;
 
       if (view.kind === V.Self) {
@@ -798,22 +797,26 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
         const far = Math.max(x0, x1) + SELF_W + bw / 2;
         line = inkOf(fillUnder(a.x, far));
         color = line ?? color;
-        if (circleFrom) inner += circle(a.x, top);
-        if (circleTo) inner += circle(a.x, bottom);
+        if (circleFrom) inner.push(() => circle(a.x, top));
+        if (circleTo) inner.push(() => circle(a.x, bottom));
         if (bw > 0) {
-          inner += badge(i, tailAtEnd ? x1 : x0, tailAtEnd ? bottom : top, bw);
+          const bx = tailAtEnd ? x1 : x0;
+          inner.push(() => badge(i, bx, tailAtEnd ? bottom : top, bw));
           if (tailAtEnd) x1 += bw / 2;
           else x0 += bw / 2;
         }
         // The loop leaves to the right and comes back heading left, which turns a half head over.
-        heads = (st.atStart ? head(st.head, x0, top, -1, up, color) : '') + (st.atEnd ? head(st.head, x1, bottom, -1, -up, color) : '');
-        const from = num(x0 + (st.atStart ? headTrim : 0));
-        const to = num(x1 + (st.atEnd ? headTrim : 0));
+        const hx0 = x0;
+        const hx1 = x1;
+        heads = () => {
+          if (st.atStart) out.at(hx0, top, (x, y) => head(st.head, x, y, -1, up, color));
+          if (st.atEnd) out.at(hx1, bottom, (x, y) => head(st.head, x, y, -1, -up, color));
+        };
+        const from = x0 + (st.atStart ? headTrim : 0);
+        const to = x1 + (st.atEnd ? headTrim : 0);
         d = rightAngles
-          ? `M${from},${num(top)}H${num(far)}V${num(bottom)}H${to}`
-          : `M${from},${num(top)}H${num(far - 6)}A6,6 0 0 1 ${num(far)},${num(top + 6)}V${num(bottom - 6)}A6,6 0 0 1 ${num(far - 6)},${num(
-              bottom
-            )}H${to}`;
+          ? out.pen().M(from, top).H(far).V(bottom).H(to)
+          : out.pen().M(from, top).H(far - 6).A(6, 6, 0, 0, 1, far, top + 6).V(bottom - 6).A(6, 6, 0, 0, 1, far - 6, bottom).H(to);
         extend(a.x, far + 8 + label.width);
         if (label.width > 0) {
           out.section('edge-labels');
@@ -837,29 +840,34 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
           x1 = b.x - dir * (isFigure(b.kind) ? 18 : b.size.w / 2 + 1);
         }
         if (circleFrom) {
-          inner += circle(a.x, lineY);
+          inner.push(() => circle(a.x, lineY));
           x0 = a.x + dir * CENTRAL_R;
         }
         if (circleTo) {
-          inner += circle(b.x, lineY);
+          inner.push(() => circle(b.x, lineY));
           x1 = b.x - dir * CENTRAL_R;
         }
         if (bw > 0) {
           // The number sits on the lifeline at the tail of the arrow, past a connection circle if there is one.
           if (tailAtEnd) {
             const cx = circleTo ? x1 - dir * (bw / 2 + 2) : x1;
-            inner += badge(i, cx, lineY, bw);
+            inner.push(() => badge(i, cx, lineY, bw));
             x1 = cx - (dir * bw) / 2;
           } else {
             const cx = circleFrom ? x0 + dir * (bw / 2 + 2) : x0;
-            inner += badge(i, cx, lineY, bw);
+            inner.push(() => badge(i, cx, lineY, bw));
             x0 = cx + (dir * bw) / 2;
           }
         }
-        heads = (st.atStart ? head(st.head, x0, lineY, -dir, up * dir, color) : '') + (st.atEnd ? head(st.head, x1, lineY, dir, up * dir, color) : '');
+        const hx0 = x0;
+        const hx1 = x1;
+        heads = () => {
+          if (st.atStart) out.at(hx0, lineY, (x, y) => head(st.head, x, y, -dir, up * dir, color));
+          if (st.atEnd) out.at(hx1, lineY, (x, y) => head(st.head, x, y, dir, up * dir, color));
+        };
         const from = x0 + (st.atStart ? dir * headTrim : 0);
         const to = x1 - (st.atEnd ? dir * headTrim : 0);
-        d = `M${num(from)},${num(lineY)}H${num(to)}`;
+        d = out.pen().M(from, lineY).H(to);
         if (label.width > 0) {
           const l = Math.min(x0, x1);
           const r = Math.max(x0, x1);
@@ -875,7 +883,8 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
       out.section('edges');
       out.group({ cls: 'pele-edge pele-message', id: `i${m.id}`, source: m.source, attrs: line ? ` stroke="${line}"` : '' });
       out.path(d, attrs);
-      out.fragment(heads + inner);
+      heads();
+      for (const f of inner) f();
       out.end();
       y = Math.max(y, lineY);
       if (a.destroyAt === i) y = Math.max(y, destroy(a, lineY));
@@ -900,7 +909,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
     const end = col.lifeEnd >= 0 ? col.lifeEnd : y;
     if (end > col.lifeStart) {
       out.section('lifelines');
-      out.fragment(`<path class="pele-lifeline" data-id="${escText(col.id)}"${srcAttrs(col.actor.source)} d="M${num(col.x)},${num(col.lifeStart)}V${num(end)}"/>`);
+      out.path(out.pen().M(col.x, col.lifeStart).V(end), '', undefined, { cls: 'pele-lifeline', id: col.id, source: col.actor.source });
     }
   }
 
