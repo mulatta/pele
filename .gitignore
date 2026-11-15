@@ -13,3 +13,8 @@ tests/scratch/
 .claude/
 .cursor/
 .codex/
+
+# Nix
+.direnv/
+result
+result-*
