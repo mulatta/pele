@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { parseYaml, type YamlValue } from '../../util/yaml.js';
 import { getType } from '../common/outline.js';
 
@@ -11,6 +12,8 @@ export interface KanbanNode {
   ticket?: string;
   priority?: string;
   cssClasses?: string;
+  // Where the node is written; its cards are on lines of their own (see SourceInfo).
+  source?: SourceInfo;
 }
 
 export interface KanbanSection extends KanbanNode {
@@ -28,6 +31,8 @@ export class KanbanDb implements KanbanModel {
   title: string | undefined;
   sections: KanbanSection[] = [];
   getType = getType;
+  // Where the node added next is written, which the parser says before it adds it.
+  written: SourceInfo | undefined;
 
   private last: KanbanNode | undefined;
   private sectionLevel = 0;
@@ -35,6 +40,7 @@ export class KanbanDb implements KanbanModel {
 
   addNode(level: number, id: string, descr: string, _type: number, shapeData?: string): void {
     const node: KanbanNode = { id, level, label: descr };
+    if (this.written) node.source = this.written;
 
     if (shapeData !== undefined) {
       const yaml = shapeData.includes('\n') ? shapeData + '\n' : '{\n' + shapeData + '\n}';
