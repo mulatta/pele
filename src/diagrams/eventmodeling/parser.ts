@@ -1,3 +1,4 @@
+import { sourceLine } from '../../errors.js';
 import { accDescr } from '../common/accDescr.js';
 import { ACC_TITLE, DIRECTIVE, Reader, SINGLE_LINE_COMMENT, YAML, keyword, titleBefore, tokenize, type TokenType } from '../common/tokens.js';
 
@@ -75,7 +76,15 @@ export interface Ref {
   $refText: string;
 }
 
-export interface EmFrame {
+// Where a statement is written, when sources are recorded: its first line, and its last when it
+// spans several. The keys start with `$`, as Langium's own bookkeeping does, which keeps them out
+// of the tree Mermaid builds.
+export interface Written {
+  $line?: number;
+  $end?: number;
+}
+
+export interface EmFrame extends Written {
   $type: 'EmTimeFrame' | 'EmResetFrame';
   name: string;
   modelEntityType: string;
@@ -95,7 +104,7 @@ export interface EmDataEntity {
   dataBlockValue: string;
 }
 
-export interface EmNoteEntity {
+export interface EmNoteEntity extends Written {
   $type: 'EmNoteEntity';
   sourceFrame: Ref;
   dataType?: string;
@@ -107,7 +116,7 @@ export interface EmGwtStatement {
   entityIdentifier: Ref;
 }
 
-export interface EmGwt {
+export interface EmGwt extends Written {
   $type: 'EmGwt';
   sourceFrame: Ref;
   givenStatements: EmGwtStatement[];
@@ -131,6 +140,7 @@ export interface EventModelAst {
 
 export function parseEventModel(src: string): EventModelAst {
   const r = new Reader(tokenize(src, EVENTMODELING_TOKENS, 'eventmodeling'), EVENTMODELING_TOKENS, 'eventmodeling');
+  const { starts, ends } = r.tokens;
   const ast: EventModelAst = {
     $type: 'EventModel',
     modelEntities: [],
@@ -141,6 +151,14 @@ export function parseEventModel(src: string): EventModelAst {
     $source: src,
   };
   const at = (kind: number): boolean => r.kinds[r.i] === kind;
+  // Records the lines from token `first` to the last one read as where `node` is written.
+  const written = (node: Written, first: number): void => {
+    const line = sourceLine(src, starts[first]);
+    if (line === undefined) return;
+    node.$line = line;
+    const end = sourceLine(src, ends[r.i - 1] - 1);
+    if (end !== undefined && end > line) node.$end = end;
+  };
   const one = (set: Set<number>, expected: string): string => (set.has(r.kinds[r.i]) ? r.take() : r.fail(expected));
   const qualifiedName = (): string => {
     let name = r.expect(T.id);
@@ -175,6 +193,7 @@ export function parseEventModel(src: string): EventModelAst {
       r.i++;
       ast.modelEntities.push({ $type: 'EmModelEntity', name: qualifiedName() });
     } else if (TIME_FRAME.has(kind) || RESET_FRAME.has(kind)) {
+      const first = r.i;
       const frame: EmFrame = {
         $type: TIME_FRAME.has(kind) ? 'EmTimeFrame' : 'EmResetFrame',
         name: '',
@@ -197,6 +216,7 @@ export function parseEventModel(src: string): EventModelAst {
         if (type !== undefined) frame.dataType = type;
         frame.dataInlineValue = r.expect(T.inline);
       }
+      written(frame, first);
       ast.frames.push(frame);
     } else if (kind === T.data) {
       r.i++;
@@ -206,20 +226,22 @@ export function parseEventModel(src: string): EventModelAst {
       entity.dataBlockValue = r.expect(T.block);
       ast.dataEntities.push(entity);
     } else if (kind === T.note) {
-      r.i++;
+      const first = r.i++;
       const note: EmNoteEntity = { $type: 'EmNoteEntity', sourceFrame: { $refText: r.expect(T.frameId) }, dataBlockValue: '' };
       const type = dataType();
       if (type !== undefined) note.dataType = type;
       note.dataBlockValue = r.expect(T.block);
+      written(note, first);
       ast.noteEntities.push(note);
     } else if (kind === T.gwt) {
-      r.i++;
+      const first = r.i++;
       const gwt: EmGwt = { $type: 'EmGwt', sourceFrame: { $refText: r.expect(T.frameId) }, givenStatements: [], whenStatements: [], thenStatements: [] };
       r.expect(T.given);
       gwt.givenStatements = statements();
       if (r.accept(T.when)) gwt.whenStatements = statements();
       r.expect(T.then);
       gwt.thenStatements = statements();
+      written(gwt, first);
       ast.gwtEntities.push(gwt);
     } else {
       r.fail('a frame, an entity, a data block, a note, or a specification');
