@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { safeUrl } from '../../util/url.js';
 import { WEEKDAYS, add, addDays, format, isValid, isoDate, parseStrict, type Unit } from './dates.js';
 import type { GanttModel, GanttTask } from './types.js';
@@ -42,6 +43,10 @@ function mergeTokens(existing: string[], txt: string): string[] {
   return [...merged];
 }
 
+// Where a statement is written: its line, and its last when it spans several.
+const lines = (line: number, end: number | undefined): SourceInfo =>
+  end !== undefined && end > line ? { line, end } : { line };
+
 export class GanttDb implements GanttModel {
   readonly type = 'gantt' as const;
   title: string | undefined;
@@ -61,9 +66,13 @@ export class GanttDb implements GanttModel {
   sections: string[] = [];
   links = new Map<string, string>();
   tasks: GanttTask[] = [];
+  // The lines of the statement the parser is at: the section or task added next comes from them.
+  line: number | undefined;
+  end: number | undefined;
 
   private byId = new Map<string, GanttTask>();
   private currentSection = '';
+  private sectionSource: SourceInfo | undefined;
   private taskCount = 0;
   private lastOrder = 0;
   private lastTaskId: string | undefined;
@@ -135,6 +144,10 @@ export class GanttDb implements GanttModel {
   addSection(txt: string): void {
     this.currentSection = txt;
     this.sections.push(txt);
+    // A section goes by its name: tasks under the same name share a color and, compacted, rows.
+    const name = txt.trim();
+    this.sectionSource = this.line === undefined ? undefined : lines(this.line, this.end);
+    if (this.sectionSource && name) this.sectionSource.symbol = name;
   }
 
   addTask(descr: string, dataStr: string): void {
@@ -185,6 +198,13 @@ export class GanttDb implements GanttModel {
     }
     if (data.length > 1) task.raw.start = data[data.length - 2];
     task.raw.end = data[data.length - 1];
+
+    if (this.line !== undefined) {
+      task.source = lines(this.line, this.end);
+      // Only an id written in the task names it; the others are numbered here.
+      if (data.length === 3 && task.id) task.source.symbol = task.id;
+    }
+    if (this.sectionSource) task.sectionSource = this.sectionSource;
 
     if (!task.vert) task.order = this.lastOrder++;
     this.tasks.push(task);
