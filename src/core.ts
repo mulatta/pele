@@ -208,9 +208,9 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
 }
 
 // Diagram types whose renderer draws straight into a scene.
-const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er', 'pie', 'radar', 'sankey', 'wardley', 'xychart', 'quadrantChart', 'packet', 'treemap', 'venn', 'info', 'gantt', 'timeline', 'journey', 'kanban', 'eventmodeling', 'cynefin', 'ishikawa']);
+const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er', 'pie', 'radar', 'sankey', 'wardley', 'xychart', 'quadrantChart', 'packet', 'treemap', 'venn', 'info', 'gantt', 'timeline', 'journey', 'kanban', 'eventmodeling', 'cynefin', 'ishikawa', 'mindmap', 'treeView', 'gitGraph', 'railroad']);
 // Of those, the ones that draw through an output rather than the scene sink.
-const OUT_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er', 'pie', 'radar', 'sankey', 'wardley', 'xychart', 'quadrantChart', 'packet', 'treemap', 'venn', 'info', 'gantt', 'timeline', 'journey', 'kanban', 'eventmodeling', 'cynefin', 'ishikawa']);
+const OUT_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er', 'pie', 'radar', 'sankey', 'wardley', 'xychart', 'quadrantChart', 'packet', 'treemap', 'venn', 'info', 'gantt', 'timeline', 'journey', 'kanban', 'eventmodeling', 'cynefin', 'ishikawa', 'mindmap', 'treeView', 'gitGraph', 'railroad']);
 
 // Whether renderScene() can draw this text without going through SVG.
 export function sceneSupported(source: string | DiagramModel): boolean {

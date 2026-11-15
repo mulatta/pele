@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -67,13 +68,13 @@ function symbol(type: number, x: number, y: number, color: string): string {
   return dot;
 }
 
-export function renderGit(model: GitModel, config: Config, options: RenderOptions): Rendered {
-  if (model.direction !== 'LR') return draw(model, config, options, model.direction);
-  return turnToFit(options, (down) => draw(model, config, options, down ? 'TB' : 'LR'));
+export function renderGit(model: GitModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  if (model.direction !== 'LR') return draw(out, model, config, options, model.direction);
+  return turnToFit(options, (down, o) => draw(o, model, config, options, down ? 'TB' : 'LR'), out);
 }
 
-function draw(model: GitModel, config: Config, options: RenderOptions, direction: GitModel['direction']): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: GitModel, config: Config, options: RenderOptions, direction: GitModel['direction']): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -379,7 +380,7 @@ function draw(model: GitModel, config: Config, options: RenderOptions, direction
     '</g>';
 
   return {
-    svg: svgDocument('gitGraph', width, height, size, options, model, content),
+    svg: documentOf(out, 'gitGraph', width, height, size, options, model, content),
     width,
     height,
     links: [],

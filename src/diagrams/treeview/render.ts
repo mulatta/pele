@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED, classNames } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { literalLabel, leftLabelSvg } from '../common/literal-label.js';
@@ -46,12 +47,12 @@ interface Row {
   height: number;
 }
 
-export function renderTreeView(model: TreeViewModel, config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => draw(model, config, options, tight));
+export function renderTreeView(model: TreeViewModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(options, (tight, o) => draw(o, model, config, options, tight), out);
 }
 
-function draw(model: TreeViewModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: TreeViewModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -187,7 +188,7 @@ function draw(model: TreeViewModel, config: Config, options: RenderOptions, tigh
     body;
 
   return {
-    svg: svgDocument('treeView', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'treeView', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

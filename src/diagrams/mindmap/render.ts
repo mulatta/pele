@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { drawShape, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, seriesColor } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -43,14 +44,14 @@ function leftLabel(label: Label, left: number, cy: number, icons: RenderOptions[
   return out;
 }
 
-export function renderMindmap(model: MindmapModel, config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, config, options, down));
+export function renderMindmap(model: MindmapModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, config, options, down), out);
 }
 
 // `down` draws the map as an outline: the root at the top, and each level set in under its parent.
 // It is far narrower than branches spreading to both sides, and as tall as it needs to be.
-function draw(model: MindmapModel, config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: MindmapModel, config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -207,13 +208,13 @@ function draw(model: MindmapModel, config: Config, options: RenderOptions, down:
   let maxX = 0;
   let minY = 0;
   let maxY = 0;
-  let out = '';
+  let tree = '';
   let edges = '';
   let body = '';
   let color = '';
   const flush = (section: number | undefined): void => {
     if (body === '') return;
-    out +=
+    tree +=
       `<g class="pele-branch pele-section-${section ?? 0}">` +
       `<g class="pele-edges" fill="none" stroke="${color}" stroke-width="1.5">${edges}</g>${body}</g>`;
     edges = body = '';
@@ -284,7 +285,7 @@ function draw(model: MindmapModel, config: Config, options: RenderOptions, down:
       (down && !shape ? leftLabel(label, shift - label.width / 2, dy[i], icons) : labelSvg(label, shift, dy[i], ' class="pele-label"', icons)) +
       '</g>';
     if (i > 0) body += group;
-    else out += group;
+    else tree += group;
   }
 
   const title = titleLabel(model.title, measurer, size, titleRoom(options));
@@ -294,10 +295,10 @@ function draw(model: MindmapModel, config: Config, options: RenderOptions, down:
   const totalHeight = Math.ceil(maxY - minY + titleHeight + 2 * pad);
   const content =
     labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g transform="translate(${num(pad - minX + (width - maxX + minX) / 2)},${num(pad + titleHeight - minY)})">${out}</g>`;
+    `<g transform="translate(${num(pad - minX + (width - maxX + minX) / 2)},${num(pad + titleHeight - minY)})">${tree}</g>`;
 
   return {
-    svg: svgDocument('mindmap', totalWidth, totalHeight, size, options, {}, content),
+    svg: documentOf(out, 'mindmap', totalWidth, totalHeight, size, options, {}, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

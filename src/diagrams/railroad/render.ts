@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -205,12 +206,12 @@ function measure(root: RailroadNode, m: Metrics, room = Infinity): Box {
   });
 }
 
-export function renderRailroad(model: RailroadModel, config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => draw(model, config, options, tight));
+export function renderRailroad(model: RailroadModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(options, (tight, o) => draw(o, model, config, options, tight), out);
 }
 
-function draw(model: RailroadModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: RailroadModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const base = options.fontSize ?? 16;
   const fontSize = option(config, 'fontSize', 0, 200);
   const size = fontSize || Math.round(base * 0.875);
@@ -424,7 +425,7 @@ function draw(model: RailroadModel, config: Config, options: RenderOptions, tigh
     (rules ? `<g class="pele-rules" transform="translate(0.5,0.5)" font-size="${num(size)}" text-anchor="middle">${rules}</g>` : '');
 
   return {
-    svg: svgDocument('railroad', totalWidth, totalHeight, base, options, model, content),
+    svg: documentOf(out, 'railroad', totalWidth, totalHeight, base, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],
