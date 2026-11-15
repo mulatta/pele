@@ -1,11 +1,10 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor, type IconResolver } from '../../svg/builder.js';
+import { esc, escText, num, type IconResolver } from '../../svg/builder.js';
 import { markCrossings, type Crossings } from '../../svg/cluster.js';
-import { casing, casingsSvg, edgeInk, edgeLabelSvg, fillUnder, hollowOn, marker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, casingAttrs, edgeInk, fillUnder, hollowOn, marker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -29,6 +28,7 @@ const ROW_PAD = 8;
 const FOLD = 9;
 const EXTENSION = 12;
 const PORT_GAP = 14;
+const MARKED = new Set(['extension', 'arrow_point', 'arrow_circle', 'arrow_cross']);
 const SHAPE_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
 
 const enum Kind {
@@ -207,7 +207,6 @@ export function renderUsecase(model: UsecaseModel, config: Config, options: Rend
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOptions, turned: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const graph = buildUsecaseGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -341,15 +340,18 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
   for (const e of cedges) markCrossings(crossings, e.route);
   attachEnds(cedges, cnodes, views);
 
-  let clusters = '';
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.section('clusters', ' class="pele-clusters"');
+  out.section('casings', CASINGS_ATTRS);
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('labels', ` class="pele-edge-labels" font-size="${small}"`);
+  out.section('nodes', ' class="pele-nodes"', true);
   const fills: Fill[] = [];
-  let nodesOut = '';
   for (let i = 0; i < views.length; i++) {
     const view = views[i];
     const c = cnodes[i];
     const node = view.node;
     const classes = classNames(node.cssClasses.replace(/^default\s?/, ''));
-    const id = escText(node.id);
     const textAttrs = view.style.text;
     const shape = view.style.shape;
     const color = inkFill(view.style);
@@ -363,99 +365,80 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       if (paints(shape)) fills.push({ box: [x, y, x + c.w, y + c.h], shape });
       const box = ` fill="var(--_a)"${setsFill(shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${shape}`;
       const titleAttrs = ` class="pele-cluster-label"${muted}${textAttrs}`;
-      let body: string;
+      out.section('clusters');
+      out.group({ cls: `pele-cluster pele-boundary${classes}`, id: node.id, source: node.written });
       if (node.boundaryType === 'package') {
         const tabW = Math.min(view.label.width + 2 * TAB_PAD + 8, c.w);
         const tabH = view.label.height + 2 * TAB_PAD;
-        body =
-          `<rect class="pele-boundary-tab" x="${num(x)}" y="${num(y)}" width="${num(tabW)}" height="${num(tabH)}"${box}/>` +
-          `<rect x="${num(x)}" y="${num(y + tabH)}" width="${num(c.w)}" height="${num(c.h - tabH)}"${box}/>` +
-          labelSvg(view.label, x + tabW / 2, y + tabH / 2, titleAttrs, icons);
+        out.rect(x, y, tabW, tabH, box, { cls: 'pele-boundary-tab' });
+        out.rect(x, y + tabH, c.w, c.h - tabH, box);
+        out.label(view.label, x + tabW / 2, y + tabH / 2, titleAttrs, icons);
       } else {
-        body =
-          `<rect x="${num(x)}" y="${num(y)}" width="${num(c.w)}" height="${num(c.h)}"${rounded(box)}/>` +
-          labelSvg(view.label, titleX(c, view.label.width, crossings), y + 8 + view.label.height / 2, titleAttrs, icons);
+        out.rect(x, y, c.w, c.h, rounded(box));
+        out.label(view.label, titleX(c, view.label.width, crossings), y + 8 + view.label.height / 2, titleAttrs, icons);
       }
-      clusters += `<g class="pele-cluster pele-boundary${classes}" data-id="${id}"${srcAttrs(node.written)}>${body}</g>`;
+      out.end();
       continue;
     }
 
-    let body: string;
-    let kind: string;
+    out.section('nodes');
+    const classed = (kind: string): void => out.group({ cls: `pele-node ${kind}${classes}`, id: node.id, source: node.written, x: c.x, y: c.y });
     if (view.kind === Kind.Actor) {
-      kind = 'pele-actor';
+      classed('pele-actor');
       const top = -h / 2;
       const stereotypeY = top + FIGURE_H + FIGURE_GAP + view.stereotype.height / 2;
-      body =
-        `<g class="pele-actor-figure" transform="translate(0,${num(top + FIGURE_H / 2)})">${figure(view, icons)}</g>` +
-        labelSvg(view.stereotype, 0, stereotypeY, ` class="pele-stereotype" font-size="${tiny}" fill="var(--_m)"`, icons) +
-        labelSvg(view.label, 0, h / 2 - view.label.height / 2, ` class="pele-label"${textAttrs}`, icons);
+      out.group({ cls: 'pele-actor-figure', x: 0, y: top + FIGURE_H / 2 });
+      // The figure's circles have no cx, which a typed circle would write.
+      out.fragment(figure(view, icons));
+      out.end();
+      out.label(view.stereotype, 0, stereotypeY, ` class="pele-stereotype" font-size="${tiny}" fill="var(--_m)"`, icons);
+      out.label(view.label, 0, h / 2 - view.label.height / 2, ` class="pele-label"${textAttrs}`, icons);
     } else if (view.kind === Kind.Json) {
-      kind = 'pele-json';
+      classed('pele-json');
       const x0 = -w / 2;
       let y = -h / 2 + view.headH;
-      let cells = '';
-      let lines = `M${num(x0)},${num(y)}H${num(x0 + w)}`;
-      if (view.keyW > 0) lines += `M${num(x0 + view.keyW)},${num(y)}V${num(h / 2)}`;
+      const lines = out.pen().M(x0, y).H(x0 + w);
+      if (view.keyW > 0) lines.M(x0 + view.keyW, y).V(h / 2);
+      out.rect(x0, -h / 2, w, h, rounded(SHAPE_ATTRS + shape));
+      out.path(lines, ` fill="none" stroke="var(--_b)"${view.style.line}`, undefined, { cls: 'pele-json-lines' });
+      out.label(view.label, 0, -h / 2 + view.headH / 2, ` class="pele-label" font-weight="var(--_hw)"${color}${textAttrs}`, icons);
+      out.group({ attrs: ` font-size="${small}"` });
       for (const [key, value] of view.rows) {
         const rowH = Math.max(key.height, value.height, Math.round(small * 1.5)) + ROW_PAD;
-        cells +=
-          labelSvg(key, x0 + CELL_PAD + key.width / 2, y + rowH / 2, ` class="pele-json-key"${muted}`, icons) +
-          leftLabel(value, x0 + view.keyW + CELL_PAD, y + rowH / 2, ` class="pele-json-value"${color}${textAttrs}`, icons);
+        out.label(key, x0 + CELL_PAD + key.width / 2, y + rowH / 2, ` class="pele-json-key"${muted}`, icons);
+        leftLabel(out, value, x0 + view.keyW + CELL_PAD, y + rowH / 2, ` class="pele-json-value"${color}${textAttrs}`, icons);
         y += rowH;
       }
-      body =
-        `<rect x="${num(x0)}" y="${num(-h / 2)}" width="${num(w)}" height="${num(h)}"${rounded(SHAPE_ATTRS + shape)}/>` +
-        `<path class="pele-json-lines" d="${lines}" fill="none" stroke="var(--_b)"${view.style.line}/>` +
-        labelSvg(view.label, 0, -h / 2 + view.headH / 2, ` class="pele-label" font-weight="var(--_hw)"${color}${textAttrs}`, icons) +
-        `<g font-size="${small}">${cells}</g>`;
+      out.end();
     } else {
       const labelY = view.stereotype.height / 2;
-      let outline: string;
       if (view.kind === Kind.Ellipse) {
-        kind = 'pele-usecase';
-        outline = `<ellipse rx="${num(w / 2)}" ry="${num(h / 2)}"${SHAPE_ATTRS}${shape}/>`;
+        classed('pele-usecase');
+        // The oval has no cx or cy, which a typed ellipse would write.
+        out.fragment(`<ellipse rx="${num(w / 2)}" ry="${num(h / 2)}"${SHAPE_ATTRS}${shape}/>`);
         if (node.business) {
           // The slash of a business use case, cutting off the right end of the oval beside the text.
           const from = w / 2 - 15;
           const to = w / 2 - 5;
           const arc = (at: number): number => (h / 2) * Math.sqrt(1 - (at / (w / 2)) ** 2);
-          outline += `<path class="pele-business" d="M${num(from)},${num(arc(from))}L${num(to)},${num(-arc(to))}" fill="none" stroke="var(--_b)"${view.style.line}/>`;
+          out.path(out.pen().M(from, arc(from)).L(to, -arc(to)), ` fill="none" stroke="var(--_b)"${view.style.line}`, undefined, { cls: 'pele-business' });
         }
       } else if (node.shape === 'note') {
-        kind = 'pele-note';
+        classed('pele-note');
         const r = w / 2;
         const b = h / 2;
-        outline =
-          `<path d="M${num(-r)},${num(-b)}H${num(r - FOLD)}L${num(r)},${num(FOLD - b)}V${num(b)}H${num(-r)}Z" fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"${shape}/>` +
-          `<path d="M${num(r - FOLD)},${num(-b)}V${num(FOLD - b)}H${num(r)}" fill="none" stroke="var(--_b)" stroke-linejoin="round"${view.style.line}/>`;
+        out.path(out.pen().M(-r, -b).H(r - FOLD).L(r, FOLD - b).V(b).H(-r).Z(), ` fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"${shape}`);
+        out.path(out.pen().M(r - FOLD, -b).V(FOLD - b).H(r), ` fill="none" stroke="var(--_b)" stroke-linejoin="round"${view.style.line}`);
       } else {
-        kind = 'pele-usecase';
-        outline = `<rect x="${num(-w / 2)}" y="${num(-h / 2)}" width="${num(w)}" height="${num(h)}"${rounded(SHAPE_ATTRS + shape)}/>`;
+        classed('pele-usecase');
+        out.rect(-w / 2, -h / 2, w, h, rounded(SHAPE_ATTRS + shape));
       }
-      body =
-        outline +
-        labelSvg(
-          view.stereotype,
-          0,
-          -view.label.height / 2,
-          ` class="pele-stereotype" font-size="${tiny}"${muted}`,
-          icons
-        ) +
-        labelSvg(
-          view.label,
-          0,
-          labelY,
-          ` class="pele-label"${node.shape === 'note' ? ` font-size="${small}"` : ''}${color}${textAttrs}`,
-          icons
-        );
+      out.label(view.stereotype, 0, -view.label.height / 2, ` class="pele-stereotype" font-size="${tiny}"${muted}`, icons);
+      out.label(view.label, 0, labelY, ` class="pele-label"${node.shape === 'note' ? ` font-size="${small}"` : ''}${color}${textAttrs}`, icons);
     }
-    nodesOut += `<g class="pele-node ${kind}${classes}" data-id="${id}"${srcAttrs(node.written)} transform="translate(${num(c.x)},${num(c.y)})">${body}</g>`;
+    out.end();
   }
 
-  let casings = '';
-  let edgesOut = '';
-  let labelsOut = '';
   const loopSeen = new Map<number, number>();
   for (let i = 0; i < cedges.length; i++) {
     const ce = cedges[i];
@@ -481,14 +464,14 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       const st = trim(startType);
       const et = trim(endType);
       // Both ends leave the node leaning away from each other, and the curve joins them outside it.
-      const out = (x: number, y: number, sign: number, far: number): string =>
+      const bend = (x: number, y: number, sign: number, far: number): string =>
         sideways ? `${num(x + sign * spread * (far ? 1 : 0))},${num(y + far)}` : `${num(x + far)},${num(y + sign * spread * (far ? 1 : 0))}`;
       const sx = sideways ? ax - ux * st : ax + ux * st;
       const sy = sideways ? ay + uy * st : ay - uy * st;
       const ex = bx + ux * et;
       const ey = by + uy * et;
       path = {
-        d: `M${num(sx)},${num(sy)}C${out(ax, ay, -1, reach)} ${out(bx, by, 1, reach)} ${num(ex)},${num(ey)}`,
+        d: `M${num(sx)},${num(sy)}C${bend(ax, ay, -1, reach)} ${bend(bx, by, 1, reach)} ${num(ex)},${num(ey)}`,
         sx: ax,
         sy: ay,
         sdx: sideways ? ux : -ux,
@@ -507,47 +490,63 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       }
     } else {
       if (ce.route.length < 6) continue;
-      path = routePath(ce.route, undefined, trim(startType), trim(endType));
+      path = routePath(ce.route, undefined, trim(startType), trim(endType), undefined, undefined, !out.numbers);
     }
     const under = fillUnder(path.d, [path.sx, path.sy, path.ex, path.ey], fills, path.tokens);
     const over = under ? edgeInk(under, style?.line) : under;
     const color = over || (style?.stroke ? esc(style.stroke) : 'var(--_l)');
+    // A marker is the same drawing wherever its tip is, so a scene reads it once per direction.
+    const marks = (fill: string, stroke: string | undefined, plain: boolean): void => {
+      for (const [type, x, y, dx, dy] of [
+        [startType, path.sx, path.sy, path.sdx, path.sdy],
+        [endType, path.ex, path.ey, path.edx, path.edy],
+      ] as const) {
+        if (!MARKED.has(type)) continue;
+        out.at(x, y, (px, py) => {
+          let m = mark(type, px, py, dx, dy, fill, stroke);
+          if (plain) m = m.replace(/ class="pele-marker"/g, '');
+          else if (under && over) m = hollowOn(m, under);
+          return m;
+        });
+      }
+    };
     if (over === '') {
-      const bg = 'var(--_bg)';
-      casings += casing(path.d, mark(startType, path.sx, path.sy, path.sdx, path.sdy, bg, bg) + mark(endType, path.ex, path.ey, path.edx, path.edy, bg, bg), style?.line);
+      // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
+      const caseAttrs = casingAttrs(style?.line);
+      if (caseAttrs !== undefined) {
+        out.into('casings', '', () => {
+          if (caseAttrs) out.group({ attrs: caseAttrs });
+          out.path(path.d, '', path.tokens);
+          marks('var(--_bg)', 'var(--_bg)', true);
+          if (caseAttrs) out.end();
+        });
+      }
     }
     // Mermaid animates these dashes. A still picture keeps the dashes.
     const dashes = edge.internal ? '2 3' : edge.pattern === 'dotted' ? '5 4' : edge.animate ? '9 5' : '';
-    const marks = mark(startType, path.sx, path.sy, path.sdx, path.sdy, color) + mark(endType, path.ex, path.ey, path.edx, path.edy, color);
-    edgesOut +=
-      `<g class="pele-edge pele-${edge.relationshipType}${classNames(edge.classes.replace(/^default relationship relationship-\S+\s?/, ''))}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
-      `<path d="${path.d}"${dashes ? ` stroke-dasharray="${dashes}"` : ''}/>` +
-      (under && over ? hollowOn(marks, under) : marks) +
-      '</g>';
+    out.section('edges');
+    out.group({
+      cls: `pele-edge pele-${edge.relationshipType}${classNames(edge.classes.replace(/^default relationship relationship-\S+\s?/, ''))}`,
+      id: edge.id,
+      source: edge.written,
+      attrs: (over ? ` stroke="${over}"` : '') + (style?.line ?? ''),
+    });
+    out.path(path.d, dashes ? ` stroke-dasharray="${dashes}"` : '', path.tokens);
+    marks(color, undefined, false);
+    out.end();
     if (label.width > 0) {
       const x = ce.labelX;
       const y = ce.labelY;
       const semantic = edge.relationshipType === 'include' || edge.relationshipType === 'extend';
-      labelsOut += edgeLabelSvg(edge.id, label, x, y, (semantic ? ' fill="var(--_m)"' : '') + (style?.text ?? ''), icons);
+      out.section('labels');
+      out.group({ cls: 'pele-edge-label', id: edge.id });
+      out.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+      out.label(label, x, y, (semantic ? ' fill="var(--_m)"' : '') + (style?.text ?? ''), icons);
+      out.end();
     }
   }
 
-  const svg = documentOf(out, 
-    'usecase',
-    width,
-    height,
-    size,
-    options,
-    model,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-      casingsSvg(casings) +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${small}">${labelsOut}</g>` : '') +
-      `<g class="pele-nodes">${nodesOut}</g>`
-  );
-
-  return { svg, width, height, links: [] };
+  return { svg: out.done('usecase', width, height, size, options, model), width, height, links: [] };
 }
 
 // A boundary's title sits in the middle of its top edge. Where edges enter through that edge it
@@ -580,11 +579,9 @@ function titleX(c: CNode, width: number, crossings: Map<number, number[]>): numb
   return best;
 }
 
-function leftLabel(label: Label, x: number, cy: number, attrs: string, icons: IconResolver | undefined): string {
-  if (label.lines.length < 2) return labelSvg(label, x + label.width / 2, cy, attrs, icons);
-  let out = '';
+function leftLabel(out: Out, label: Label, x: number, cy: number, attrs: string, icons: IconResolver | undefined): void {
+  if (label.lines.length < 2) return out.label(label, x + label.width / 2, cy, attrs, icons);
   for (let i = 0; i < label.lines.length; i++) {
-    out += labelSvg(labelLine(label, i), x + label.widths[i] / 2, cy - label.height / 2 + lineMiddle(label, i), attrs, icons);
+    out.label(labelLine(label, i), x + label.widths[i] / 2, cy - label.height / 2 + lineMiddle(label, i), attrs, icons);
   }
-  return out;
 }
