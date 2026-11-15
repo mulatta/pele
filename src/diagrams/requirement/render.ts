@@ -1,10 +1,9 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle } from '../../svg/builder.js';
-import { edgeLabelSvg, routePath, type EdgePath } from '../../svg/edges.js';
+import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
 import { classNames, resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -30,6 +29,7 @@ const ARROW_LENGTH = 9;
 const ARROW_HALF = 4.5;
 const END_STEP = 28;
 const END_MARGIN = 14;
+const MARKER = { cls: 'pele-marker' };
 
 interface Row {
   key: Label;
@@ -94,25 +94,24 @@ function startText(label: Label, x: number, top: number, attrs: string): string 
 }
 
 // The containment mark: a circled plus whose rim touches (x, y), where (dx, dy) points at the node.
-function containsMarker(x: number, y: number, dx: number, dy: number): string {
+function containsMarker(out: Out, x: number, y: number, dx: number, dy: number): void {
   const r = CONTAINS_RADIUS;
   const cx = x - dx * r;
   const cy = y - dy * r;
-  return (
-    `<circle class="pele-marker" cx="${num(cx)}" cy="${num(cy)}" r="${r}"/>` +
-    `<path class="pele-marker" d="M${num(cx - dx * r)},${num(cy - dy * r)}L${num(cx + dx * r)},${num(cy + dy * r)}M${num(
-      cx + dy * r
-    )},${num(cy - dx * r)}L${num(cx - dy * r)},${num(cy + dx * r)}"/>`
-  );
+  out.circle(cx, cy, r, '', MARKER);
+  out.path(out.pen().M(cx - dx * r, cy - dy * r).L(cx + dx * r, cy + dy * r).M(cx + dy * r, cy - dx * r).L(cx - dy * r, cy + dx * r), '', undefined, MARKER);
 }
 
 // An open arrowhead with its tip at (x, y), pointing along (dx, dy).
-function arrowMarker(x: number, y: number, dx: number, dy: number): string {
+function arrowMarker(out: Out, x: number, y: number, dx: number, dy: number): void {
   const bx = x - dx * ARROW_LENGTH;
   const by = y - dy * ARROW_LENGTH;
-  return `<path class="pele-marker" d="M${num(bx - dy * ARROW_HALF)},${num(by + dx * ARROW_HALF)}L${num(x)},${num(y)}L${num(
-    bx + dy * ARROW_HALF
-  )},${num(by - dx * ARROW_HALF)}" stroke-linejoin="round"/>`;
+  out.path(
+    out.pen().M(bx - dy * ARROW_HALF, by + dx * ARROW_HALF).L(x, y).L(bx + dy * ARROW_HALF, by - dx * ARROW_HALF),
+    ' stroke-linejoin="round"',
+    undefined,
+    MARKER
+  );
 }
 
 // The layout attaches every edge to the middle of a node's side. Ends that share a side are
@@ -161,7 +160,6 @@ export function renderRequirement(model: RequirementModel, _config: Config, opti
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(out: Out, model: RequirementModel, _config: Config, options: RenderOptions, turned: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const graph = buildRequirementGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -266,7 +264,10 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
   const width = Math.ceil(inner + 2 * pad);
   const height = Math.ceil(layout.height + titleHeight + 2 * pad);
 
-  let nodesOut = '';
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('edge-labels', ` class="pele-edge-labels" font-size="${small}" fill="var(--_m)"`);
+  out.section('nodes', ' class="pele-nodes"', true);
   for (let i = 0; i < views.length; i++) {
     const view = views[i];
     const { w, h, style } = view;
@@ -274,40 +275,37 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
     const muted = color || ' fill="var(--_m)"';
     const left = -w / 2;
     const top = -h / 2;
-    let body =
-      `<rect x="${num(left)}" y="${num(top)}" width="${num(w)}" height="${num(h)}" fill="var(--_s)" stroke="var(--_b)"${rounded(style.shape)}/>` +
-      labelSvg(
-        view.kind,
-        0,
-        top + PAD_Y + view.kind.height / 2,
-        ` class="pele-stereotype" font-size="${view.kind.size}"${muted}${style.text}`
-      ) +
-      labelSvg(
-        view.name,
-        0,
-        top + PAD_Y + view.kind.height + view.name.height / 2,
-        ` class="pele-label" font-size="${view.name.size}" font-weight="var(--_hw)"${color}${style.text}`
-      );
+    out.group({
+      cls: `pele-node ${view.node.requirement ? 'pele-requirement' : 'pele-element'}${classNames(view.node.cssClasses.replace(/^default\s?/, ''))}`,
+      id: view.node.id,
+      source: view.node.written,
+      x: cnodes[i].x + ox,
+      y: cnodes[i].y + oy,
+    });
+    out.rect(left, top, w, h, ` fill="var(--_s)" stroke="var(--_b)"${rounded(style.shape)}`);
+    out.label(view.kind, 0, top + PAD_Y + view.kind.height / 2, ` class="pele-stereotype" font-size="${view.kind.size}"${muted}${style.text}`);
+    out.label(
+      view.name,
+      0,
+      top + PAD_Y + view.kind.height + view.name.height / 2,
+      ` class="pele-label" font-size="${view.name.size}" font-weight="var(--_hw)"${color}${style.text}`
+    );
     if (view.rows.length > 0) {
       const divider = top + view.headHeight;
-      body += `<path class="pele-divider" d="M${num(left)},${num(divider)}H${num(-left)}" stroke="var(--_b)"${style.line}/>`;
+      out.path(out.pen().M(left, divider).H(-left), ` stroke="var(--_b)"${style.line}`, undefined, { cls: 'pele-divider' });
       let y = divider + PAD_Y;
-      let rows = '';
+      out.group({ cls: 'pele-fields', attrs: ` font-size="${view.rows[0].key.size}"` });
       for (const row of view.rows) {
-        rows +=
-          startText(row.key, left + PAD_X, y, ` class="pele-field"${muted}${style.text}`) +
-          startText(row.value, left + PAD_X + view.keyWidth + COLUMN_GAP, y, ` class="pele-value"${color}${style.text}`);
+        // Rows are tspans of mixed styles, which no typed call covers.
+        out.fragment(startText(row.key, left + PAD_X, y, ` class="pele-field"${muted}${style.text}`));
+        out.fragment(startText(row.value, left + PAD_X + view.keyWidth + COLUMN_GAP, y, ` class="pele-value"${color}${style.text}`));
         y += row.height + ROW_GAP;
       }
-      body += `<g class="pele-fields" font-size="${view.rows[0].key.size}">${rows}</g>`;
+      out.end();
     }
-    nodesOut += `<g class="pele-node ${view.node.requirement ? 'pele-requirement' : 'pele-element'}${classNames(
-      view.node.cssClasses.replace(/^default\s?/, '')
-    )}" data-id="${escText(view.node.id)}"${srcAttrs(view.node.written)} transform="translate(${num(cnodes[i].x + ox)},${num(cnodes[i].y + oy)})">${body}</g>`;
+    out.end();
   }
 
-  let edgesOut = '';
-  let labelsOut = '';
   const loopSeen = new Map<number, number>();
   for (let i = 0; i < cedges.length; i++) {
     const ce = cedges[i];
@@ -355,30 +353,20 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
         route[k] += ox;
         route[k + 1] += oy;
       }
-      path = routePath(route, undefined, startTrim, 0);
+      path = routePath(route, undefined, startTrim, 0, undefined, undefined, !out.numbers);
     }
-    edgesOut +=
-      `<g class="pele-edge pele-relationship-${edge.contains ? 'contains' : 'arrow'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
-      `<path d="${path.d}"${edge.contains ? '' : ' stroke-dasharray="5 4"'}/>` +
-      (edge.contains
-        ? containsMarker(path.sx, path.sy, path.sdx, path.sdy)
-        : arrowMarker(path.ex, path.ey, path.edx, path.edy)) +
-      '</g>';
-    labelsOut += edgeLabelSvg(edge.id, label, labelX, labelY, '');
+    out.section('edges');
+    out.group({ cls: `pele-edge pele-relationship-${edge.contains ? 'contains' : 'arrow'}`, id: edge.id, source: edge.written });
+    out.path(path.d, edge.contains ? '' : ' stroke-dasharray="5 4"', path.tokens);
+    if (edge.contains) containsMarker(out, path.sx, path.sy, path.sdx, path.sdy);
+    else arrowMarker(out, path.ex, path.ey, path.edx, path.edy);
+    out.end();
+    out.section('edge-labels');
+    out.group({ cls: 'pele-edge-label', id: edge.id });
+    out.rect(labelX - (label.width + 8) / 2, labelY - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+    out.label(label, labelX, labelY, '');
+    out.end();
   }
 
-  const svg = documentOf(out, 
-    'requirement',
-    width,
-    height,
-    size,
-    options,
-    model,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${small}" fill="var(--_m)">${labelsOut}</g>` : '') +
-      `<g class="pele-nodes">${nodesOut}</g>`
-  );
-
-  return { svg, width, height, links: [] };
+  return { svg: out.done('requirement', width, height, size, options, model), width, height, links: [] };
 }
