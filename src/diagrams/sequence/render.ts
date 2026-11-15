@@ -10,7 +10,7 @@ import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.j
 import type { RenderOptions, Rendered } from '../../types.js';
 import { breakLabel } from '../common/literal-label.js';
 import { tighten, titleRoom } from '../common/fit-width.js';
-import { Z, L, M, activeSink, circleCmds, parseLook, shift, type Scene, type SceneSink } from '../../scene/sink.js';
+import { Z, L, M, activeSink, circleCmds, parseLook, shift, type Scene, type SceneOut } from '../../draw/scene.js';
 import { actorKind, actorSize, drawActor, isFigure, type ActorSize } from './actors.js';
 import type { SeqDb } from './db.js';
 import { LINETYPE, PLACEMENT, type SeqActor, type SeqBox, type SeqMessage, type SeqNumbering } from './types.js';
@@ -210,7 +210,7 @@ function head(type: Head, x: number, y: number, dir: number, up: number, color: 
 }
 
 // The same head, straight into a scene.
-function sceneHead(sink: SceneSink, type: Head, x: number, y: number, dir: number, up: number, color: string): void {
+function sceneHead(sink: SceneOut, type: Head, x: number, y: number, dir: number, up: number, color: string): void {
   const bx = x - dir * ARROW;
   switch (type) {
     case Head.Arrow:

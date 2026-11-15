@@ -2,7 +2,7 @@
 // renderer draws directly against the SVG it writes. Follows what the scene output keeps: groups
 // moved by translate(), inherited presentation attributes, `data-id` items, outlines and text.
 // Anything else (another transform, images, icons, math) is counted in `skipped` and not drawn.
-import { M, L, parsePathData, shift, type Box, type Path, type Scene, type SceneSpan } from '../../src/scene/sink.js';
+import { M, L, parsePathData, shift, type Box, type Path, type Scene, type SceneSpan } from '../../src/draw/scene.js';
 
 interface Node {
   tag: string;

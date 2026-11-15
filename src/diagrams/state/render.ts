@@ -15,7 +15,7 @@ import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { StateDb } from './db.js';
 import type { StateEdge, StateNode } from './graph.js';
-import { L, M, activeSink, circleCmds, parseLook, parsePathData, polygonCmds, tokensToCmds } from '../../scene/sink.js';
+import { L, M, activeSink, circleCmds, parseLook, parsePathData, polygonCmds, tokensToCmds } from '../../draw/scene.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;

@@ -1,5 +1,5 @@
 import { ease } from '../layout/layered.js';
-import { Z, L, M, activeSink, circleCmds, type SceneSink } from '../scene/sink.js';
+import { Z, L, M, activeSink, circleCmds, type SceneOut } from '../draw/scene.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver } from '../types.js';
 import { escText, labelSvg, num } from './builder.js';
@@ -247,7 +247,7 @@ export function marker(type: string, x: number, y: number, dx: number, dy: numbe
 }
 
 // The same marker, straight into a scene.
-export function sceneMarker(sink: SceneSink, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): void {
+export function sceneMarker(sink: SceneOut, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): void {
   const m = markerShape(type, x, y, dx, dy);
   if (!m) return;
   if (m.kind === 'point') {

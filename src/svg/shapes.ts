@@ -1,5 +1,5 @@
 import type { CNode } from '../layout/compound.js';
-import { activeSink, ellipseCmds, parseLook, polygonCmds } from '../scene/sink.js';
+import { activeSink, ellipseCmds, parseLook, polygonCmds } from '../draw/scene.js';
 import { num } from './builder.js';
 import { rounded } from './theme.js';
 

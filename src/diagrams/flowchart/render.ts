@@ -18,7 +18,7 @@ import { runsAcross, tighten, titleRoom, turnToFit } from '../common/fit-width.j
 import type { FlowDb } from './db.js';
 import { buildFlowGraph, type FlowGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { canonicalShape } from './shapes.js';
-import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
+import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../draw/scene.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;

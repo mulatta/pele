@@ -1,5 +1,5 @@
 import { decodeEntities } from '../text/entities.js';
-import { activeSink } from '../scene/sink.js';
+import { activeSink } from '../draw/scene.js';
 import { Style } from '../text/measurer.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver, MathMarkup, SourceInfo } from '../types.js';

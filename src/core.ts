@@ -8,7 +8,7 @@ import type { DiagramModel } from './models.js';
 import { palette, withPalette } from './svg/palette.js';
 import { mountWith, type MountOptions, type Mounted } from './mount.js';
 import type { Diagram, RenderOptions, RenderResult } from './types.js';
-import { SceneSink, withSink, type Scene } from './scene/sink.js';
+import { SceneOut, withSink, type Scene } from './draw/scene.js';
 
 export { PeleError } from './errors.js';
 export type { PeleErrorCode } from './errors.js';
@@ -19,7 +19,7 @@ export type { Diagram } from './types.js';
 export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
 export { enableZoom } from './zoom.js';
-export type { Scene, SceneShape, SceneText, SceneItem } from './scene/sink.js';
+export type { Scene, SceneShape, SceneText, SceneItem } from './draw/scene.js';
 export type { Zoom, ZoomOptions } from './zoom.js';
 
 const diagrams = new Map<DiagramType, Diagram<unknown>>();
@@ -239,7 +239,7 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     const responsive = options.responsive ?? !fixed;
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
-    const sink = new SceneSink();
+    const sink = new SceneOut();
     const rendered = tagErrors({ type, mermaidType }, () =>
       withSink(sink, () =>
         withPalette(palette(type, config), () =>

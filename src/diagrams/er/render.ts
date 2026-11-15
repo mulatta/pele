@@ -17,7 +17,7 @@ import type { ErDb } from './db.js';
 import { parseGenericTypes } from '../common/generics.js';
 import { buildErGraph, type ErGraphEdge, type ErGraphNode } from './graph.js';
 import { MARKER_LENGTH, erMarker } from './markers.js';
-import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
+import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../draw/scene.js';
 
 const NODE_SEP = 48;
 const EDGE_SEP = 20;

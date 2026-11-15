@@ -15,6 +15,7 @@ import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import type { SourceInfo } from '../types.js';
+import type { Group, Out } from './out.js';
 
 export const SCENE_VERSION = 2;
 
@@ -334,67 +335,136 @@ function cmdsBox(cmds: Path): Box {
 
 // ---------------------------------------------------------------- fragments
 
-// One element of a small SVG fragment, in the fragment's own coordinates.
-interface Piece {
-  cmds: Path;
-  look: Look;
+// What a fragment draws, in the fragment's own coordinates, to be replayed into the group it is
+// drawn in: a group opens (an item when it has an id) and closes, a shape, a run of text.
+type Op =
+  | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look }
+  | { op: 'end' }
+  | { op: 'shape'; cmds: Path; look: Look }
+  | { op: 'text'; x: number; y: number; anchor: string | undefined; spans: SceneSpan[]; look: Look }
+  | { op: 'skip'; what: string };
+
+const RE_TAG = /<\/([\w:-]+)\s*>|<([\w:-]+)((?:\s+[\w:-]+\s*=\s*"[^"]*")*)\s*(\/?)>|([^<]+)/g;
+const RE_TRANSLATE = /^\s*translate\(\s*([-\d.e+]+)(?:[\s,]+([-\d.e+]+))?\s*\)\s*$/;
+const fragmentCache = new Map<string, Op[]>();
+
+// An element's own presentation attributes; declarations in style win, as in CSS.
+function lookOf(a: Record<string, string>): Look {
+  const look: Look = {};
+  for (const key in a) if (KEYS.has(key)) (look as Record<string, string>)[key] = a[key];
+  if (a.style) {
+    for (const decl of a.style.split(';')) {
+      const i = decl.indexOf(':');
+      if (i <= 0) continue;
+      const key = decl.slice(0, i).trim();
+      if (KEYS.has(key)) (look as Record<string, string>)[key] = decl.slice(i + 1).trim().replace(/\s*!important$/, '');
+    }
+  }
+  return look;
 }
 
-interface Fragment {
-  pieces: Piece[];
-  skipped: string[];
+interface Element {
+  tag: string;
+  a: Record<string, string>;
+  children: (Element | string)[];
 }
 
-const RE_TAG = /<\/([\w:-]+)\s*>|<([\w:-]+)((?:\s+[\w:-]+\s*=\s*"[^"]*")*)\s*(\/?)>|[^<]+/g;
-const fragmentCache = new Map<string, Fragment>();
-
-// Parses a shape or marker fragment: rect, circle, ellipse, path, polygon, polyline, line, and
-// <g> with a translate() and presentation attributes. Text and nested images are reported as
-// skipped: labels never come this way.
-function parseFragment(svg: string): Fragment {
-  let frag = fragmentCache.get(svg);
-  if (frag) return frag;
-  frag = { pieces: [], skipped: [] };
-  const groups: { look: Look; dx: number; dy: number }[] = [{ look: {}, dx: 0, dy: 0 }];
-  let depthSkip = 0;
+function elements(svg: string): Element[] {
+  const root: Element = { tag: '', a: {}, children: [] };
+  const stack = [root];
   for (const m of svg.matchAll(RE_TAG)) {
+    const top = stack[stack.length - 1];
     if (m[1]) {
-      if (depthSkip > 0) depthSkip--;
-      else if (m[1] === 'g' && groups.length > 1) groups.pop();
+      if (stack.length > 1) stack.pop();
+    } else if (m[2]) {
+      const a: Record<string, string> = {};
+      for (const p of m[3].matchAll(RE_ATTR)) a[p[1]] = p[2];
+      const el: Element = { tag: m[2], a, children: [] };
+      top.children.push(el);
+      if (!m[4]) stack.push(el);
+    } else if (m[5] !== undefined) top.children.push(m[5]);
+  }
+  return root.children.filter((c): c is Element => typeof c !== 'string');
+}
+
+const XML: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+// Text and attribute values as the SVG means them.
+const unescape = (s: string): string =>
+  s.includes('&')
+    ? s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (all, e: string) =>
+        e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (XML[e] ?? all)
+      )
+    : s;
+
+const textOf = (el: Element): string => el.children.filter((c): c is string => typeof c === 'string').map(unescape).join('');
+
+function spanOf(text: string, a: Record<string, string>): SceneSpan {
+  const span: SceneSpan = { text };
+  if (a['font-weight'] !== undefined && weight(a['font-weight'], 400) >= 600) span.weight = 700;
+  if (a['font-style'] === 'italic') span.italic = true;
+  if (a['font-family'] === 'var(--_fm)') span.mono = true;
+  return span;
+}
+
+// A <text>: a new run starts at each tspan that sets its own position.
+function textOps(el: Element, look: Look, dx: number, dy: number, ops: Op[]): void {
+  let x = len(el.a.x, 0) + dx;
+  let y = len(el.a.y, 0) + dy;
+  let anchor: string | undefined = undefined;
+  let spans: SceneSpan[] = [];
+  const flush = () => {
+    if (spans.length) ops.push({ op: 'text', x, y, anchor, spans, look });
+    spans = [];
+  };
+  for (const c of el.children) {
+    if (typeof c === 'string') {
+      if (c) spans.push({ text: unescape(c) });
       continue;
     }
-    const tag = m[2];
-    if (!tag) continue;
-    if (depthSkip > 0) {
-      if (!m[4]) depthSkip++;
-      continue;
+    if (c.tag !== 'tspan') continue;
+    if (c.a.x !== undefined || c.a.y !== undefined) {
+      flush();
+      if (c.a.x !== undefined) x = len(c.a.x, 0) + dx;
+      if (c.a.y !== undefined) y = len(c.a.y, 0) + dy;
+      anchor = c.a['text-anchor'];
     }
-    const attrs = m[3];
-    const a: Record<string, string> = {};
-    for (const p of attrs.matchAll(RE_ATTR)) a[p[1]] = p[2];
-    const parent = groups[groups.length - 1];
-    const look = { ...parent.look, ...parseLook(attrs) };
-    const dx = parent.dx;
-    const dy = parent.dy;
-    let cmds: Path | null = null;
-    switch (tag) {
-      case 'g': {
-        let gx = dx;
-        let gy = dy;
-        const t = a.transform?.match(/^\s*translate\(\s*([-\d.e+]+)(?:[\s,]+([-\d.e+]+))?\s*\)\s*$/);
-        if (t) {
-          gx += Number(t[1]);
-          gy += Number(t[2] ?? 0);
-        } else if (a.transform) frag.skipped.push('transform');
-        if (!m[4]) groups.push({ look, dx: gx, dy: gy });
+    spans.push(spanOf(textOf(c), c.a));
+  }
+  flush();
+}
+
+function fragmentOps(list: (Element | string)[], ops: Op[]): void {
+  for (const el of list) {
+    if (typeof el === 'string') continue;
+    const a = el.a;
+    let dx = 0;
+    let dy = 0;
+    if (a.transform !== undefined) {
+      const t = RE_TRANSLATE.exec(a.transform);
+      if (!t) {
+        ops.push({ op: 'skip', what: 'transform' });
         continue;
       }
+      dx = Number(t[1]);
+      dy = Number(t[2] ?? 0);
+    }
+    const look = lookOf(a);
+    const id = a['data-id'] === undefined ? undefined : unescape(a['data-id']);
+    const group = el.tag === 'g' || el.tag === 'a';
+    // A group, or an element that is an item or moved: what is in it is drawn in its frame.
+    const framed = group || id !== undefined || dx !== 0 || dy !== 0;
+    if (framed) ops.push({ op: 'begin', id, kind: a.class ?? el.tag, dx, dy, look: group ? look : {} });
+    let cmds: Path | null = null;
+    let own = look;
+    switch (el.tag) {
+      case 'g':
+      case 'a':
+        fragmentOps(el.children, ops);
+        break;
       case 'rect': {
         const w = len(a.width, 0);
         const h = len(a.height, 0);
-        const rx = len(look.rx ?? a.ry, 0);
-        const ry = len(a.ry ?? look.rx, 0);
-        if (w > 0 && h > 0) cmds = roundRect(len(a.x, 0), len(a.y, 0), w, h, rx, ry);
+        if (w > 0 && h > 0) cmds = roundRect(len(a.x, 0), len(a.y, 0), w, h, len(look.rx ?? a.ry, 0), len(a.ry ?? look.rx, 0));
         break;
       }
       case 'circle': {
@@ -410,29 +480,43 @@ function parseFragment(svg: string): Fragment {
       }
       case 'line':
         cmds = [M, len(a.x1, 0), len(a.y1, 0), L, len(a.x2, 0), len(a.y2, 0)];
-        look.fill = 'none';
+        own = { ...look, fill: 'none' };
         break;
       case 'polygon':
       case 'polyline':
-        cmds = points(numbers(a.points ?? ''), tag === 'polygon');
-        if (tag === 'polyline' && a.fill === undefined) look.fill = 'none';
+        cmds = points(numbers(a.points ?? ''), el.tag === 'polygon');
+        if (el.tag === 'polyline' && a.fill === undefined) own = { ...look, fill: 'none' };
         break;
       case 'path':
         if (a.d) cmds = parsePathData(a.d);
         break;
+      case 'text':
+        textOps(el, look, 0, 0, ops);
+        break;
       case 'title':
       case 'desc':
-        if (!m[4]) depthSkip = 1;
+        break;
+      case 'svg':
+      case 'foreignObject':
+        ops.push({ op: 'skip', what: /\bpele-math\b/.test(a.class ?? '') ? 'math' : /\bpele-icon\b/.test(a.class ?? '') ? 'icon' : el.tag });
         break;
       default:
-        frag.skipped.push(tag);
-        if (!m[4]) depthSkip = 1;
+        ops.push({ op: 'skip', what: el.tag });
     }
-    if (cmds && cmds.length) frag.pieces.push({ cmds: shift(cmds, dx, dy), look });
+    if (cmds) ops.push({ op: 'shape', cmds, look: own });
+    if (framed) ops.push({ op: 'end' });
   }
+}
+
+// Reads a fragment the way the SVG it is part of would be read.
+function parseFragment(svg: string): Op[] {
+  let ops = fragmentCache.get(svg);
+  if (ops) return ops;
+  ops = [];
+  fragmentOps(elements(svg), ops);
   if (fragmentCache.size > 4000) fragmentCache.clear();
-  fragmentCache.set(svg, frag);
-  return frag;
+  fragmentCache.set(svg, ops);
+  return ops;
 }
 
 // ---------------------------------------------------------------- sink
@@ -449,9 +533,13 @@ interface Frame {
   dx: number;
   dy: number;
   look: Look;
+  // Inside a group the scene cannot show (one turned or scaled): nothing in it is drawn.
+  hidden?: boolean;
 }
 
-export class SceneSink {
+export class SceneOut implements Out {
+  // The finished scene, once done() has been called.
+  scene: Scene | null = null;
   private sections = new Map<string, Section>();
   private current!: Section;
   private frames: Frame[] = [];
@@ -510,7 +598,15 @@ export class SceneSink {
   // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
   // where it comes from in the text, read as `data-` attributes would be (see sourceAttrs).
   begin(id: string | undefined, kind: string, dx = 0, dy = 0, attrs = '', source?: SourceInfo): void {
+    this.open(id, kind, dx, dy, attrs ? parseLook(attrs) : null, source);
+  }
+
+  private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo): void {
     const f = this.frame;
+    if (f.hidden) {
+      this.frames.push(f);
+      return;
+    }
     let item = f.item;
     if (id !== undefined) {
       const it: SceneItem = { id, kind, box: null };
@@ -525,7 +621,7 @@ export class SceneSink {
       item = this.items.length - 1;
       this.current.items.push(item);
     }
-    this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look: attrs ? { ...f.look, ...parseLook(attrs) } : f.look });
+    this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look: own ? { ...f.look, ...own } : f.look });
   }
 
   end(): void {
@@ -551,8 +647,8 @@ export class SceneSink {
 
   // Adds geometry in the current group's coordinates, painted by `look` over the inherited one.
   shape(cmds: Path, own: Look = {}): void {
-    if (!cmds.length) return;
     const f = this.frame;
+    if (!cmds.length || f.hidden) return;
     const look = own === f.look ? own : { ...f.look, ...own };
     const placed = shift(cmds, f.dx, f.dy);
     const box = cmdsBox(placed);
@@ -574,10 +670,6 @@ export class SceneSink {
     this.touch(box);
   }
 
-  path(d: string, attrs = ''): void {
-    this.shape(parsePathData(d), parseLook(attrs));
-  }
-
   rect(x: number, y: number, w: number, h: number, attrs = ''): void {
     const look = parseLook(attrs);
     const rx = len(look.rx, 0);
@@ -596,9 +688,31 @@ export class SceneSink {
       }
       return;
     }
-    const frag = parseFragment(svg);
-    for (const s of frag.skipped) this.skip(s);
-    for (const p of frag.pieces) this.shape(p.cmds, p.look);
+    for (const op of parseFragment(svg)) {
+      switch (op.op) {
+        case 'begin': {
+          // A renderer that opened the item itself hands over the group it writes for it.
+          const f = this.frame;
+          const same = op.id !== undefined && f.item >= 0 && this.items[f.item].id === op.id && this.items[f.item].kind === op.kind;
+          this.open(same ? undefined : op.id, op.kind, op.dx, op.dy, op.look);
+          break;
+        }
+        case 'end':
+          this.end();
+          break;
+        case 'shape':
+          this.shape(op.cmds, op.look);
+          break;
+        case 'text': {
+          const look = { ...this.frame.look, ...op.look };
+          const anchor = op.anchor ?? look['text-anchor'] ?? 'start';
+          this.text(op.x, op.y, op.spans, textBase(look, len(look['font-size'], 16)), anchor as 'start' | 'middle' | 'end');
+          break;
+        }
+        case 'skip':
+          this.skip(op.what);
+      }
+    }
   }
 
   // A measured label centered on (cx, cy), placed as labelSvg places it.
@@ -644,8 +758,8 @@ export class SceneSink {
   }
 
   private text(x: number, y: number, spans: SceneSpan[], base: { size: number; weight: number; italic: boolean; paint: string }, anchor: 'start' | 'middle' | 'end'): void {
-    if (!spans.some((s) => s.text.trim())) return;
     const f = this.frame;
+    if (f.hidden || !spans.some((s) => s.text.trim())) return;
     const t: SceneText = { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
     this.current.texts.push(t);
     const w = spans.reduce((n, s) => n + s.text.length, 0) * base.size * 0.55;
@@ -705,16 +819,73 @@ export class SceneSink {
     });
     this.text(x, y, spans, base, 'start');
   }
+
+  // ---------------------------------------------------------------- Out
+
+  fork(): SceneOut {
+    return new SceneOut(this.rootLook);
+  }
+
+  adopt(attempt: Out): void {
+    this.scene = (attempt as SceneOut).scene;
+  }
+
+  group(g: Group): void {
+    let dx = g.x ?? 0;
+    let dy = g.y ?? 0;
+    const attrs = g.attrs ?? '';
+    if (attrs.includes('transform="')) {
+      const t = RE_TRANSLATE.exec(/ transform="([^"]*)"/.exec(attrs)?.[1] ?? '');
+      if (!t) {
+        this.skip('transform');
+        this.frames.push({ ...this.frame, hidden: true });
+        return;
+      }
+      dx += Number(t[1]);
+      dy += Number(t[2] ?? 0);
+    }
+    this.open(g.id, g.cls ?? 'g', dx, dy, attrs ? parseLook(attrs) : null, g.source);
+  }
+
+  shift(x: number, y: number): void {
+    this.open(undefined, '', x, y, null);
+  }
+
+  link(): void {
+    this.open(undefined, '', 0, 0, null);
+  }
+
+  tooltip(): void {}
+
+  path(d: string, attrs = '', tokens?: number[]): void {
+    this.shape(tokens ? tokensToCmds(tokens) : parsePathData(d), parseLook(attrs));
+  }
+
+  raw(): void {}
+
+  done(_type: string, width: number, height: number, _fontSize: number, _options: unknown, _acc: unknown, order: string[]): string {
+    this.scene = this.finish(order, width, height);
+    return '';
+  }
 }
 
-let active: SceneSink | null = null;
+function textBase(look: Look, size: number): { size: number; weight: number; italic: boolean; paint: string } {
+  return {
+    size,
+    weight: weight(look['font-weight'], 400),
+    italic: look['font-style'] === 'italic',
+    paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+  };
+}
+
+let active: SceneOut | null = null;
 
 // The sink of the scene being drawn, or null while drawing SVG.
-export function activeSink(): SceneSink | null {
+export function activeSink(): SceneOut | null {
   return active;
 }
 
-export function withSink<T>(sink: SceneSink, draw: () => T): T {
+export function withSink<T>(sink: SceneOut, draw: () => T): T {
   const before = active;
   active = sink;
   try {

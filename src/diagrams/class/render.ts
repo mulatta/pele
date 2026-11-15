@@ -19,7 +19,7 @@ import type { ClassDb } from './db.js';
 import { buildClassGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { classMarker, classMarkerTrim } from './markers.js';
 import { parseGenericTypes } from '../common/generics.js';
-import { Z, L, M, activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
+import { Z, L, M, activeSink, parseLook, parsePathData, tokensToCmds } from '../../draw/scene.js';
 import type { ClassMember } from './members.js';
 import type { ClassNode } from './types.js';
 

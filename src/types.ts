@@ -1,4 +1,4 @@
-import type { Scene } from './scene/sink.js';
+import type { Scene } from './draw/scene.js';
 import type { DiagramType, MermaidType } from './detect.js';
 import type { Config } from './preprocess.js';
 import type { TextMeasurer } from './text/measurer.js';
