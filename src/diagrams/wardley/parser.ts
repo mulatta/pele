@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { accDescr } from '../common/accDescr.js';
 import {
   ACC_TITLE,
@@ -136,6 +138,12 @@ export const WARDLEY_TOKENS: readonly TokenType[] = [
   SINGLE_LINE_COMMENT,
 ];
 
+// Where a statement is written, when the host asks for sources. It is kept under `$`, apart from
+// what the grammar reads, as Langium keeps its `$cstNode`.
+interface Stated {
+  $source?: SourceInfo;
+}
+
 export interface LabelAst {
   $type: 'Label';
   negX: boolean;
@@ -151,7 +159,7 @@ export interface StageAst {
   secondName?: string;
 }
 
-export interface ComponentAst {
+export interface ComponentAst extends Stated {
   $type: 'Component';
   name: string;
   visibility: number;
@@ -161,14 +169,14 @@ export interface ComponentAst {
   inertia: boolean;
 }
 
-export interface PipelineComponentAst {
+export interface PipelineComponentAst extends Stated {
   $type: 'PipelineComponent';
   name: string;
   evolution: number;
   label?: LabelAst;
 }
 
-export interface LinkAst {
+export interface LinkAst extends Stated {
   $type: 'Link';
   from: string;
   fromPort?: string;
@@ -191,16 +199,16 @@ export interface WardleyAst {
   accDescr?: string;
   size?: { $type: 'Size'; width: number; height: number };
   evolution?: { $type: 'Evolution'; stages: StageAst[] };
-  anchors: { $type: 'Anchor'; name: string; visibility: number; evolution: number }[];
+  anchors: ({ $type: 'Anchor'; name: string; visibility: number; evolution: number } & Stated)[];
   components: ComponentAst[];
   links: LinkAst[];
-  evolves: { $type: 'Evolve'; component: string; target: number }[];
-  pipelines: { $type: 'Pipeline'; parent: string; components: PipelineComponentAst[] }[];
+  evolves: ({ $type: 'Evolve'; component: string; target: number } & Stated)[];
+  pipelines: ({ $type: 'Pipeline'; parent: string; components: PipelineComponentAst[] } & Stated)[];
   notes: { $type: 'Note'; text: string; visibility: number; evolution: number }[];
   annotations: { $type: 'Annotations'; x: number; y: number }[];
-  annotation: { $type: 'Annotation'; number: number; x: number; y: number; text: string }[];
-  accelerators: ({ $type: 'Accelerator' } & Placed)[];
-  deaccelerators: ({ $type: 'Deaccelerator' } & Placed)[];
+  annotation: ({ $type: 'Annotation'; number: number; x: number; y: number; text: string } & Stated)[];
+  accelerators: ({ $type: 'Accelerator' } & Placed & Stated)[];
+  deaccelerators: ({ $type: 'Deaccelerator' } & Placed & Stated)[];
 }
 
 export function parseWardley(src: string): WardleyAst {
@@ -217,6 +225,34 @@ export function parseWardley(src: string): WardleyAst {
     annotation: [],
     accelerators: [],
     deaccelerators: [],
+  };
+
+  const { starts, ends } = r.tokens;
+  // Where the statement from token `first` to the last one read is written. A string may hold
+  // line breaks, so a statement can run over several lines.
+  const stated = (first: number): SourceInfo | undefined => {
+    const line = sourceLine(src, starts[first]);
+    const end = sourceLine(src, ends[r.i - 1] - 1);
+    if (line === undefined || end === undefined) return undefined;
+    return end > line ? { line, end } : { line };
+  };
+  // The name at token `k` as written. A quoted name with an escape in it does not read as written.
+  const written = (k: number): string | undefined => {
+    const raw = r.text(k);
+    return raw.includes('\\') ? undefined : r.kinds[k] === T.string ? raw.slice(1, -1) : raw;
+  };
+  // A statement whose part goes by the name at token `k`.
+  const named = (first: number, k: number): SourceInfo | undefined => {
+    const source = stated(first);
+    const symbol = source && written(k);
+    return symbol === undefined ? source : { ...source, symbol };
+  };
+  // A link, which goes by the names of its two ends.
+  const joining = (first: number, a: number, b: number): SourceInfo | undefined => {
+    const source = stated(first);
+    const from = source && written(a);
+    const to = from === undefined ? undefined : written(b);
+    return to === undefined ? source : { ...source, from, to };
   };
 
   const at = (kind: number): boolean => r.kinds[r.i] === kind;
@@ -297,15 +333,16 @@ export function parseWardley(src: string): WardleyAst {
         break;
       }
       case T.anchor: {
-        r.i++;
+        const first = r.i++;
         const anchor = name();
         const [visibility, evolution] = pair(number);
+        const $source = named(first, first + 1);
         endOfLine();
-        ast.anchors.push({ $type: 'Anchor', name: anchor, visibility, evolution });
+        ast.anchors.push({ $type: 'Anchor', name: anchor, visibility, evolution, $source });
         break;
       }
       case T.component: {
-        r.i++;
+        const first = r.i++;
         const component: ComponentAst = { $type: 'Component', name: name(), visibility: 0, evolution: 0, inertia: false };
         [component.visibility, component.evolution] = pair(number);
         if (at(T.label)) component.label = label();
@@ -321,38 +358,44 @@ export function parseWardley(src: string): WardleyAst {
           r.expect(T.rparen);
           component.inertia = true;
         }
+        component.$source = named(first, first + 1);
         endOfLine();
         ast.components.push(component);
         break;
       }
       case T.evolve: {
-        r.i++;
+        const first = r.i++;
         const component = name();
         const target = number();
+        const $source = named(first, first + 1);
         endOfLine();
-        ast.evolves.push({ $type: 'Evolve', component, target });
+        ast.evolves.push({ $type: 'Evolve', component, target, $source });
         break;
       }
       case T.pipeline: {
-        r.i++;
+        const first = r.i++;
         const parent = name();
         r.expect(T.lbrace);
         r.expect(T.newline);
         while (at(T.newline)) r.i++;
         const components: PipelineComponentAst[] = [];
         do {
+          const start = r.i;
           r.expect(T.component);
           const component: PipelineComponentAst = { $type: 'PipelineComponent', name: name(), evolution: 0 };
           r.expect(T.lbracket);
           component.evolution = number();
           r.expect(T.rbracket);
           if (at(T.label)) component.label = label();
+          component.$source = named(start, start + 1);
           endOfLine();
           components.push(component);
         } while (at(T.component));
         r.expect(T.rbrace);
+        // A pipeline spans its lines, to its closing brace.
+        const $source = named(first, first + 1);
         endOfLine();
-        ast.pipelines.push({ $type: 'Pipeline', parent, components });
+        ast.pipelines.push({ $type: 'Pipeline', parent, components, $source });
         break;
       }
       case T.note: {
@@ -371,34 +414,40 @@ export function parseWardley(src: string): WardleyAst {
         break;
       }
       case T.annotation: {
-        r.i++;
+        const first = r.i++;
         const n = int();
         r.expect(T.comma);
         const [x, y] = pair(coordinate);
         const text = stringValue(r.expect(T.string));
+        // An annotation is told apart by its number.
+        const $source = named(first, first + 1);
         endOfLine();
-        ast.annotation.push({ $type: 'Annotation', number: n, x, y, text });
+        ast.annotation.push({ $type: 'Annotation', number: n, x, y, text, $source });
         break;
       }
       case T.accelerator:
       case T.deaccelerator: {
         const slow = r.kind === T.deaccelerator;
-        r.i++;
+        const first = r.i++;
         const force = name();
         const [x, y] = pair(number);
+        const $source = named(first, first + 1);
         endOfLine();
-        if (slow) ast.deaccelerators.push({ $type: 'Deaccelerator', name: force, x, y });
-        else ast.accelerators.push({ $type: 'Accelerator', name: force, x, y });
+        if (slow) ast.deaccelerators.push({ $type: 'Deaccelerator', name: force, x, y, $source });
+        else ast.accelerators.push({ $type: 'Accelerator', name: force, x, y, $source });
         break;
       }
       default: {
         if (!isName()) r.fail('a statement');
+        const first = r.i;
         const link: LinkAst = { $type: 'Link', from: name(), to: '' };
         if (at(T.linkPort)) link.fromPort = r.take();
         if (at(T.linkArrow) || at(T.arrow)) link.arrow = r.take();
+        const second = r.i;
         link.to = name();
         if (at(T.linkPort)) link.toPort = r.take();
         if (at(T.linkLabel)) link.linkLabel = r.take().substring(1).trim();
+        link.$source = joining(first, first, second);
         endOfLine();
         ast.links.push(link);
       }

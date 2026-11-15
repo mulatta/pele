@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { fitWidth } from '../common/fit-width.js';
 import type { WardleyNode } from './builder.js';
 import type { WardleyModel } from './model.js';
@@ -67,6 +67,7 @@ export function renderWardley(model: WardleyModel, config: Config, options: Rend
 }
 
 function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW: number, naturalW: number, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const tiny = Math.round(size * 0.6875);
@@ -159,7 +160,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
     }
     grow(left - PIPELINE_PAD, top, right + PIPELINE_PAD, top + 4 * R);
     pipelines +=
-      `<g class="pele-wardley-pipeline" data-id="${escText(pipeline.nodeId)}">` +
+      `<g class="pele-wardley-pipeline" data-id="${escText(pipeline.nodeId)}"${srcAttrs(pipeline.source)}>` +
       `<rect x="${num(left - PIPELINE_PAD)}" y="${num(top)}" width="${num(right - left + 2 * PIPELINE_PAD)}" height="${num(
         4 * R
       )}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
@@ -231,7 +232,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
       caption = centered(label, (from.x + to.x) / 2 + px * away, (from.y + to.y) / 2 + py * away, ` class="pele-edge-label" font-size="${tiny + 1}" fill="var(--_m)"`);
     }
     links +=
-      `<g class="pele-edge${link.dashed ? ' pele-wardley-dashed' : ''}" data-id="${escText(link.source)}-${escText(link.target)}">` +
+      `<g class="pele-edge${link.dashed ? ' pele-wardley-dashed' : ''}" data-id="${escText(link.source)}-${escText(link.target)}"${srcAttrs(link.written)}>` +
       `<path d="M${num(x1)},${num(y1)}L${num(x2)},${num(y2)}" stroke="${LINE}"${link.dashed ? ' stroke-dasharray="6 6"' : ''}/>` +
       heads +
       caption +
@@ -262,7 +263,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
     }
     grow(tx - R, ty - R, tx + R, ty + R);
     trends +=
-      `<g class="pele-wardley-trend" data-id="${escText(trend.nodeId)}">${arrow}` +
+      `<g class="pele-wardley-trend" data-id="${escText(trend.nodeId)}"${srcAttrs(trend.source)}>${arrow}` +
       `<circle cx="${num(tx)}" cy="${num(ty)}" r="${R}" fill="var(--_bg)" stroke="${ACCENT}"/></g>`;
   }
 
@@ -321,7 +322,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
     grow(x - 2 * R, y - 2 * R, x + 2 * R + 20, y + 2 * R);
     nodes += `<g class="pele-node pele-wardley-${anchor ? 'anchor' : node.isPipelineParent ? 'pipeline-parent' : node.inPipeline ? 'pipeline-component' : 'component'}" data-id="${escText(
       node.id
-    )}">${shape}${caption}</g>`;
+    )}"${srcAttrs(node.source)}>${shape}${caption}</g>`;
   }
 
   let annotations = '';
@@ -335,7 +336,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
       grow(x - r, y - r, x + r, y + r);
       marks += `<circle cx="${num(x)}" cy="${num(y)}" r="${num(r)}" fill="var(--_bg)" stroke="${LINE}"/>` + labelSvg(label, x, y, ` font-size="${tiny}" font-weight="var(--_hw)"`);
     }
-    annotations += `<g class="pele-wardley-annotation" data-id="${escText(String(annotation.number))}">${marks}</g>`;
+    annotations += `<g class="pele-wardley-annotation" data-id="${escText(String(annotation.number))}"${srcAttrs(annotation.source)}>${marks}</g>`;
   }
   const listed = model.annotations.filter((a) => a.text).sort((a, b) => a.number - b.number);
   if (listed.length > 0) {
@@ -372,7 +373,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
 
   // Accelerators point right, deaccelerators left.
   let forces = '';
-  const force = (name: string, px: number, py: number, forward: boolean): void => {
+  const force = (name: string, px: number, py: number, forward: boolean, source: SourceInfo | undefined): void => {
     const x = projectX(px);
     const y = projectY(py);
     const half = FORCE_HEIGHT / 2;
@@ -383,13 +384,13 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
       `M${num(tail)},${num(y - half)}H${num(neck)}V${num(y - half - 8)}L${num(tip)},${num(y)}L${num(neck)},${num(y + half + 8)}V${num(y + half)}H${num(tail)}Z`;
     grow(x, y - half - 8, x + FORCE_WIDTH, y + half + 8);
     forces +=
-      `<g class="pele-wardley-${forward ? 'accelerator' : 'deaccelerator'}" data-id="${escText(name)}">` +
+      `<g class="pele-wardley-${forward ? 'accelerator' : 'deaccelerator'}" data-id="${escText(name)}"${srcAttrs(source)}>` +
       `<path d="${d}" fill="var(--_s)" stroke="${LINE}"/>` +
       centered(text(name, tiny + 1, 160, Style.Bold), x + FORCE_WIDTH / 2, y + half + 8 + 12, ` font-size="${tiny + 1}" font-weight="var(--_hw)"`) +
       '</g>';
   };
-  for (const a of model.accelerators) force(a.name, a.x, a.y, true);
-  for (const d of model.deaccelerators) force(d.name, d.x, d.y, false);
+  for (const a of model.accelerators) force(a.name, a.x, a.y, true, a.source);
+  for (const d of model.deaccelerators) force(d.name, d.x, d.y, false, d.source);
 
   const title = layoutLabel(model.title, false, measurer, size, tight ? Math.max(80, plotW) : 4000, Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 12 : 0;
