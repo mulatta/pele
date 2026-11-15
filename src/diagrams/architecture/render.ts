@@ -1,9 +1,8 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
+import type { Out, Pen } from '../../draw/out.js';
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { edgeLabelSvg, marker, markerTrim } from '../../svg/edges.js';
+import { escText, num } from '../../svg/builder.js';
+import { marker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label, type Span } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
@@ -172,7 +171,7 @@ function simplify(p: number[]): number[] {
   return out;
 }
 
-function pathData(p: number[], startTrim: number, endTrim: number): string {
+function pathData(pen: Pen, p: number[], startTrim: number, endTrim: number): Pen {
   const n = p.length / 2;
   const xs = new Array<number>(n);
   const ys = new Array<number>(n);
@@ -190,22 +189,22 @@ function pathData(p: number[], startTrim: number, endTrim: number): string {
   };
   trim(0, 1, startTrim);
   trim(n - 1, n - 2, endTrim);
-  let d = `M${num(xs[0])},${num(ys[0])}`;
+  pen.M(xs[0], ys[0]);
   for (let i = 1; i < n - 1; i++) {
     const before = Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
     const after = Math.hypot(xs[i + 1] - xs[i], ys[i + 1] - ys[i]);
     const r = Math.min(CORNER, before / 2, after / 2);
     if (r < 0.5) {
-      d += `L${num(xs[i])},${num(ys[i])}`;
+      pen.L(xs[i], ys[i]);
       continue;
     }
     const inX = xs[i] - ((xs[i] - xs[i - 1]) / before) * r;
     const inY = ys[i] - ((ys[i] - ys[i - 1]) / before) * r;
     const outX = xs[i] + ((xs[i + 1] - xs[i]) / after) * r;
     const outY = ys[i] + ((ys[i + 1] - ys[i]) / after) * r;
-    d += `L${num(inX)},${num(inY)}Q${num(xs[i])},${num(ys[i])} ${num(outX)},${num(outY)}`;
+    pen.L(inX, inY).Q(xs[i], ys[i], outX, outY);
   }
-  return d + `L${num(xs[n - 1])},${num(ys[n - 1])}`;
+  return pen.L(xs[n - 1], ys[n - 1]);
 }
 
 export function renderArchitecture(model: ArchitectureModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -213,7 +212,6 @@ export function renderArchitecture(model: ArchitectureModel, config: Config, opt
 }
 
 function draw(out: Out, model: ArchitectureModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const iconSize = setting(config, 'iconSize', 48, 8, 512);
   const size = setting(config, 'fontSize', options.fontSize ?? 16, 4, 128);
   const groupPad = Math.min(setting(config, 'padding', 20, 0, 256), tight ? 12 : Infinity);
@@ -412,8 +410,12 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
     return p;
   };
 
-  let edgesOut = '';
-  let labelsOut = '';
+  // Everything but the title is drawn from the origin and moved into place once the extent is known.
+  if (G > 0 || N > 0) out.frame(0, 0);
+  out.section('clusters', ' class="pele-clusters"');
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round" stroke-linejoin="round"');
+  out.section('edge-labels', ` class="pele-edge-labels" font-size="${small}"`);
+  out.section('nodes', ' class="pele-nodes"');
   // Vertical runs of the edges, to keep group titles out from under them.
   const runs: number[] = [];
   const trimLength = markerTrim('arrow_point');
@@ -436,13 +438,13 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
     if (e.wire) routed.push(centerX(b), Y[nodeRow[b]] + half);
     const points = simplify(routed);
     if (points.length < 4) continue;
-    const id = escText(`${edge.lhsId}-${edge.rhsId}`);
-    edgesOut +=
-      `<g class="pele-edge" data-id="${id}"${srcAttrs(edge.source)}>` +
-      `<path d="${pathData(points, edge.lhsInto && !s.wire ? trimLength + s.gap : 0, edge.rhsInto && !e.wire ? trimLength + e.gap : 0)}"/>` +
-      (edge.lhsInto ? marker('arrow_point', s.x + s.dx * s.gap, s.y + s.dy * s.gap, -s.dx, -s.dy, 'var(--_l)') : '') +
-      (edge.rhsInto ? marker('arrow_point', e.x + e.dx * e.gap, e.y + e.dy * e.gap, -e.dx, -e.dy, 'var(--_l)') : '') +
-      '</g>';
+    const id = `${edge.lhsId}-${edge.rhsId}`;
+    out.section('edges');
+    out.group({ cls: 'pele-edge', id, source: edge.source });
+    out.path(pathData(out.pen(), points, edge.lhsInto && !s.wire ? trimLength + s.gap : 0, edge.rhsInto && !e.wire ? trimLength + e.gap : 0), '');
+    if (edge.lhsInto) out.at(s.x + s.dx * s.gap, s.y + s.dy * s.gap, (x, y) => marker('arrow_point', x, y, -s.dx, -s.dy, 'var(--_l)'));
+    if (edge.rhsInto) out.at(e.x + e.dx * e.gap, e.y + e.dy * e.gap, (x, y) => marker('arrow_point', x, y, -e.dx, -e.dy, 'var(--_l)'));
+    out.end();
     let best = -1;
     let bestLength = -1;
     let flat = -1;
@@ -483,18 +485,23 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
       maxX = Math.max(maxX, x + w / 2);
       minY = Math.min(minY, y - label.height / 2);
       maxY = Math.max(maxY, y + label.height / 2);
-      labelsOut += edgeLabelSvg(`${edge.lhsId}-${edge.rhsId}`, label, x, y, '', icons);
+      out.section('edge-labels');
+      out.group({ cls: 'pele-edge-label', id });
+      out.rect(x - w / 2, y - label.height / 2, w, label.height, ' rx="3" fill="var(--_bg)"');
+      out.label(label, x, y, '', icons);
+      out.end();
     }
   }
 
-  let clusters = '';
   for (let g = 0; g < G; g++) {
     const group = groups[g];
     const x = left(g);
     const y = top(g);
     const w = right(g) - x;
     const label = groupLabels[g];
-    let head = '';
+    out.section('clusters');
+    out.group({ cls: 'pele-cluster', id: group.id, source: group.source });
+    out.rect(x, y, w, bottom(g) - y, ` fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}`);
     if (headW[g] > 0) {
       // The title starts at the left, or after the edges that come down through that corner.
       const band = y + headH[g] + 12;
@@ -513,42 +520,37 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
       const cy = y + 6 + headH[g] / 2;
       let textX = start;
       if (group.icon) {
-        head += iconSlot(group.icon, start, cy - badge / 2, badge, icons);
+        out.at(start, cy - badge / 2, (x, y) => iconSlot(group.icon!, x, y, badge, icons));
         textX += badge + 6;
       }
-      head += labelSvg(label, textX + label.width / 2, cy, ' class="pele-cluster-label" fill="var(--_m)"', icons);
+      out.label(label, textX + label.width / 2, cy, ' class="pele-cluster-label" fill="var(--_m)"', icons);
     }
-    clusters +=
-      `<g class="pele-cluster" data-id="${escText(group.id)}"${srcAttrs(group.source)}>` +
-      `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(bottom(g) - y)}" fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}/>` +
-      head +
-      '</g>';
+    out.end();
   }
 
-  let nodesOut = '';
   const glyph = iconSize * 0.5;
   const textSize = Math.max(6, Math.round(size * 0.75));
   for (let i = 0; i < N; i++) {
     const node = nodes[i];
-    const at = `data-id="${escText(node.id)}"${srcAttrs(node.source)} transform="translate(${num(centerX(i))},${num(Y[nodeRow[i]])})"`;
+    out.section('nodes');
+    out.group({ cls: `pele-node pele-${node.type === 'junction' ? 'junction' : 'service'}`, id: node.id, source: node.source, x: centerX(i), y: Y[nodeRow[i]] });
     if (node.type === 'junction') {
-      nodesOut += `<g class="pele-node pele-junction" ${at}><circle cy="${num(half)}" r="${DOT}" fill="var(--_l)"/></g>`;
+      // Neither shape has the position a typed call would write (cx and y are left out).
+      out.fragment(`<circle cy="${num(half)}" r="${DOT}" fill="var(--_l)"/>`);
+      out.end();
       continue;
     }
-    let inner = '';
+    out.fragment(`<rect x="${num(-half)}" width="${num(iconSize)}" height="${num(iconSize)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>`);
     if (node.icon) {
-      inner = iconSlot(node.icon, -glyph / 2, (iconSize - glyph) / 2, glyph, icons);
+      const icon = node.icon;
+      out.at(-glyph / 2, (iconSize - glyph) / 2, (x, y) => iconSlot(icon, x, y, glyph, icons));
     } else if (node.iconText) {
       const text = layoutLabel(node.iconText, false, measurer, textSize, iconSize - 8);
       const lines = Math.max(1, Math.floor((iconSize - 4) / (text.lineHeight || 1)));
-      inner = labelSvg(fit(text, iconSize - 8, lines, measurer), 0, half, ` class="pele-icon-text" font-size="${textSize}"`, icons);
+      out.label(fit(text, iconSize - 8, lines, measurer), 0, half, ` class="pele-icon-text" font-size="${textSize}"`, icons);
     }
-    nodesOut +=
-      `<g class="pele-node pele-service" ${at}>` +
-      `<rect x="${num(-half)}" width="${num(iconSize)}" height="${num(iconSize)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
-      inner +
-      labelSvg(labels[i], 0, iconSize + LABEL_GAP + labels[i].height / 2, ' class="pele-label"', icons) +
-      '</g>';
+    out.label(labels[i], 0, iconSize + LABEL_GAP + labels[i].height / 2, ' class="pele-label"', icons);
+    out.end();
   }
 
   const title = layoutLabel(model.title, false, measurer, size, tight ? titleRoom(options) : 4000, Style.Bold);
@@ -557,20 +559,8 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
   const ox = Math.round((width - (maxX - minX)) / 2 - minX);
   const oy = Math.round(pad + titleHeight - minY);
-  const body =
-    (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-    (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round" stroke-linejoin="round">${edgesOut}</g>` : '') +
-    (labelsOut ? `<g class="pele-edge-labels" font-size="${small}">${labelsOut}</g>` : '') +
-    (nodesOut ? `<g class="pele-nodes">${nodesOut}</g>` : '');
-  const svg = documentOf(out, 
-    'architecture',
-    width,
-    height,
-    size,
-    options,
-    model,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (body ? `<g transform="translate(${ox},${oy})">${body}</g>` : '')
-  );
-  return { svg, width, height, links: [] };
+  out.section('main');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  if (G > 0 || N > 0) out.frame(ox, oy);
+  return { svg: out.done('architecture', width, height, size, options, model), width, height, links: [] };
 }
