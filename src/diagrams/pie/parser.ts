@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -86,12 +88,22 @@ export interface PieAst {
   title?: string;
   accTitle?: string;
   accDescr?: string;
-  sections: { $type: 'PieSection'; label: string; value: number }[];
+  sections: PieSectionAst[];
 }
 
-export function parsePie(src: string): PieAst {
+export interface PieSectionAst {
+  $type: 'PieSection';
+  label: string;
+  value: number;
+  source?: SourceInfo;
+}
+
+// With `lines`, each section records where it is written (see sourceLine). The tests that compare
+// the tree with Langium's parse without.
+export function parsePie(src: string, lines = false): PieAst {
   const r = new Reader(tokenize(src, PIE_TOKENS, 'pie'), PIE_TOKENS, 'pie');
   const ast: PieAst = { $type: 'Pie', showData: false, sections: [] };
+  const { starts, ends } = r.tokens;
 
   const endOfLine = (): void => {
     if (r.kind === -1) return;
@@ -120,10 +132,19 @@ export function parsePie(src: string): PieAst {
         endOfLine();
         break;
       case T.string: {
+        const first = r.i;
         const label = stringValue(r.take());
         r.expect(T.colon);
         const value = Number(r.expect(T.number));
-        ast.sections.push({ $type: 'PieSection', label, value });
+        const section: PieSectionAst = { $type: 'PieSection', label, value };
+        const line = lines ? sourceLine(src, starts[first]) : undefined;
+        if (line !== undefined) {
+          // A slice goes by its label, as written between the quotes, which may span lines.
+          const end = sourceLine(src, ends[r.i - 1] - 1) ?? line;
+          const symbol = r.text(first).slice(1, -1);
+          section.source = end > line ? { line, end, symbol } : { line, symbol };
+        }
+        ast.sections.push(section);
         endOfLine();
         break;
       }
