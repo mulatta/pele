@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { Paint, type Out } from '../../draw/out.js';
+import { esc, num } from '../../svg/builder.js';
 import { FONT_MONO, ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -56,6 +55,7 @@ const HEAD_GAP = 6;
 const RULE_GAP = 18;
 const COUNT_SIZE = 12;
 const ARROW = 7;
+const ARROWS = new Paint(' fill="var(--_l)"');
 
 function option(config: Config, key: string, fallback: number, max: number): number {
   const value = (config.railroad as Config | undefined)?.[key];
@@ -211,7 +211,6 @@ export function renderRailroad(model: RailroadModel, config: Config, options: Re
 }
 
 function draw(out: Out, model: RailroadModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const base = options.fontSize ?? 16;
   const fontSize = option(config, 'fontSize', 0, 200);
   const size = fontSize || Math.round(base * 0.875);
@@ -250,7 +249,12 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
 
   let track = '';
   let arrows = '';
-  let nodes = '';
+  // Drawn after a rule's track, which is known only once its elements are placed.
+  let nodes: (() => void)[] = [];
+  const TRACK = new Paint(` fill="none" stroke="var(--_l)"${stroke}`);
+  const TERMINAL = new Paint(` rx="${num(boxTop)}" fill="var(--_s)" stroke="var(--_b)"${stroke}`);
+  const NONTERMINAL = new Paint(` fill="var(--_bg)" stroke="var(--_b)"${stroke}${ROUNDED}`);
+  const SPECIAL = new Paint(` fill="var(--_bg)" stroke="var(--_b)" stroke-dasharray="4 3"${stroke}${ROUNDED}`);
 
   const line = (x1: number, y: number, x2: number): void => {
     if (x2 > x1) track += `M${num(x1)},${num(y)}H${num(x2)}`;
@@ -358,7 +362,8 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
             `${eastToNorth}V${num(y + arc)}${loopUp}`;
           arrows += `M${num(middle - ARROW / 2)},${num(loopY)}l${ARROW},${-ARROW / 2}v${ARROW}z`;
           if (box.text !== '') {
-            nodes += `<text class="pele-edge-label pele-count" x="${num(middle)}" y="${num(loopY + COUNT_SIZE + 3)}" font-size="${COUNT_SIZE}" fill="var(--_m)">${esc(box.text)}</text>`;
+            const label = box.text;
+            nodes.push(() => out.text(middle, loopY + COUNT_SIZE + 3, label, ' class="pele-edge-label pele-count"', ` font-size="${COUNT_SIZE}" fill="var(--_m)"`));
           }
           boxes.push(kid);
           at.push(kx, y);
@@ -367,23 +372,32 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
         default: {
           const text = box.text;
           const space = text.startsWith(' ') || text.endsWith(' ') || text.includes('  ') ? ' xml:space="preserve"' : '';
-          const shape = `<rect x="${num(x)}" y="${num(y - boxTop)}" width="${num(box.width)}" height="${num(m.height)}"`;
-          const label = `<text x="${num(x + box.width / 2)}" y="${num(y + textShift)}"${space}`;
-          if (box.kind === Kind.Terminal) {
-            nodes += `<g class="pele-node pele-terminal">${shape} rx="${num(boxTop)}" fill="var(--_s)" stroke="var(--_b)"${stroke}/>${label} font-family="${FONT_MONO}">${esc(text)}</text></g>`;
-          } else if (box.kind === Kind.NonTerminal) {
-            nodes += `<g class="pele-node pele-nonterminal" data-id="${escText(box.id)}"${srcAttrs(box.source)}>${shape} fill="var(--_bg)" stroke="var(--_b)"${stroke}${ROUNDED}/>${label}>${esc(text)}</text></g>`;
-          } else {
-            nodes +=
-              `<g class="pele-node pele-special">${shape} fill="var(--_bg)" stroke="var(--_b)" stroke-dasharray="4 3"${stroke}${ROUNDED}/>` +
-              `${label} font-style="italic"><tspan fill="var(--_m)">? </tspan>${esc(text.slice(2, -2))}<tspan fill="var(--_m)"> ?</tspan></text></g>`;
-          }
+          const tx = x + box.width / 2;
+          const ty = y + textShift;
+          nodes.push(() => {
+            if (box.kind === Kind.Terminal) {
+              out.group({ cls: 'pele-node pele-terminal' });
+              out.rect(x, y - boxTop, box.width, m.height, TERMINAL);
+              out.text(tx, ty, text, '', `${space} font-family="${FONT_MONO}"`);
+            } else if (box.kind === Kind.NonTerminal) {
+              out.group({ cls: 'pele-node pele-nonterminal', id: box.id, source: box.source });
+              out.rect(x, y - boxTop, box.width, m.height, NONTERMINAL);
+              out.text(tx, ty, text, '', space);
+            } else {
+              out.group({ cls: 'pele-node pele-special' });
+              out.rect(x, y - boxTop, box.width, m.height, SPECIAL);
+              // Two spans of a color of their own, which a text call does not write.
+              out.fragment(`<text x="${num(tx)}" y="${num(ty)}"${space} font-style="italic"><tspan fill="var(--_m)">? </tspan>${esc(text.slice(2, -2))}<tspan fill="var(--_m)"> ?</tspan></text>`);
+            }
+            out.end();
+          });
         }
       }
     }
   };
 
-  let rules = '';
+  out.section('rules');
+  if (model.rules.length > 0) out.group({ cls: 'pele-rules', before: ` transform="translate(0.5,0.5)" font-size="${num(size)}" text-anchor="middle"` });
   let width = title.width;
   let top = pad + titleHeight;
   let bottom = pad + title.height;
@@ -396,36 +410,33 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
     const end = left + box.width + LEAD;
     track = '';
     arrows = '';
-    nodes = '';
+    nodes = [];
     line(start, baseline, left);
     line(left + box.width, baseline, end);
     place(box, left, baseline);
-    const markers =
-      radius > 0
-        ? `<circle class="pele-marker pele-start" cx="${num(pad + radius)}" cy="${num(baseline)}" r="${num(radius)}" fill="var(--_l)"/>` +
-          `<circle class="pele-marker pele-end" cx="${num(end + radius)}" cy="${num(baseline)}" r="${num(radius)}" fill="var(--_l)"/>`
-        : '';
-    rules +=
-      `<g class="pele-rule" data-id="${escText(rule.name)}"${srcAttrs(rule.source)}>` +
-      `<text class="pele-rule-name" x="${num(pad)}" y="${num(top + headHeight / 2 + headSize * 0.35)}" font-size="${num(headSize)}" font-weight="var(--_hw)" text-anchor="start">${esc(name)}</text>` +
-      `<path class="pele-edge pele-track" d="${track}" fill="none" stroke="var(--_l)"${stroke}/>` +
-      (arrows ? `<path class="pele-marker" d="${arrows}" fill="var(--_l)"/>` : '') +
-      markers +
-      nodes +
-      '</g>';
+    out.group({ cls: 'pele-rule', id: rule.name, source: rule.source });
+    out.text(pad, top + headHeight / 2 + headSize * 0.35, name, ' class="pele-rule-name"', ` font-size="${num(headSize)}" font-weight="var(--_hw)" text-anchor="start"`);
+    out.path(track, TRACK, undefined, { cls: 'pele-edge pele-track' });
+    if (arrows) out.path(arrows, ARROWS, undefined, { cls: 'pele-marker' });
+    if (radius > 0) {
+      out.circle(pad + radius, baseline, radius, ARROWS, { cls: 'pele-marker pele-start' });
+      out.circle(end + radius, baseline, radius, ARROWS, { cls: 'pele-marker pele-end' });
+    }
+    for (const draw of nodes) draw();
+    out.end();
     width = Math.max(width, end + 2 * radius - pad, m.measurer.width(name, headSize, Style.Bold));
     bottom = baseline + box.down;
     top = bottom + m.sep + RULE_GAP;
   }
 
+  if (model.rules.length > 0) out.end();
   const totalWidth = Math.ceil(width + 2 * pad);
   const totalHeight = Math.ceil(bottom + pad);
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    (rules ? `<g class="pele-rules" transform="translate(0.5,0.5)" font-size="${num(size)}" text-anchor="middle">${rules}</g>` : '');
+  out.section('main');
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
   return {
-    svg: documentOf(out, 'railroad', totalWidth, totalHeight, base, options, model, content),
+    svg: out.done('railroad', totalWidth, totalHeight, base, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],
