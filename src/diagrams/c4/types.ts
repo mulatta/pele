@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 // A `$key="value"` argument.
 export interface C4Named {
   key: string;
@@ -28,6 +30,7 @@ export interface C4Element {
   legendSprite?: string;
   // Named arguments that set no known field.
   extra?: Map<string, string>;
+  source?: SourceInfo;
 }
 
 export interface C4Shape extends C4Element {
@@ -58,6 +61,7 @@ export interface C4Rel {
   offsetX?: number;
   offsetY?: number;
   extra?: Map<string, string>;
+  source?: SourceInfo;
 }
 
 export interface C4Model {

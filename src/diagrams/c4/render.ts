@@ -1,7 +1,7 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, casingsSvg, edgeCasing, marker, markerTrim, overFills, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
@@ -54,6 +54,7 @@ export function renderC4(db: C4Db, _config: Config, options: RenderOptions): Ren
 }
 
 function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean, gap = NARROW_GAP): [Rendered, number] {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -140,7 +141,7 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
     const color = over || (style.stroke ? esc(style.stroke) : 'var(--_l)');
     if (over === '') casings += edgeCasing(r, startArrow ? 'arrow_point' : 'none', endArrow ? 'arrow_point' : 'none', style.line);
     edgesOut +=
-      `<g class="pele-edge" data-id="${escText(rel.from + '-' + rel.to)}"${over ? ` stroke="${over}"` : ''}${style.line}><path d="${r.d}"/>` +
+      `<g class="pele-edge" data-id="${escText(rel.from + '-' + rel.to)}"${srcAttrs(rel.source)}${over ? ` stroke="${over}"` : ''}${style.line}><path d="${r.d}"/>` +
       (startArrow ? marker('arrow_point', r.sx, r.sy, r.sdx, r.sdy, color) : '') +
       (endArrow ? marker('arrow_point', r.ex, r.ey, r.edx, r.edy, color) : '') +
       '</g>';
@@ -212,7 +213,7 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
     if (careful) taken.push(cx - lw / 2, top, cx + lw / 2, top + lh);
     grow(cx - lw / 2, top, cx + lw / 2, top + lh);
     labelsOut +=
-      `<g class="pele-edge-label" data-id="${escText(id)}">` +
+      `<g class="pele-edge-label" data-id="${escText(id)}"${srcAttrs(rel.source)}>` +
       (rel.descr ? `<title>${escText(rel.descr)}</title>` : '') +
       `<rect x="${num(cx - lw / 2)}" y="${num(top)}" width="${num(lw)}" height="${num(lh)}" rx="3" fill="var(--_bg)"/>` +
       link(
@@ -242,7 +243,7 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
       y += group.labels[1].height;
       text += leftLabelSvg(group.labels[2], x, y, ` class="pele-c4-descr" font-size="${small}"${muted}`);
       clusters +=
-        `<g class="pele-cluster pele-c4-${boundary.nodeType ? 'node' : 'boundary'}" data-id="${escText(boundary.alias)}">` +
+        `<g class="pele-cluster pele-c4-${boundary.nodeType ? 'node' : 'boundary'}" data-id="${escText(boundary.alias)}"${srcAttrs(boundary.source)}>` +
         `<rect x="${num(group.x)}" y="${num(group.y)}" width="${num(group.w)}" height="${num(group.h)}" fill="none" stroke="var(--_b)"${
           boundary.nodeType ? '' : ' stroke-dasharray="6 4"'
         }${rounded(style.shape)}/>` +
@@ -270,7 +271,7 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
       nodesOut +=
         `<g class="pele-node pele-shape-${form} pele-c4-${shape.kind}${external ? ' pele-c4-external' : ''}" data-id="${escText(
           shape.alias
-        )}" transform="translate(${num(node.x + w / 2)},${num(node.y + h / 2)})">` +
+        )}"${srcAttrs(shape.source)} transform="translate(${num(node.x + w / 2)},${num(node.y + h / 2)})">` +
         link(
           drawShape(form, w, h, ` fill="var(${external ? '--_bg' : '--_s'})"${stroke}${style.shape}`, stroke + style.line) + text,
           shape.link,
