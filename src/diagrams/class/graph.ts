@@ -1,4 +1,5 @@
 import { RELATION_TYPE } from './db.js';
+import type { SourceInfo } from '../../types.js';
 import type { ClassModel, ClassNode, RelationEnd } from './types.js';
 
 export type NodeShape = 'rect' | 'classBox' | 'note' | 'interface';
@@ -15,6 +16,7 @@ export interface GraphNode {
   classNode?: ClassNode;
   // Position among the classes, in declaration order. Namespaces and notes have none.
   colorIndex?: number;
+  written?: SourceInfo;
 }
 
 export interface GraphEdge {
@@ -31,6 +33,7 @@ export interface GraphEdge {
   endLabelLeft: string;
   pattern: 'solid' | 'dashed' | 'dotted';
   classes: string;
+  written?: SourceInfo;
 }
 
 export interface ClassGraph {
@@ -88,6 +91,7 @@ export function buildClassGraph(model: ClassModel, hierarchical = true): ClassGr
       shape: 'rect',
       parentId: hierarchical ? ns.parent : undefined,
       parent: -1,
+      written: ns.source,
     });
   }
   for (const node of nodes) node.parent = group(node.parentId);
@@ -105,6 +109,7 @@ export function buildClassGraph(model: ClassModel, hierarchical = true): ClassGr
       parent: group(parentId),
       classNode,
       colorIndex: colorIndex++,
+      written: classNode.source,
     });
   }
 
@@ -125,9 +130,11 @@ export function buildClassGraph(model: ClassModel, hierarchical = true): ClassGr
         endLabelLeft: '',
         pattern: 'dotted',
         classes: 'relation',
+        // Drawn for the note, from its line.
+        written: note.source,
       });
     }
-    nodes.push({ id: note.id, label: note.text, isGroup: false, shape: 'note', parentId, parent: group(parentId) });
+    nodes.push({ id: note.id, label: note.text, isGroup: false, shape: 'note', parentId, parent: group(parentId), written: note.source });
   }
 
   // Mermaid leaves every lollipop interface outside the namespaces. Here it stays beside its class.
@@ -141,6 +148,7 @@ export function buildClassGraph(model: ClassModel, hierarchical = true): ClassGr
       shape: 'interface',
       parentId: undefined,
       parent: owner === undefined ? -1 : nodes[owner].parent,
+      written: item.source,
     });
   }
 
@@ -164,6 +172,7 @@ export function buildClassGraph(model: ClassModel, hierarchical = true): ClassGr
       endLabelLeft: relation.relationTitle2 === 'none' ? '' : relation.relationTitle2,
       pattern: relation.relation.lineType === 1 ? 'dashed' : 'solid',
       classes: 'relation',
+      written: relation.source,
     });
   }
 

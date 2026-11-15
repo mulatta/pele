@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
 import { wrapComponents } from '../../layout/components.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
 import { edgeLabelSvg, routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
@@ -91,6 +91,7 @@ export function renderClass(db: ClassDb, config: Config, options: RenderOptions)
 // that keeps a namespace's name clear of an edge coming in beside it.
 function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boolean, tight: boolean): Rendered {
   const conf = (config.class ?? {}) as Config;
+  const srcAttrs = sourceAttrsFor(options);
   const graph = buildClassGraph(db, conf.hierarchicalNamespaces !== false);
   const hideEmpty = conf.hideEmptyMembersBox === true;
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('members');
@@ -513,7 +514,7 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       const struck = c.isGroup && titleCrossed(c, view.label.width, titleX, crossings);
       if (struck) struckTitles += struckTitle(view.label, titleX + ox, titleY, titleAttrs, id, graph.nodes, i);
       clusters +=
-        `<g class="pele-cluster pele-namespace" data-id="${id}">` +
+        `<g class="pele-cluster pele-namespace" data-id="${id}"${srcAttrs(node.written)}>` +
         `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}/>` +
         (struck ? '' : labelSvg(view.label, titleX + ox, titleY, titleAttrs)) +
         '</g>';
@@ -526,14 +527,14 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       const r = w / 2;
       const t = -h / 2;
       nodesOut +=
-        `<g class="pele-node pele-note" data-id="${id}"${at}>` +
+        `<g class="pele-node pele-note" data-id="${id}"${srcAttrs(node.written)}${at}>` +
         `<path d="M${num(-r)},${num(t)}H${num(r - FOLD)}L${num(r)},${num(t + FOLD)}V${num(-t)}H${num(-r)}Z" fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"/>` +
         `<path d="M${num(r - FOLD)},${num(t)}V${num(t + FOLD)}H${num(r)}" fill="none" stroke="var(--_b)" stroke-linejoin="round"/>` +
         labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons) +
         '</g>';
     } else {
       nodesOut +=
-        `<g class="pele-node pele-interface" data-id="${id}"${at}>` +
+        `<g class="pele-node pele-interface" data-id="${id}"${srcAttrs(node.written)}${at}>` +
         labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons) +
         '</g>';
     }
@@ -586,7 +587,7 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
     }
     if (cls.tooltip) body = `<title>${escText(cls.tooltip)}</title>` + body;
     if (cls.link) body = linked(body, cls.link, cls.id, links, options, cls.linkTarget && TARGETS.has(cls.linkTarget) ? ` target="${cls.linkTarget}"` : '');
-    return `<g class="pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}" data-id="${id}"${at}>${body}</g>`;
+    return `<g class="pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}" data-id="${id}"${srcAttrs(cls.source)}${at}>${body}</g>`;
   }
 
   let edgesOut = '';
@@ -631,7 +632,7 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
     }
     const attrs = edge.pattern === 'dashed' ? ' stroke-dasharray="6 4"' : edge.pattern === 'dotted' ? ' stroke-dasharray="2 4"' : '';
     edgesOut +=
-      `<g class="pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}" data-id="${escText(edge.id)}">` +
+      `<g class="pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
       `<path d="${path.d}"${attrs}/>` +
       classMarker(startType, path.sx, path.sy, path.sdx, path.sdy, LINE) +
       classMarker(endType, path.ex, path.ey, path.edx, path.edy, LINE) +

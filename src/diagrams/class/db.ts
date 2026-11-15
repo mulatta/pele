@@ -44,6 +44,8 @@ export class ClassDb implements ClassModel {
   accTitle: string | undefined;
   accDescr: string | undefined;
 
+  // The line of the text the parser is at: the elements added next come from it.
+  line: number | undefined;
   private namespaceStack: string[] = [];
   private withCssClass = new Map<string, Set<ClassNode>>();
 
@@ -60,6 +62,7 @@ export class ClassDb implements ClassModel {
       annotations: [],
       styles: [],
     };
+    if (this.line !== undefined) node.source = { line: this.line, symbol: className };
     this.classes.set(className, node);
     this.tag(node, 'default');
   }
@@ -77,11 +80,21 @@ export class ClassDb implements ClassModel {
     return this.classes.get(splitName(id).className)!;
   }
 
+  // A `class` statement defines a class, over its lines when it has a body; the last one is what is drawn.
+  classLines(id: string, line: number | undefined, end: number | undefined): void {
+    if (line === undefined || end === undefined) return;
+    const node = this.ensure(id);
+    node.source = end > line ? { line, end, symbol: node.id } : { line, symbol: node.id };
+  }
+
   setClassLabel(id: string, label: string): void {
     this.ensure(id).label = label;
   }
 
   addRelation(relation: ClassRelation): void {
+    if (this.line !== undefined) {
+      relation.source = { line: this.line, from: splitName(relation.id1).className, to: splitName(relation.id2).className };
+    }
     const { type1, type2 } = relation.relation;
     if (type1 === RELATION_TYPE.LOLLIPOP && type2 === 'none') {
       this.addClass(relation.id2);
@@ -100,9 +113,10 @@ export class ClassDb implements ClassModel {
     this.relations.push(relation);
   }
 
+  // A lollipop interface comes from the relation that draws it, under the name written there.
   private addInterface(label: string, classId: string): string {
     const id = `interface${this.interfaces.length}`;
-    this.interfaces.push({ id, label, classId });
+    this.interfaces.push({ id, label, classId, source: this.line === undefined ? undefined : { line: this.line, symbol: label } });
     return id;
   }
 
@@ -133,7 +147,7 @@ export class ClassDb implements ClassModel {
   addNote(text: string, className?: string): string {
     const index = this.notes.size;
     const id = `note${index}`;
-    this.notes.set(id, { id, class: className, text, index });
+    this.notes.set(id, { id, class: className, text, index, source: this.line === undefined ? undefined : { line: this.line } });
     return id;
   }
 
@@ -213,6 +227,13 @@ export class ClassDb implements ClassModel {
     this.accDescr = text.replace(/\n\s+/g, '\n');
   }
 
+  // A namespace spans its lines, under the name written there (`Auth` inside `Platform`).
+  namespaceLines(id: string, written: string, line: number | undefined, end: number | undefined): void {
+    if (line === undefined || end === undefined) return;
+    const ns = this.namespaces.get(id);
+    if (ns) ns.source = { line, end, symbol: written };
+  }
+
   addNamespace(id: string, label?: string): string {
     const prefix = this.namespaceStack[this.namespaceStack.length - 1];
     const qualified = prefix ? `${prefix}.${id}` : id;
@@ -244,6 +265,9 @@ export class ClassDb implements ClassModel {
           parent: parentId,
           explicit: leaf,
         };
+        // An ancestor made on the way to a dotted name has no statement of its own: it comes
+        // from the first that names it.
+        if (!leaf && this.line !== undefined) node.source = { line: this.line, symbol: part };
         this.namespaces.set(current, node);
       } else if (leaf) {
         node.explicit = true;
