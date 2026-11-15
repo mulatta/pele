@@ -11,8 +11,10 @@
 // The data matches herdr-scene's scene contract, version 2: paint stays a
 // token (`var(--_s)`) for the host's theme to resolve.
 
+import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
+import type { SourceInfo } from '../types.js';
 
 export const SCENE_VERSION = 2;
 
@@ -70,7 +72,7 @@ export interface SceneText {
   item: number;
 }
 
-export interface SceneItem {
+export interface SceneItem extends SourceInfo {
   id: string;
   kind: string;
   box: Box | null;
@@ -505,12 +507,21 @@ export class SceneSink {
     return this.frames[this.frames.length - 1];
   }
 
-  // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes.
-  begin(id: string | undefined, kind: string, dx = 0, dy = 0, attrs = ''): void {
+  // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
+  // where it comes from in the text, read as `data-` attributes would be (see sourceAttrs).
+  begin(id: string | undefined, kind: string, dx = 0, dy = 0, attrs = '', source?: SourceInfo): void {
     const f = this.frame;
     let item = f.item;
     if (id !== undefined) {
-      this.items.push({ id, kind, box: null });
+      const it: SceneItem = { id, kind, box: null };
+      if (source !== undefined) {
+        if (source.line !== undefined) it.line = source.line;
+        if (source.end !== undefined) it.end = source.end;
+        if (source.symbol !== undefined) it.symbol = decodeEntities(source.symbol);
+        if (source.from !== undefined) it.from = decodeEntities(source.from);
+        if (source.to !== undefined) it.to = decodeEntities(source.to);
+      }
+      this.items.push(it);
       item = this.items.length - 1;
       this.current.items.push(item);
     }

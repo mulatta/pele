@@ -2,7 +2,7 @@ import { decodeEntities } from '../text/entities.js';
 import { activeSink } from '../scene/sink.js';
 import { Style } from '../text/measurer.js';
 import type { Label } from '../text/label.js';
-import type { IconResolver, MathMarkup } from '../types.js';
+import type { IconResolver, MathMarkup, SourceInfo } from '../types.js';
 
 export type { IconResolver };
 
@@ -25,6 +25,21 @@ export function esc(text: string): string {
 export function escText(text: string): string {
   return esc(decodeEntities(text));
 }
+
+// The `data-` attributes that say where an element comes from (see SourceInfo).
+export function sourceAttrs(info: SourceInfo | undefined): string {
+  if (info === undefined) return '';
+  let out = info.line !== undefined ? ` data-line="${info.line}"` : '';
+  if (info.end !== undefined) out += ` data-end="${info.end}"`;
+  if (info.symbol !== undefined) out += ` data-symbol="${escText(info.symbol)}"`;
+  if (info.from !== undefined) out += ` data-from="${escText(info.from)}"`;
+  if (info.to !== undefined) out += ` data-to="${escText(info.to)}"`;
+  return out;
+}
+
+// What a renderer adds to an element's `data-id` group: its source when the host asked for it.
+export const sourceAttrsFor = (options: { sourceInfo?: boolean }): ((info: SourceInfo | undefined) => string) =>
+  options.sourceInfo ? sourceAttrs : () => '';
 
 // The two decimals of a coordinate, by hundredths. Building the string from integers is much
 // faster than converting a double.

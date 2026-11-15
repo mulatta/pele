@@ -1,5 +1,5 @@
 import { detectDiagram, type Detected, type DiagramType, type MermaidType } from './detect.js';
-import { inputOffset, locatingIn, PeleError, type Edit } from './errors.js';
+import { inputOffset, inputOffsets, locatingIn, PeleError, type Edit } from './errors.js';
 import { decodeEntities, writtenCodes } from './text/entities.js';
 import { withIcons } from './text/icons.js';
 import { withMath } from './text/math.js';
@@ -14,7 +14,7 @@ export { PeleError } from './errors.js';
 export type { PeleErrorCode } from './errors.js';
 export type { DiagramType, MermaidType } from './detect.js';
 export type { TextMeasurer } from './text/measurer.js';
-export type { IconResolver, LinkInfo, MathMarkup, MathResolver, MonospacePart, RenderOptions, RenderResult } from './types.js';
+export type { IconResolver, LinkInfo, MathMarkup, MathResolver, MonospacePart, RenderOptions, RenderResult, SourceInfo } from './types.js';
 export type { Diagram } from './types.js';
 export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
@@ -86,12 +86,15 @@ function parseSource(
   text: string,
   limit: number = DEFAULT_LIMIT,
   maxEdges: number = DEFAULT_MAX_EDGES,
-  extra: Config | undefined
+  extra: Config | undefined,
+  record = false
 ): Parsed {
   if (text.length > limit) {
     throw new PeleError(`Diagram source is longer than the limit of ${limit} characters.`, 'limit');
   }
-  const pre = preprocess(text);
+  // With sources asked for, the preprocessing edits are kept as they are made, to map back through.
+  const steps: Edit[][] | undefined = record ? [] : undefined;
+  const pre = preprocess(text, steps);
   const found = detectDiagram(pre.text);
   if (found === null) {
     throw new PeleError('No diagram type detected for the given text.', 'unsupported-diagram');
@@ -102,13 +105,24 @@ function parseSource(
   }
   const config = extra ? { ...extra, ...pre.config } : pre.config;
   const keepComments = diagram.keepComments === true;
-  const parsed = encodeEntities(keepComments ? pre.withComments : pre.text) + '\n';
+  const body = keepComments ? pre.withComments : steps ? cleanupComments(pre.withComments, steps) : pre.text;
+  const parsed = encodeEntities(body, steps) + '\n';
+  const where = steps ? recorded(text, steps) : { find: inSource(text, keepComments) };
   const model = tagErrors(found, () =>
-    locatingIn({ parsed, find: inSource(text, keepComments) }, () =>
+    locatingIn({ parsed, ...where, record }, () =>
       diagram.parse(parsed, config, pre.title, pre.lineOffset, { maxEdges })
     )
   );
   return { ...found, diagram, model, config };
+}
+
+// Positions in the text as written, through the edits preprocessing recorded.
+function recorded(text: string, steps: Edit[][]) {
+  const source = normalizeLineBreaks(text) + '\n';
+  return {
+    find: (at: number): [string, number] => [source, inputOffset(steps, at)],
+    findAll: (offsets: number[]): [string, number[]] => [source, inputOffsets(steps, offsets)],
+  };
 }
 
 // Record preprocessing edits only when a source position is needed.
@@ -128,7 +142,7 @@ function inSource(text: string, keepComments: boolean): (at: number) => [source:
 }
 
 function parsedFrom(source: string | DiagramModel, options: ParseOptions): Parsed {
-  if (typeof source === 'string') return parseSource(source, options.limit, options.maxEdges, options.config);
+  if (typeof source === 'string') return parseSource(source, options.limit, options.maxEdges, options.config, options.sourceInfo);
   const parsed = parsedModels.get(source);
   if (parsed === undefined) throw new TypeError('render() takes diagram text or a model that parse() returned.');
   return parsed;
@@ -149,11 +163,11 @@ export function supports(text: string): boolean {
 
 // The options that are read when the text is parsed. A render() that is given a model has
 // nothing left to do with them.
-export type ParseOptions = Pick<RenderOptions, 'limit' | 'maxEdges' | 'config'>;
+export type ParseOptions = Pick<RenderOptions, 'limit' | 'maxEdges' | 'config' | 'sourceInfo'>;
 
 export function parse(text: string, options: ParseOptions = {}): ParsedDiagramModel {
   return guarded(() => {
-    const parsed = parseSource(text, options.limit, options.maxEdges, options.config);
+    const parsed = parseSource(text, options.limit, options.maxEdges, options.config, options.sourceInfo);
     const model = parsed.model as ParsedDiagramModel;
     Object.defineProperty(model, 'mermaidType', { value: parsed.mermaidType, enumerable: true });
     parsedModels.set(model, parsed);
@@ -216,7 +230,7 @@ export interface SceneResult {
 // code 'unsupported' for a type that cannot (see sceneSupported); render() still draws those.
 export function renderScene(source: string | DiagramModel, options: RenderOptions = {}): SceneResult {
   return guarded(() => {
-    const { type, mermaidType, diagram, model, config } = parsedFrom(source, options);
+    const { type, mermaidType, diagram, model, config } = parsedFrom(source, { ...options, sourceInfo: true });
     if (!SCENE_TYPES.has(type)) {
       throw new PeleError(`${type} diagrams cannot be drawn as a scene yet.`, 'unsupported-diagram', { type, mermaidType });
     }
