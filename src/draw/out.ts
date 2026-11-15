@@ -24,8 +24,8 @@ export interface Out {
   fork(): Out;
   // Takes the drawing of the attempt that was kept.
   adopt(attempt: Out): void;
-  // Switches to a layer of the picture, made on first use with its group's attributes. An empty
-  // layer is left out unless `always` is set.
+  // Switches to a layer of the picture, made on first use with its group's attributes. Layers are
+  // painted in the order they are made; an empty one is left out unless `always` is set.
   section(name: string, attrs?: string, always?: boolean): void;
   // Draws in another layer and comes back.
   into(name: string, attrs: string, draw: () => void): void;
@@ -46,7 +46,6 @@ export interface Out {
   label(label: Label, cx: number, cy: number, attrs: string, icons?: IconResolver): void;
   // Markup only the SVG has (an image, an icon), which a scene leaves out.
   raw(svg: string): void;
-  // Ends the drawing, with the layers in `order` (others after, in the order they were made).
-  // Returns the SVG document, or '' for a scene.
-  done(type: string, width: number, height: number, fontSize: number, options: RenderOptions, acc: Accessible, order: string[]): string;
+  // Ends the drawing. Returns the SVG document, or '' for a scene.
+  done(type: string, width: number, height: number, fontSize: number, options: RenderOptions, acc: Accessible): string;
 }

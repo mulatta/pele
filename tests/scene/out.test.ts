@@ -7,12 +7,12 @@ import { metricsMeasurer } from '../../src/text/measurer.js';
 import { sceneDifference, svgToScene } from '../support/svg-scene.js';
 
 // Draws the same calls into both outputs.
-function both(draw: (out: Out) => void, order: string[] = []) {
+function both(draw: (out: Out) => void) {
   const svg = new SvgOut({ sourceInfo: true });
   const scene = new SceneOut();
   for (const out of [svg, scene]) {
     draw(out);
-    out.done('test', 200, 100, 16, {}, {}, order);
+    out.done('test', 200, 100, 16, {}, {});
   }
   return { svg: svg.svg, scene: scene.scene! };
 }
@@ -22,6 +22,7 @@ describe('drawing outputs', () => {
     const label = layoutLabel('Two **words**', true, metricsMeasurer, 16, 200);
     const { svg, scene } = both(
       (out) => {
+        out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)"');
         out.section('nodes', ' class="pele-nodes"', true);
         out.group({ cls: 'pele-node', id: 'a&b', source: { line: 2 }, x: 40, y: 30 });
         out.tooltip('hint');
@@ -39,8 +40,7 @@ describe('drawing outputs', () => {
         out.fragment('<circle r="4" fill="var(--_c)"/>');
         out.end();
         out.raw('<image href="x.png" width="4" height="4"/>');
-      },
-      ['edges', 'nodes']
+      }
     );
     expect(svg).toContain('<g class="pele-edges" fill="none" stroke="var(--_l)"><g class="pele-edge" data-id="e1">');
     expect(svg).toContain('<g class="pele-node" data-id="a&amp;b" data-line="2" transform="translate(40,30)"><title>hint</title>');
@@ -72,7 +72,7 @@ describe('drawing outputs', () => {
         const o = out.fork();
         o.group({ cls: 'pele-node', id: `w${w}` });
         o.end();
-        o.done('test', w, 10, 16, {}, {}, []);
+        o.done('test', w, 10, 16, {}, {});
         return o;
       });
       out.adopt(attempts[1]);

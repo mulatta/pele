@@ -525,22 +525,23 @@ export function edgeCasing(path: EdgePath, startType: string, endType: string, l
   );
 }
 
+// The attributes of the group that holds the casings.
+export const CASINGS_ATTRS = ` class="pele-casings" fill="none" stroke="var(--_bg)" stroke-width="${1 + CASE}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"`;
+
 export function casingsSvg(casings: string): string {
-  return casings
-    ? `<g class="pele-casings" fill="none" stroke="var(--_bg)" stroke-width="${1 + CASE}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none">${casings}</g>`
-    : '';
+  return casings ? `<g${CASINGS_ATTRS}>${casings}</g>` : '';
 }
 
 // An edge label on a patch of the background, so the line does not run through the text.
 export function edgeLabelSvg(id: string, label: Label, x: number, y: number, attrs: string, icons?: IconResolver): string {
+  return `<g class="pele-edge-label" data-id="${escText(id)}">` + edgeLabelPatch(label, x, y) + labelSvg(label, x, y, attrs, icons) + '</g>';
+}
+
+// The patch under an edge label centered on (x, y).
+export function edgeLabelPatch(label: Label, x: number, y: number): string {
   const w = label.width + 8;
   const h = label.height;
-  return (
-    `<g class="pele-edge-label" data-id="${escText(id)}">` +
-    `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>` +
-    labelSvg(label, x, y, attrs, icons) +
-    '</g>'
-  );
+  return `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>`;
 }
 
 // A self-loop beside a node of drawn size w by h: out of the side that lies across the flow and

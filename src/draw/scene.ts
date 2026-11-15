@@ -690,13 +690,9 @@ export class SceneOut implements Out {
     }
     for (const op of parseFragment(svg)) {
       switch (op.op) {
-        case 'begin': {
-          // A renderer that opened the item itself hands over the group it writes for it.
-          const f = this.frame;
-          const same = op.id !== undefined && f.item >= 0 && this.items[f.item].id === op.id && this.items[f.item].kind === op.kind;
-          this.open(same ? undefined : op.id, op.kind, op.dx, op.dy, op.look);
+        case 'begin':
+          this.open(op.id, op.kind, op.dx, op.dy, op.look);
           break;
-        }
         case 'end':
           this.end();
           break;
@@ -863,8 +859,8 @@ export class SceneOut implements Out {
 
   raw(): void {}
 
-  done(_type: string, width: number, height: number, _fontSize: number, _options: unknown, _acc: unknown, order: string[]): string {
-    this.scene = this.finish(order, width, height);
+  done(_type: string, width: number, height: number): string {
+    this.scene = this.finish([], width, height);
     return '';
   }
 }

@@ -9,6 +9,7 @@ import { palette, withPalette } from './svg/palette.js';
 import { mountWith, type MountOptions, type Mounted } from './mount.js';
 import type { Diagram, RenderOptions, RenderResult } from './types.js';
 import { SceneOut, withSink, type Scene } from './draw/scene.js';
+import { SvgOut } from './draw/svg.js';
 
 export { PeleError } from './errors.js';
 export type { PeleErrorCode } from './errors.js';
@@ -16,6 +17,7 @@ export type { DiagramType, MermaidType } from './detect.js';
 export type { TextMeasurer } from './text/measurer.js';
 export type { IconResolver, LinkInfo, MathMarkup, MathResolver, MonospacePart, RenderOptions, RenderResult, SourceInfo } from './types.js';
 export type { Diagram } from './types.js';
+export type { Group, Out } from './draw/out.js';
 export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
 export { enableZoom } from './zoom.js';
@@ -185,10 +187,11 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
     // entity codes turned into their characters, as `data-icon` and `data-id` in the SVG do.
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
+    const drawing = { ...options, responsive, icons };
     const rendered = tagErrors({ type, mermaidType }, () =>
       withPalette(palette(type, config), () =>
         withMath(diagram.math ? options.math : undefined, () =>
-          withIcons(icons, () => diagram.render(model, config, { ...options, responsive, icons }))
+          withIcons(icons, () => diagram.render(model, config, drawing, new SvgOut(drawing)))
         )
       )
     );
@@ -205,7 +208,9 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
 }
 
 // Diagram types whose renderer draws straight into a scene.
-const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'sequence', 'class', 'state', 'er']);
+const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'swimlane', 'sequence', 'class', 'state', 'er']);
+// Of those, the ones that draw through an output rather than the scene sink.
+const OUT_TYPES = new Set<DiagramType>(['flowchart', 'swimlane']);
 
 // Whether renderScene() can draw this text without going through SVG.
 export function sceneSupported(source: string | DiagramModel): boolean {
@@ -239,16 +244,14 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     const responsive = options.responsive ?? !fixed;
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
-    const sink = new SceneOut();
-    const rendered = tagErrors({ type, mermaidType }, () =>
-      withSink(sink, () =>
-        withPalette(palette(type, config), () =>
-          withMath(diagram.math ? options.math : undefined, () =>
-            withIcons(icons, () => diagram.render(model, config, { ...options, responsive, icons }))
-          )
-        )
-      )
-    );
+    const drawing = { ...options, responsive, icons };
+    const sink = new SceneOut({ fill: 'var(--_fg)', 'font-size': String(options.fontSize ?? 16) });
+    const draw = () =>
+      withPalette(palette(type, config), () =>
+        withMath(diagram.math ? options.math : undefined, () => withIcons(icons, () => diagram.render(model, config, drawing, sink)))
+      );
+    const rendered = tagErrors({ type, mermaidType }, () => (OUT_TYPES.has(type) ? draw() : withSink(sink, draw)));
+    if (OUT_TYPES.has(type)) rendered.scene = sink.scene ?? undefined;
     if (!rendered.scene) throw new PeleError(`${type} drew no scene.`, 'unsupported-diagram', { type, mermaidType });
     for (const link of rendered.links) link.id = decodeEntities(link.id);
     return { type, mermaidType, scene: rendered.scene, width: rendered.width, height: rendered.height, links: rendered.links };

@@ -2,23 +2,22 @@ import { cnode, compoundLayout, direction, inheritCrossedDirections, shiftLayout
 import { titleLabel } from '../../svg/title.js';
 import type { LayeredOptions } from '../../layout/layered.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { esc, escText, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
-import { casingAttrs, casingsSvg, edgeCasing, edgeLabelSvg, loopPath, marker, markerTrim, overFills, routePath, sceneMarker, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, casingAttrs, edgeLabelPatch, loopPath, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { drawShape, endSide, insetRoute, shapeFilled, shapeHasLabel, shapeSize, shapeSpan } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
-import { imageUrl, internalLink, linked, relAttr, safeUrl } from '../../util/url.js';
+import { imageUrl, internalLink, linkUrl, relAttr, safeUrl } from '../../util/url.js';
 import type { IconResolver, LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, tighten, titleRoom, turnToFit } from '../common/fit-width.js';
 import type { FlowDb } from './db.js';
 import { buildFlowGraph, type FlowGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { canonicalShape } from './shapes.js';
-import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../draw/scene.js';
+import type { Out } from '../../draw/out.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;
@@ -27,10 +26,6 @@ const GROUP_PAD = 20;
 const LOOP = 26;
 const SHAPE_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
 const LINE_ATTRS = ' stroke="var(--_b)"';
-// Paint layers of a flowchart scene, bottom to top, as the SVG stacks its groups.
-const SCENE_ORDER = ['title', 'clusters', 'casings', 'edges', 'cluster-titles', 'labels', 'nodes'];
-// What casingsSvg puts on its group: the page color, CASE px wider than a line.
-const CASING_ATTRS = ' fill="none" stroke="var(--_bg)" stroke-width="5"';
 
 function numberOption(section: Config, key: string, fallback: number): number {
   const value = section[key];
@@ -42,8 +37,7 @@ export interface FlowVariant {
   type: string;
   prepare(graph: FlowGraph): void;
   layout(nodes: CNode[], edges: CEdge[], dir: Dir, opt: LayeredOptions, tight: boolean): CompoundResult;
-  // `attrs` goes on the group beside its data-id: where the group is written, when asked for.
-  drawGroup?(c: CNode, label: Label, style: ResolvedStyle, classes: string, id: string, dir: Dir, icons: IconResolver | undefined, attrs: string): string;
+  drawGroup?(out: Out, c: CNode, node: GraphNode, label: Label, style: ResolvedStyle, classes: string, dir: Dir, icons: IconResolver | undefined): void;
   // The part of a drawGroup group that takes its fill, as [left, top, right, bottom].
   filledBox?(c: CNode, dir: Dir): number[];
 }
@@ -63,13 +57,13 @@ interface NodeView {
   loops: number;
 }
 
-export function renderFlowchart(db: FlowDb, config: Config, options: RenderOptions, variant?: FlowVariant): Rendered {
-  const fitted = (down: boolean): Rendered => tighten(options, (tight) => draw(db, config, options, variant, down, tight));
-  return runsAcross(db.direction) ? turnToFit(options, fitted) : fitted(false);
+export function renderFlowchart(db: FlowDb, config: Config, options: RenderOptions, out: Out, variant?: FlowVariant): Rendered {
+  const fitted = (down: boolean, o: Out): Rendered => tighten(options, (tight, a) => draw(a, db, config, options, variant, down, tight), o);
+  return runsAcross(db.direction) ? turnToFit(options, fitted, out) : fitted(false, out);
 }
 
 // `turned` draws a flowchart that runs across as one that runs down. `tight` sets nodes closer together.
-function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowVariant | undefined, turned: boolean, tight: boolean): Rendered {
+function draw(out: Out, db: FlowDb, config: Config, options: RenderOptions, variant: FlowVariant | undefined, turned: boolean, tight: boolean): Rendered {
   const groupPad = tight ? 12 : GROUP_PAD;
   const own = variant ? config[variant.type] : undefined;
   const flow = (typeof own === 'object' && own !== null && !Array.isArray(own) ? own : (config.flowchart ?? {})) as Config;
@@ -81,7 +75,6 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
   const wrapWidth = Math.min(numberOption(flow, 'wrappingWidth', 200), variant && tight ? 100 : Infinity);
   const pad = options.padding ?? 8;
   const icons = options.icons;
-  const srcAttrs = sourceAttrsFor(options);
 
   const index = new Map<string, number>();
   const views: NodeView[] = [];
@@ -213,12 +206,35 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
     for (const e of cedges) markCrossings(crossings, e.route);
   }
 
-  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text.
-  const sink = activeSink();
-  sink?.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
-  let clusters = '';
-  let struckTitles = '';
-  let nodesOut = '';
+  // Layers, bottom to top.
+  out.section('title');
+  out.section('clusters', ' class="pele-clusters"');
+  out.section('casings', CASINGS_ATTRS);
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('cluster-titles', ' class="pele-cluster-titles"');
+  out.section('labels', ` class="pele-edge-labels" font-size="${edgeSize}"`);
+  out.section('nodes', ' class="pele-nodes"', true);
+  const fills = drawNodes(out, views, cnodes, variant, rootDir, crossings, groupPad, options, links);
+  drawEdges(out, cedges, drawn, edgeLabels, views, cnodes, fills, flowsSideways, icons);
+
+  out.section('title');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  return { svg: out.done(variant?.type ?? 'flowchart', width, height, size, options, db), width, height, links };
+}
+
+// Draws clusters and nodes; returns the boxes of filled clusters, which edges over them take ink from.
+function drawNodes(
+  out: Out,
+  views: NodeView[],
+  cnodes: CNode[],
+  variant: FlowVariant | undefined,
+  rootDir: Dir,
+  crossings: Crossings,
+  groupPad: number,
+  options: RenderOptions,
+  links: LinkInfo[]
+): Fill[] {
+  const icons = options.icons;
   const fills: Fill[] = [];
   for (let i = 0; i < views.length; i++) {
     const view = views[i];
@@ -227,17 +243,10 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
     const x = c.x;
     const y = c.y;
     const classes = classNames(node.cssClasses.replace(/^default\s?/, ''));
-    const id = escText(node.id);
     if (c.isGroup && variant?.drawGroup && c.parent < 0) {
       if (paints(view.style.shape) && variant.filledBox) fills.push({ box: variant.filledBox(c, rootDir), shape: view.style.shape });
-      if (sink) {
-        sink.section('clusters');
-        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.source);
-        sink.fragment(variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons, ''));
-        sink.end();
-        continue;
-      }
-      clusters += variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons, srcAttrs(node.source));
+      out.section('clusters');
+      variant.drawGroup(out, c, node, view.label, view.style, classes, rootDir, icons);
       continue;
     }
     if (c.isGroup) {
@@ -247,36 +256,24 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       const struck = titleCrossed(c, view.label.width, titleX, crossings);
       // A title drawn over the edges sits on a halo in the theme's colors.
       const titleAttrs = ` class="pele-cluster-label"${struck ? ' fill="var(--_m)"' : inkFill(view.style, 'var(--_m)')}${view.style.text}`;
-      if (sink) {
-        if (struck) {
-          sink.into('cluster-titles', '', () => {
-            sink.begin(node.id, 'pele-cluster-title');
-            sink.fragment(struckTitle(view.label, titleX, titleY, titleAttrs, id, cnodes, i, icons));
-            sink.end();
-          });
-        }
-        sink.section('clusters');
-        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.source);
-        sink.rect(x - c.w / 2, y - c.h / 2, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
-        if (!struck) labelSvg(view.label, titleX, titleY, titleAttrs, icons);
-        sink.end();
-        continue;
-      }
-      if (struck) struckTitles += struckTitle(view.label, titleX, titleY, titleAttrs, id, cnodes, i, icons);
-      clusters +=
-        `<g class="pele-cluster${classes}" data-id="${id}"${srcAttrs(node.source)}>` +
-        `<rect x="${num(x - c.w / 2)}" y="${num(y - c.h / 2)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>` +
-        (struck ? '' : labelSvg(view.label, titleX, titleY, titleAttrs, icons)) +
-        '</g>';
+      if (struck) out.into('cluster-titles', '', () => out.fragment(struckTitle(view.label, titleX, titleY, titleAttrs, escText(node.id), cnodes, i, icons)));
+      out.section('clusters');
+      out.group({ cls: `pele-cluster${classes}`, id: node.id, source: node.source });
+      out.fragment(
+        `<rect x="${num(x - c.w / 2)}" y="${num(y - c.h / 2)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>`
+      );
+      if (!struck) out.label(view.label, titleX, titleY, titleAttrs, icons);
+      out.end();
       continue;
     }
 
     const w = view.w;
     const h = view.h;
-    if (sink) {
-      sink.section('nodes');
-      sink.begin(node.id, `pele-node pele-shape-${view.shape}${classes}`, x, y, '', node.source);
-    }
+    out.section('nodes');
+    out.group({ cls: `pele-node pele-shape-${view.shape}${classes}`, id: node.id, source: node.source, x, y });
+    const href = node.link ? linkUrl(node.link, options) : undefined;
+    if (href !== undefined) out.link(` href="${esc(href)}"${node.linkTarget ? ` target="${esc(node.linkTarget)}"` : ''}${relAttr(options)}`);
+    if (node.tooltip) out.tooltip(node.tooltip);
     let inner: string;
     let ink = '';
     if (node.img) {
@@ -313,30 +310,39 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       inner = drawShape(view.shape, w, h, SHAPE_ATTRS + view.style.shape, LINE_ATTRS + view.style.line);
       if (shapeFilled(view.shape)) ink = inkFill(view.style);
     }
-
-    sink?.fragment(inner);
-    let text = labelSvg(view.label, 0, view.dy, ` class="pele-label"${ink}${view.style.text}`, icons);
+    out.fragment(inner);
+    const textAttrs = ` class="pele-label"${ink}${view.style.text}`;
     const internal = / internal-link(?: |$)/.test(classes + ' ');
     if (internal && node.label && options.links !== false) {
       // The label is a note name, but it still ends up in an href, so it gets the same check as a URL.
       const name = decodeEntities(node.label);
       const safe = internalLink(name, options);
       const target = esc(name);
-      text = `<a class="internal-link"${safe ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}">${text}</a>`;
+      out.link(` class="internal-link"${safe ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}"`);
+      out.label(view.label, 0, view.dy, textAttrs, icons);
+      out.end();
       links.push({ id: node.id, href: name, internal: true });
+    } else out.label(view.label, 0, view.dy, textAttrs, icons);
+    if (href !== undefined) {
+      links.push({ id: node.id, href, internal: false });
+      out.end();
     }
-    let body = inner + text;
-    if (node.tooltip) body = `<title>${escText(node.tooltip)}</title>` + body;
-    if (node.link) body = linked(body, node.link, node.id, links, options, node.linkTarget ? ` target="${esc(node.linkTarget)}"` : '');
-    if (sink) {
-      sink.end();
-      continue;
-    }
-    nodesOut += `<g class="pele-node pele-shape-${view.shape}${classes}" data-id="${id}"${srcAttrs(node.source)} transform="translate(${num(
-      x
-    )},${num(y)})">${body}</g>`;
+    out.end();
   }
+  return fills;
+}
 
+function drawEdges(
+  out: Out,
+  cedges: CEdge[],
+  drawn: GraphEdge[],
+  edgeLabels: Label[],
+  views: NodeView[],
+  cnodes: CNode[],
+  fills: Fill[],
+  flowsSideways: (i: number) => boolean,
+  icons: IconResolver | undefined
+): void {
   const reach = sideReach();
   for (let i = 0; i < cedges.length; i++) {
     const ce = cedges[i];
@@ -345,9 +351,6 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
     reach.add(ce.dst, endSide(ce.route, ce.route.length - 3, cnodes[ce.dst]), drawn[i].arrowTypeEnd);
   }
 
-  let casings = '';
-  let edgesOut = '';
-  let labelsOut = '';
   const loopSeen = new Map<number, number>();
   for (let i = 0; i < cedges.length; i++) {
     const ce = cedges[i];
@@ -377,70 +380,33 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       if (edge.thickness === 'thick') attrs += ' stroke-width="2.5"';
       else if (edge.thickness === 'dotted') attrs += ' stroke-dasharray="3 4"';
       const classes = classNames(edge.classes.replace(/edge-thickness-normal|edge-pattern-solid|flowchart-link/g, ''));
-      if (sink) {
-        // The route's numbers as routePath kept them; only a self-loop has just its path data.
-        const cmds = path.tokens ? tokensToCmds(path.tokens) : parsePathData(path.d);
-        const caseAttrs = over === '' ? casingAttrs(style?.line, edge.thickness === 'thick') : undefined;
-        if (caseAttrs !== undefined) {
-          sink.into('casings', CASING_ATTRS, () => {
-            sink.begin(undefined, '', 0, 0, caseAttrs);
-            sink.shape(cmds);
-            sceneMarker(sink, startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)');
-            sceneMarker(sink, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)');
-            sink.end();
-          });
-        }
-        sink.section('edges', ' fill="none" stroke="var(--_l)"');
-        sink.begin(edge.id, `pele-edge${classes}`, 0, 0, `${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}`, edge.source);
-        sink.shape(cmds, parseLook(attrs));
-        sceneMarker(sink, startType, path.sx, path.sy, path.sdx, path.sdy, color);
-        sceneMarker(sink, endType, path.ex, path.ey, path.edx, path.edy, color);
-        sink.end();
-      } else {
-      if (over === '') casings += edgeCasing(path, startType, endType, style?.line, edge.thickness === 'thick');
-      edgesOut +=
-        `<g class="pele-edge${classes}" data-id="${escText(edge.id)}"${srcAttrs(edge.source)}${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
-        `<path d="${path.d}"${attrs}/>` +
-        marker(startType, path.sx, path.sy, path.sdx, path.sdy, color) +
-        marker(endType, path.ex, path.ey, path.edx, path.edy, color) +
-        '</g>';
+      const caseAttrs = over === '' ? casingAttrs(style?.line, edge.thickness === 'thick') : undefined;
+      if (caseAttrs !== undefined) {
+        // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
+        out.into('casings', '', () => {
+          if (caseAttrs) out.group({ attrs: caseAttrs });
+          out.path(path.d, '', path.tokens);
+          out.fragment(
+            (
+              marker(startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)') +
+              marker(endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)')
+            ).replace(/ class="pele-marker"/g, '')
+          );
+          if (caseAttrs) out.end();
+        });
       }
+      out.section('edges');
+      out.group({ cls: `pele-edge${classes}`, id: edge.id, source: edge.source, attrs: `${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}` });
+      out.path(path.d, attrs, path.tokens);
+      out.fragment(marker(startType, path.sx, path.sy, path.sdx, path.sdy, color) + marker(endType, path.ex, path.ey, path.edx, path.edy, color));
+      out.end();
     }
     if (label.width > 0) {
-      const x = ce.labelX;
-      const y = ce.labelY;
-      if (sink) {
-        // As edgeLabelSvg: the label on a patch of the page color.
-        sink.section('labels', ` font-size="${edgeSize}"`);
-        sink.begin(edge.id, 'pele-edge-label');
-        sink.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
-        labelSvg(label, x, y, style?.text ?? '', icons);
-        sink.end();
-      } else labelsOut += edgeLabelSvg(edge.id, label, x, y, style?.text ?? '', icons);
+      out.section('labels');
+      out.group({ cls: 'pele-edge-label', id: edge.id });
+      out.fragment(edgeLabelPatch(label, ce.labelX, ce.labelY));
+      out.label(label, ce.labelX, ce.labelY, style?.text ?? '', icons);
+      out.end();
     }
   }
-
-  if (sink) {
-    sink.section('title');
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-    return { svg: '', width, height, links, scene: sink.finish(SCENE_ORDER, width, height) };
-  }
-
-  const svg = svgDocument(
-    variant?.type ?? 'flowchart',
-    width,
-    height,
-    size,
-    options,
-    db,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-      casingsSvg(casings) +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (struckTitles ? `<g class="pele-cluster-titles">${struckTitles}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${edgeSize}">${labelsOut}</g>` : '') +
-      `<g class="pele-nodes">${nodesOut}</g>`
-  );
-
-  return { svg, width, height, links };
 }

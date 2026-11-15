@@ -1,4 +1,5 @@
 import type { Scene } from './draw/scene.js';
+import type { Out } from './draw/out.js';
 import type { DiagramType, MermaidType } from './detect.js';
 import type { Config } from './preprocess.js';
 import type { TextMeasurer } from './text/measurer.js';
@@ -101,5 +102,7 @@ export interface Diagram<Model> {
   // Enables $$...$$ in labels.
   math?: boolean;
   parse(source: string, config: Config, title: string | undefined, lineOffset: number, limits: ParseLimits): Model;
-  render(model: Model, config: Config, options: RenderOptions): Rendered;
+  // Draws into `out`, which makes SVG for render() and a scene for renderScene(). The SVG goes in
+  // `svg`; for a scene, `svg` is empty.
+  render(model: Model, config: Config, options: RenderOptions, out: Out): Rendered;
 }

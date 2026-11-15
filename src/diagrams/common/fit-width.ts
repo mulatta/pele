@@ -1,4 +1,17 @@
+import type { Out } from '../../draw/out.js';
 import type { RenderOptions, Rendered } from '../../types.js';
+
+// Draws one attempt into a fresh output of the kind `out` is, when there is one.
+function attempt(out: Out | undefined, draw: (out: Out) => Rendered): [Rendered, Out | undefined] {
+  const fresh = out?.fork();
+  return [draw(fresh as Out), fresh];
+}
+
+// Keeps the attempt that was chosen.
+function keep(out: Out | undefined, [rendered, drawn]: [Rendered, Out | undefined]): Rendered {
+  if (out && drawn) out.adopt(drawn);
+  return rendered;
+}
 
 // Draws a chart whose plot can be any width so that the whole diagram fits the width the host
 // has. What surrounds the plot (labels, a legend) is only known once it is drawn, so the plot
@@ -41,14 +54,14 @@ const BREAKPOINT = 640;
 
 // For a diagram that can run across or down: draws it across, and down instead when the host
 // allows it, the width it has is under the breakpoint, across does not fit, and down is narrower.
-export function turnToFit(options: RenderOptions, draw: (down: boolean) => Rendered): Rendered {
-  const across = draw(false);
+export function turnToFit(options: RenderOptions, draw: (down: boolean, out: Out) => Rendered, out?: Out): Rendered {
+  const across = attempt(out, (o) => draw(false, o));
   const available = options.maxWidth;
-  if (options.autoDirection === false || available === undefined || !(available > 0) || across.width <= available) return across;
+  if (options.autoDirection === false || available === undefined || !(available > 0) || across[0].width <= available) return keep(out, across);
   const breakpoint = options.directionBreakpoint;
-  if (available >= (breakpoint !== undefined && breakpoint > 0 ? breakpoint : BREAKPOINT)) return across;
-  const down = draw(true);
-  return down.width < across.width ? down : across;
+  if (available >= (breakpoint !== undefined && breakpoint > 0 ? breakpoint : BREAKPOINT)) return keep(out, across);
+  const down = attempt(out, (o) => draw(true, o));
+  return keep(out, down[0].width < across[0].width ? down : across);
 }
 
 export function runsAcross(direction: string | undefined): boolean {
@@ -57,10 +70,10 @@ export function runsAcross(direction: string | undefined): boolean {
 
 // Draws a diagram with room to spare, and tightly instead when that does not fit the width the
 // host has and tight is narrower.
-export function tighten(options: RenderOptions, draw: (tight: boolean) => Rendered): Rendered {
-  const loose = draw(false);
+export function tighten(options: RenderOptions, draw: (tight: boolean, out: Out) => Rendered, out?: Out): Rendered {
+  const loose = attempt(out, (o) => draw(false, o));
   const available = options.maxWidth;
-  if (available === undefined || !(available > 0) || loose.width <= available) return loose;
-  const tight = draw(true);
-  return tight.width < loose.width ? tight : loose;
+  if (available === undefined || !(available > 0) || loose[0].width <= available) return keep(out, loose);
+  const tight = attempt(out, (o) => draw(true, o));
+  return keep(out, tight[0].width < loose[0].width ? tight : loose);
 }
