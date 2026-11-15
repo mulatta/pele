@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { esc, num } from '../../svg/builder.js';
 import { inkFill } from '../../svg/ink.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill } from '../../svg/theme.js';
@@ -45,7 +44,6 @@ function option(config: Config, key: string, fallback: number, min: number, max:
 }
 
 export function renderTreemap(model: TreemapModel, config: Config, options: RenderOptions, out: Out): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
@@ -73,8 +71,12 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
   const left = pad + Math.max(0, (title.width - width) / 2);
   const top = pad + titleHeight;
 
-  let sections = '';
-  let leaves = '';
+  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
+  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  // Layers are painted in the order they are made; an empty one is left out.
+  out.section('sections', ` class="pele-sections" font-size="${small}"`);
+  out.section('leaves', ' class="pele-leaves" text-anchor="middle" fill="var(--_bg)"');
   for (const b of boxes) {
     const node = b.node;
     const style = resolveStyle(node.cssCompiledStyles ?? []);
@@ -83,7 +85,6 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     const y = top + b.y;
     const name = decodeEntities(node.name).trim();
     const value = showValues ? format(b.value) : '';
-    const group = `data-id="${escText(node.name)}"${srcAttrs(node.source)}>`;
     // Include headerless ancestors in tooltips because their children cover them.
     const own = titlePart(node.name);
     const path = own === '' ? [] : [own];
@@ -92,16 +93,18 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
       if (section !== '') path.unshift(section);
     }
     const full = path.join(' › ');
-    const tooltip = (drawn: string | undefined): string => (full === '' || (drawn === name && full === own) ? '' : `<title>${full}</title>`);
-    const rect = `<rect x="${num(x)}" y="${num(y)}" width="${num(b.w)}" height="${num(b.h)}" fill="${color}"`;
+    // Already escaped, which a tooltip would escape again.
+    const tooltip = (drawn: string | undefined): void => {
+      if (!(full === '' || (drawn === name && full === own))) out.raw(`<title>${full}</title>`);
+    };
     // Inline font sizes override SVG attributes, so truncate instead of shrinking.
     const fixed = style.fontSize;
     const textStyle = (style.bold ? Style.Bold : 0) | (style.italic ? Style.Italic : 0);
     const ink = setsFill(style.shape) ? inkFill(style) : seriesInkFill(b.series);
 
     if (node.children !== undefined) {
-      let text = '';
       let drawn: string | undefined;
+      let header: (() => void) | undefined;
       if (b.headed) {
         const short = b.header < HEADER;
         const labelSize = fixed ?? (short ? tiny : small);
@@ -115,58 +118,53 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
             : undefined;
         const baseline = y + b.header / 2 + 1;
         drawn = label?.text;
-        if (label) {
-          text += `<text x="${num(x + SIDE + 2)}" y="${num(baseline + labelSize * 0.35)}" font-weight="var(--_hw)"${short ? ` font-size="${labelSize}"` : ''}${ink}${style.text}>${esc(label.text)}</text>`;
-        }
-        if (withValue && valueSize * LINE <= HEADER) {
-          text += `<text class="pele-value" x="${num(x + b.w - SIDE - 2)}" y="${num(baseline + valueSize * 0.35)}" font-size="${tiny}" text-anchor="end"${ink || ' fill="var(--_m)"'}${style.text}>${esc(value)}</text>`;
-        }
+        header = () => {
+          if (label) {
+            out.text(x + SIDE + 2, baseline + labelSize * 0.35, label.text, '', ` font-weight="var(--_hw)"${short ? ` font-size="${labelSize}"` : ''}${ink}${style.text}`);
+          }
+          if (withValue && valueSize * LINE <= HEADER) {
+            out.text(x + b.w - SIDE - 2, baseline + valueSize * 0.35, value, ' class="pele-value"', ` font-size="${tiny}" text-anchor="end"${ink || ' fill="var(--_m)"'}${style.text}`);
+          }
+        };
       }
       // A section is a tint of its color, unless a class gives it a fill of its own. Headerless
       // sections draw no box, so their children blend into the grid.
       const tint = /[";]fill:/.test(style.shape) ? '' : ' fill-opacity="0.12"';
-      const shape = b.headed
-        ? `${rect}${corners(`${tint} stroke="${color}"${style.shape}`, b)}/>`
-        : `<rect x="${num(x)}" y="${num(y)}" width="${num(b.w)}" height="${num(b.h)}" fill="none"/>`;
-      sections += `<g class="pele-node pele-section${classNames(node.classSelector ?? '')}" ${group}${tooltip(drawn)}${shape}${text}</g>`;
+      out.section('sections');
+      out.group({ cls: `pele-node pele-section${classNames(node.classSelector ?? '')}`, id: node.name, source: node.source });
+      tooltip(drawn);
+      if (b.headed) out.rect(x, y, b.w, b.h, ` fill="${color}"${corners(`${tint} stroke="${color}"${style.shape}`, b)}`);
+      else out.rect(x, y, b.w, b.h, ' fill="none"');
+      header?.();
+      out.end();
       continue;
     }
 
-    let text = '';
     const room = b.w - 8;
     const smallest = fixed ?? least;
     const tallest =
       fixed === undefined ? Math.min(size, Math.floor((b.h - 4) / LINE)) : fixed * LINE <= b.h - 4 ? fixed : 0;
     const label = tallest >= smallest ? fitText(name, room, tallest, smallest, measurer, textStyle) : undefined;
+    out.section('leaves');
+    out.group({ cls: `pele-node pele-leaf${classNames(node.classSelector ?? '')}`, id: node.name, source: node.source });
+    tooltip(label?.text);
+    out.rect(x, y, b.w, b.h, ` fill="${color}"${corners(style.shape, b)}`);
     if (label) {
-      const cx = num(x + b.w / 2);
+      const cx = x + b.w / 2;
       const cy = y + b.h / 2;
       const valueSize = fixed ?? Math.max(least, Math.round(label.size * 0.8));
       const lines = (label.size + valueSize) * LINE;
       if (value && lines <= b.h - 4 && measurer.width(value, valueSize, textStyle) <= room) {
         const first = cy - lines / 2 + (label.size * LINE) / 2;
         const second = cy + lines / 2 - (valueSize * LINE) / 2;
-        text =
-          `<text x="${cx}" y="${num(first + label.size * 0.35)}" font-size="${num(label.size)}"${ink}${style.text}>${esc(label.text)}</text>` +
-          `<text class="pele-value" x="${cx}" y="${num(second + valueSize * 0.35)}" font-size="${num(valueSize)}"${ink}${style.text}>${esc(value)}</text>`;
+        out.text(cx, first + label.size * 0.35, label.text, '', ` font-size="${num(label.size)}"${ink}${style.text}`);
+        out.text(cx, second + valueSize * 0.35, value, ' class="pele-value"', ` font-size="${num(valueSize)}"${ink}${style.text}`);
       } else {
-        text = `<text x="${cx}" y="${num(cy + label.size * 0.35)}" font-size="${num(label.size)}"${ink}${style.text}>${esc(label.text)}</text>`;
+        out.text(cx, cy + label.size * 0.35, label.text, '', ` font-size="${num(label.size)}"${ink}${style.text}`);
       }
     }
-    leaves += `<g class="pele-node pele-leaf${classNames(node.classSelector ?? '')}" ${group}${tooltip(label?.text)}${rect}${corners(style.shape, b)}/>${text}</g>`;
+    out.end();
   }
 
-  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
-  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    (sections ? `<g class="pele-sections" font-size="${small}">${sections}</g>` : '') +
-    (leaves ? `<g class="pele-leaves" text-anchor="middle" fill="var(--_bg)">${leaves}</g>` : '');
-
-  return {
-    svg: documentOf(out, 'treemap', totalWidth, totalHeight, size, options, model, content),
-    width: totalWidth,
-    height: totalHeight,
-    links: [],
-  };
+  return { svg: out.done('treemap', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
 }
