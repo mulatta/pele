@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { YamlValue } from '../../util/yaml.js';
 
 export type LabelType = 'text' | 'string' | 'markdown';
@@ -25,6 +26,7 @@ export interface FlowNode {
   constraint?: string;
   assetWidth?: number;
   assetHeight?: number;
+  source?: SourceInfo;
 }
 
 export interface FlowEdge {
@@ -42,6 +44,7 @@ export interface FlowEdge {
   interpolate?: string;
   animate?: boolean;
   animation?: string;
+  source?: SourceInfo;
 }
 
 export interface FlowClassDef {
@@ -58,6 +61,7 @@ export interface FlowSubgraph {
   dir?: string;
   labelType: LabelType;
   metadata?: Record<string, YamlValue>;
+  source?: SourceInfo;
 }
 
 export interface LinkInfo {

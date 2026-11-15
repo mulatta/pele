@@ -2,7 +2,7 @@ import { cnode, compoundLayout, direction, inheritCrossedDirections, shiftLayout
 import { titleLabel } from '../../svg/title.js';
 import type { LayeredOptions } from '../../layout/layered.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
 import { casingAttrs, casingsSvg, edgeCasing, edgeLabelSvg, loopPath, marker, markerTrim, overFills, routePath, sceneMarker, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
@@ -42,7 +42,8 @@ export interface FlowVariant {
   type: string;
   prepare(graph: FlowGraph): void;
   layout(nodes: CNode[], edges: CEdge[], dir: Dir, opt: LayeredOptions, tight: boolean): CompoundResult;
-  drawGroup?(c: CNode, label: Label, style: ResolvedStyle, classes: string, id: string, dir: Dir, icons: IconResolver | undefined): string;
+  // `attrs` goes on the group beside its data-id: where the group is written, when asked for.
+  drawGroup?(c: CNode, label: Label, style: ResolvedStyle, classes: string, id: string, dir: Dir, icons: IconResolver | undefined, attrs: string): string;
   // The part of a drawGroup group that takes its fill, as [left, top, right, bottom].
   filledBox?(c: CNode, dir: Dir): number[];
 }
@@ -80,6 +81,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
   const wrapWidth = Math.min(numberOption(flow, 'wrappingWidth', 200), variant && tight ? 100 : Infinity);
   const pad = options.padding ?? 8;
   const icons = options.icons;
+  const srcAttrs = sourceAttrsFor(options);
 
   const index = new Map<string, number>();
   const views: NodeView[] = [];
@@ -230,12 +232,12 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       if (paints(view.style.shape) && variant.filledBox) fills.push({ box: variant.filledBox(c, rootDir), shape: view.style.shape });
       if (sink) {
         sink.section('clusters');
-        sink.begin(node.id, `pele-cluster${classes}`);
-        sink.fragment(variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons));
+        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.source);
+        sink.fragment(variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons, ''));
         sink.end();
         continue;
       }
-      clusters += variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons);
+      clusters += variant.drawGroup(c, view.label, view.style, classes, id, rootDir, icons, srcAttrs(node.source));
       continue;
     }
     if (c.isGroup) {
@@ -254,7 +256,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
           });
         }
         sink.section('clusters');
-        sink.begin(node.id, `pele-cluster${classes}`);
+        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.source);
         sink.rect(x - c.w / 2, y - c.h / 2, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
         if (!struck) labelSvg(view.label, titleX, titleY, titleAttrs, icons);
         sink.end();
@@ -262,7 +264,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       }
       if (struck) struckTitles += struckTitle(view.label, titleX, titleY, titleAttrs, id, cnodes, i, icons);
       clusters +=
-        `<g class="pele-cluster${classes}" data-id="${id}">` +
+        `<g class="pele-cluster${classes}" data-id="${id}"${srcAttrs(node.source)}>` +
         `<rect x="${num(x - c.w / 2)}" y="${num(y - c.h / 2)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>` +
         (struck ? '' : labelSvg(view.label, titleX, titleY, titleAttrs, icons)) +
         '</g>';
@@ -273,7 +275,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
     const h = view.h;
     if (sink) {
       sink.section('nodes');
-      sink.begin(node.id, `pele-node pele-shape-${view.shape}${classes}`, x, y);
+      sink.begin(node.id, `pele-node pele-shape-${view.shape}${classes}`, x, y, '', node.source);
     }
     let inner: string;
     let ink = '';
@@ -330,7 +332,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       sink.end();
       continue;
     }
-    nodesOut += `<g class="pele-node pele-shape-${view.shape}${classes}" data-id="${id}" transform="translate(${num(
+    nodesOut += `<g class="pele-node pele-shape-${view.shape}${classes}" data-id="${id}"${srcAttrs(node.source)} transform="translate(${num(
       x
     )},${num(y)})">${body}</g>`;
   }
@@ -389,7 +391,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
           });
         }
         sink.section('edges', ' fill="none" stroke="var(--_l)"');
-        sink.begin(edge.id, `pele-edge${classes}`, 0, 0, `${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}`);
+        sink.begin(edge.id, `pele-edge${classes}`, 0, 0, `${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}`, edge.source);
         sink.shape(cmds, parseLook(attrs));
         sceneMarker(sink, startType, path.sx, path.sy, path.sdx, path.sdy, color);
         sceneMarker(sink, endType, path.ex, path.ey, path.edx, path.edy, color);
@@ -397,7 +399,7 @@ function draw(db: FlowDb, config: Config, options: RenderOptions, variant: FlowV
       } else {
       if (over === '') casings += edgeCasing(path, startType, endType, style?.line, edge.thickness === 'thick');
       edgesOut +=
-        `<g class="pele-edge${classes}" data-id="${escText(edge.id)}"${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
+        `<g class="pele-edge${classes}" data-id="${escText(edge.id)}"${srcAttrs(edge.source)}${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
         `<path d="${path.d}"${attrs}/>` +
         marker(startType, path.sx, path.sy, path.sdx, path.sdy, color) +
         marker(endType, path.ex, path.ey, path.edx, path.edy, color) +

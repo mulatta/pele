@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { YamlValue } from '../../util/yaml.js';
 import type { FlowDb } from './db.js';
 import type { FlowNode, FlowchartModel, LabelType } from './types.js';
@@ -24,6 +25,7 @@ export interface GraphNode {
   constraint?: string;
   colorIndex?: number;
   metadata?: Record<string, YamlValue>;
+  source?: SourceInfo;
 }
 
 export interface GraphEdge {
@@ -45,6 +47,7 @@ export interface GraphEdge {
   animate: boolean | undefined;
   animation: string | undefined;
   curve: string | undefined;
+  source?: SourceInfo;
 }
 
 export interface FlowGraph {
@@ -196,6 +199,7 @@ export function buildFlowGraph(model: FlowchartModel & Pick<FlowDb, 'subgraph'>,
       dir: sg.dir,
       isGroup: !collapsed,
       colorIndex: declarationIndex.get(sg.id),
+      source: sg.source,
     };
     if (!collapsed) node.metadata = sg.metadata;
     nodes.push(node);
@@ -232,6 +236,7 @@ export function buildFlowGraph(model: FlowchartModel & Pick<FlowDb, 'subgraph'>,
       constraint: vertex.constraint,
       isGroup,
       shape: isGroup ? 'rect' : shapeOf(vertex),
+      source: vertex.source,
     };
     nodes.push(node);
   }
@@ -264,6 +269,7 @@ export function buildFlowGraph(model: FlowchartModel & Pick<FlowDb, 'subgraph'>,
       animate: raw.animate,
       animation: raw.animation,
       curve: raw.interpolate || model.defaultInterpolate || defaultCurve,
+      source: raw.source,
     });
   });
 
