@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { Paint, type Out } from '../../draw/out.js';
+import { num } from '../../svg/builder.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -22,6 +21,10 @@ const TAIL = 20;
 const NOTCH = 7;
 const TAG_GAP = 6;
 const HALF = Math.SQRT1_2;
+const LANE_PATH = { cls: 'pele-lane' };
+const EDGE = { cls: 'pele-edge' };
+const BACK = new Paint(' rx="3" fill="var(--_bg)"');
+const TAG_SHAPE = new Paint(' fill="var(--_s)" stroke="var(--_b)" stroke-linejoin="round"');
 const CLASSES = ['normal', 'reverse', 'highlight', 'merge', 'cherry-pick'];
 
 interface View {
@@ -74,7 +77,6 @@ export function renderGit(model: GitModel, config: Config, options: RenderOption
 }
 
 function draw(out: Out, model: GitModel, config: Config, options: RenderOptions, direction: GitModel['direction']): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -202,7 +204,7 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
 
   const px = (m: number, c: number): number => (vertical ? c : m);
   const py = (m: number, c: number): number => (vertical ? (flip ? -m : m) : c);
-  const point = (m: number, c: number): string => `${num(px(m, c))},${num(py(m, c))}`;
+  const pt = (m: number, c: number): [number, number] => [px(m, c), py(m, c)];
 
   let minX = Infinity;
   let minY = Infinity;
@@ -215,7 +217,13 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
     if (y1 > maxY) maxY = y1;
   };
 
-  let branches = '';
+  // The drawing is moved by where its extent ends up, known only after it is drawn.
+  out.frame(0, 0);
+  out.section('branches', ` class="pele-branches" fill="none" font-size="${medium}"`);
+  out.section('edges', ' class="pele-edges" fill="none" stroke-width="2" stroke-linecap="round"');
+  out.section('lines', '', false, 'edges');
+  out.section('commits', ` class="pele-commits" font-size="${small}" fill="var(--_m)"`);
+  out.section('branches');
   if (showBranches) {
     for (let i = 0; i < laneCount; i++) {
       const name = names[i];
@@ -228,16 +236,14 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
       const cy = py(from + (vertical ? h : w) / 2, c);
       grow(px(-LABEL_GAP, c), py(-LABEL_GAP, c), px(-LABEL_GAP, c), py(-LABEL_GAP, c));
       grow(px(end + TAIL, c), py(end + TAIL, c), px(end + TAIL, c), py(end + TAIL, c));
-      branches +=
-        `<g class="pele-branch" data-id="${escText(model.lanes[i])}"${srcAttrs(model.branchSources.get(model.lanes[i]))}>` +
-        `<path class="pele-lane" d="M${point(-LABEL_GAP, c)}L${point(end + TAIL, c)}" stroke="${color}" stroke-dasharray="2 4"/>`;
+      out.group({ cls: 'pele-branch', id: model.lanes[i], source: model.branchSources.get(model.lanes[i]) });
+      out.path(out.pen().M(...pt(-LABEL_GAP, c)).L(...pt(end + TAIL, c)), ` stroke="${color}" stroke-dasharray="2 4"`, undefined, LANE_PATH);
       if (name.lines.length > 0) {
         grow(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-        branches +=
-          `<rect x="${num(cx - w / 2)}" y="${num(cy - h / 2)}" width="${num(w)}" height="${num(h)}" fill="${color}"${ROUNDED}/>` +
-          labelSvg(name, cx, cy, ' class="pele-label"' + (seriesInkFill(i) || ' fill="var(--_bg)"'));
+        out.rect(cx - w / 2, cy - h / 2, w, h, ` fill="${color}"${ROUNDED}`);
+        out.label(name, cx, cy, ' class="pele-label"' + (seriesInkFill(i) || ' fill="var(--_bg)"'));
       }
-      branches += '</g>';
+      out.end();
     }
   }
 
@@ -257,8 +263,6 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
     return low < list.length && list[low] < to;
   };
 
-  let curves = '';
-  let lines = '';
   for (const view of views) {
     const { commit } = view;
     const c2 = cross[view.lane];
@@ -269,19 +273,20 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
       const c1 = cross[parent.lane];
       const m1 = parent.m;
       if (parent.lane === view.lane) {
-        lines += `<path class="pele-edge" d="M${point(m1, c1)}L${point(m2, c2)}" stroke="${seriesColor(view.lane)}"/>`;
+        out.section('lines');
+        out.path(out.pen().M(...pt(m1, c1)).L(...pt(m2, c2)), ` stroke="${seriesColor(view.lane)}"`, undefined, EDGE);
         continue;
       }
       const merged = j > 0 && commit.type === commitType.MERGE;
       const picked = j > 0 && !merged;
-      let d = `M${point(m1, c1)}`;
+      const d = out.pen().M(...pt(m1, c1));
       if (m2 <= m1) {
         const mid = (m1 + m2) / 2;
-        d += `C${point(mid, c1)} ${point(mid, c2)} ${point(m2, c2)}`;
+        d.C(...pt(mid, c1), ...pt(mid, c2), ...pt(m2, c2));
       } else if (!merged && !busy(view.lane, m1, m2)) {
         // Leaves the parent at once and runs along the child's lane.
         const s = Math.min(CURVE, m2 - m1);
-        d += `C${point(m1 + s / 2, c1)} ${point(m1 + s / 2, c2)} ${point(m1 + s, c2)}L${point(m2, c2)}`;
+        d.C(...pt(m1 + s / 2, c1), ...pt(m1 + s / 2, c2), ...pt(m1 + s, c2)).L(...pt(m2, c2));
       } else {
         // Turns in just before the child, or before its tags when it comes from their side.
         const to = parent.lane < view.lane && m2 - lead[view.index] > m1 ? m2 - lead[view.index] : m2;
@@ -292,34 +297,36 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
           // the tags of the next, a strip stays empty, and the connector takes that.
           along = c1 > c2 ? c2 + hi[view.lane] + GAP / 2 : c2 - lo[view.lane] - GAP / 2;
           s = Math.min(CURVE, (to - m1) / 2);
-          d += `C${point(m1 + s / 2, c1)} ${point(m1 + s / 2, along)} ${point(m1 + s, along)}`;
+          d.C(...pt(m1 + s / 2, c1), ...pt(m1 + s / 2, along), ...pt(m1 + s, along));
         }
-        d += `L${point(to - s, along)}C${point(to - s / 2, along)} ${point(to - s / 2, c2)} ${point(to, c2)}`;
-        if (to < m2) d += `L${point(m2, c2)}`;
+        d.L(...pt(to - s, along)).C(...pt(to - s / 2, along), ...pt(to - s / 2, c2), ...pt(to, c2));
+        if (to < m2) d.L(...pt(m2, c2));
       }
-      curves +=
-        `<path class="pele-edge${merged ? ' pele-edge-merge' : picked ? ' pele-edge-cherry-pick' : ''}" d="${d}" ` +
-        `stroke="${seriesColor(merged ? parent.lane : view.lane)}"${picked ? ' stroke-dasharray="4 3"' : ''}/>`;
+      out.section('edges');
+      out.path(d, ` stroke="${seriesColor(merged ? parent.lane : view.lane)}"${picked ? ' stroke-dasharray="4 3"' : ''}`, undefined, {
+        cls: `pele-edge${merged ? ' pele-edge-merge' : picked ? ' pele-edge-cherry-pick' : ''}`,
+      });
     }
   }
 
-  let commits = '';
+  out.section('commits');
   for (const view of views) {
     const { commit, label, tags } = view;
     const x = px(view.m, cross[view.lane]);
     const y = py(view.m, cross[view.lane]);
     const type = commit.customType ?? commit.type;
     grow(x - DOT - 1, y - DOT - 1, x + DOT + 1, y + DOT + 1);
+    const merge = commit.type === commitType.MERGE && type !== commitType.MERGE ? ' pele-commit-merge' : '';
+    out.group({ cls: `pele-commit pele-commit-${CLASSES[type] ?? CLASSES[0]}${merge}`, id: commit.id, source: commit.source });
     // Merges and cherry-picks carry a message Mermaid makes up; only a written one is worth showing.
-    const written = commit.type < commitType.MERGE && commit.message !== '';
-    let body = written ? `<title>${escText(commit.message)}</title>` : '';
-    body += symbol(type, x, y, seriesColor(view.lane));
+    if (commit.type < commitType.MERGE && commit.message !== '') out.tooltip(commit.message);
+    const color = seriesColor(view.lane);
+    out.at(x, y, (x, y) => symbol(type, x, y, color));
 
     if (label !== undefined && label.lines.length > 0) {
       const w = label.width;
       const h = label.height;
-      const back = (cx: number, cy: number): string =>
-        `<rect x="${num(cx - w / 2 - 2)}" y="${num(cy - h / 2 + 2)}" width="${num(w + 4)}" height="${num(h - 4)}" rx="3" fill="var(--_bg)"/>`;
+      const back = (cx: number, cy: number): void => out.rect(cx - w / 2 - 2, cy - h / 2 + 2, w + 4, h - 4, BACK);
       if (rotate) {
         // The text ends beside the commit and trails back the way the history came.
         const k = (HALF * h) / 2;
@@ -327,16 +334,18 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
         const ay = vertical ? y : y + DOT + 3 + k;
         const reach = HALF * w + k;
         grow(ax - reach, flip ? ay - reach : ay - k, ax + k, flip ? ay + k : ay + reach);
-        body +=
-          `<g class="pele-commit-label" transform="rotate(${flip ? 45 : -45} ${num(ax)} ${num(ay)})">` +
-          back(ax - w / 2, ay) +
-          labelSvg(label, ax - w / 2, ay, '') +
-          '</g>';
+        out.group({ cls: 'pele-commit-label', attrs: ` transform="rotate(${flip ? 45 : -45} ${num(ax)} ${num(ay)})"` });
+        back(ax - w / 2, ay);
+        out.label(label, ax - w / 2, ay, '');
+        out.end();
       } else {
         const cx = vertical ? x - DOT - 6 - w / 2 : x;
         const cy = vertical ? y : y + DOT + 6 + h / 2;
         grow(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
-        body += `<g class="pele-commit-label">${back(cx, cy)}${labelSvg(label, cx, cy, '')}</g>`;
+        out.group({ cls: 'pele-commit-label' });
+        back(cx, cy);
+        out.label(label, cx, cy, '');
+        out.end();
       }
     }
 
@@ -350,16 +359,13 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
       const cy = vertical ? y : y - offset - h / 2;
       offset += vertical ? w + 4 : h + 3;
       grow(left, cy - h / 2, left + w, cy + h / 2);
-      body +=
-        '<g class="pele-tag">' +
-        `<path d="M${num(left)},${num(cy)}L${num(left + NOTCH)},${num(cy - h / 2)}H${num(left + w)}V${num(cy + h / 2)}H${num(left + NOTCH)}Z" fill="var(--_s)" stroke="var(--_b)" stroke-linejoin="round"/>` +
-        `<circle cx="${num(left + NOTCH)}" cy="${num(cy)}" r="1.5" fill="var(--_b)"/>` +
-        labelSvg(tag, left + NOTCH + 4 + tag.width / 2, cy, ' fill="var(--_fg)"') +
-        '</g>';
+      out.group({ cls: 'pele-tag' });
+      out.path(out.pen().M(left, cy).L(left + NOTCH, cy - h / 2).H(left + w).V(cy + h / 2).H(left + NOTCH).Z(), TAG_SHAPE);
+      out.circle(left + NOTCH, cy, 1.5, ' fill="var(--_b)"');
+      out.label(tag, left + NOTCH + 4 + tag.width / 2, cy, ' fill="var(--_fg)"');
+      out.end();
     }
-
-    const merge = commit.type === commitType.MERGE && type !== commitType.MERGE ? ' pele-commit-merge' : '';
-    commits += `<g class="pele-commit pele-commit-${CLASSES[type] ?? CLASSES[0]}${merge}" data-id="${escText(commit.id)}"${srcAttrs(commit.source)}>${body}</g>`;
+    out.end();
   }
 
   if (minX > maxX) grow(0, 0, 0, 0);
@@ -371,16 +377,12 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
   const dx = pad - minX + (inner - (maxX - minX)) / 2;
   const dy = pad + titleHeight - minY;
 
-  const content =
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g transform="translate(${num(dx)},${num(dy)})">` +
-    (branches ? `<g class="pele-branches" fill="none" font-size="${medium}">${branches}</g>` : '') +
-    (curves || lines ? `<g class="pele-edges" fill="none" stroke-width="2" stroke-linecap="round">${curves}${lines}</g>` : '') +
-    (commits ? `<g class="pele-commits" font-size="${small}" fill="var(--_m)">${commits}</g>` : '') +
-    '</g>';
+  out.frame(dx, dy);
+  out.section('main');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
   return {
-    svg: documentOf(out, 'gitGraph', width, height, size, options, model, content),
+    svg: out.done('gitGraph', width, height, size, options, model),
     width,
     height,
     links: [],
