@@ -672,6 +672,19 @@ export class SceneSink {
     for (const x of texts) if (x.item >= 0) x.item = at[x.item];
     return { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, skipped: this.skipped };
   }
+
+  // One unwrapped line of text at (x, y) with the given anchor, as a <text> element without
+  // tspans: a member of a class, a cardinality.
+  textAt(x: number, y: number, text: string, attrs: string, anchor: 'start' | 'middle' | 'end'): void {
+    const look = { ...this.frame.look, ...parseLook(attrs) };
+    const base = {
+      size: len(look['font-size'], 16),
+      weight: weight(look['font-weight'], 400),
+      italic: look['font-style'] === 'italic',
+      paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+    };
+    this.text(x, y, [{ text }], base, anchor);
+  }
 }
 
 let active: SceneSink | null = null;

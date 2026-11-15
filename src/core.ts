@@ -205,7 +205,7 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
 }
 
 // Diagram types whose renderer draws straight into a scene.
-const SCENE_TYPES = new Set<DiagramType>(['flowchart']);
+const SCENE_TYPES = new Set<DiagramType>(['flowchart', 'class']);
 
 // Whether renderScene() can draw this text without going through SVG.
 export function sceneSupported(source: string | DiagramModel): boolean {
