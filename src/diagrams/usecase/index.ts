@@ -6,6 +6,6 @@ import type { UsecaseModel } from './types.js';
 export const usecase: Diagram<UsecaseModel> = {
   type: 'usecase',
   math: true,
-  parse: (source, _config, title) => parseUsecase(source, title),
+  parse: (source, _config, title) => parseUsecase(source, title, true),
   render: renderUsecase,
 };

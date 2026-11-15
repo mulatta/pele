@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { lineColumn, locationText } from './lexer.js';
 import {
   emptyModel,
@@ -14,9 +15,12 @@ import {
   type RelationshipType,
   type Span,
   type SymbolKind,
+  type SystemBoundary,
   type UseCase,
   type UseCaseShape,
+  type UsecaseJsonNode,
   type UsecaseModel,
+  type UsecaseNote,
 } from './types.js';
 
 export interface DraftLabel {
@@ -36,6 +40,8 @@ interface Named {
   label: DraftLabel;
   span: Span;
   generated: boolean;
+  // The lines of the mention, when the host asked for sources.
+  written?: SourceInfo;
 }
 
 export interface DraftElement extends Named {
@@ -57,6 +63,7 @@ export interface DraftJson {
   propertyOrder: Map<string, string[]>;
   span: Span;
   classes: string[];
+  written?: SourceInfo;
 }
 
 export interface DraftEndpoint extends Named {
@@ -75,6 +82,7 @@ export interface DraftRelationship {
   arrowType: number;
   label?: DraftLabel;
   minlen: number;
+  written?: SourceInfo;
 }
 
 // Everything the parser read, in source order, before any of it is resolved.
@@ -83,7 +91,7 @@ export interface Drafts {
   boundaries: DraftBoundary[];
   jsons: DraftJson[];
   relationships: DraftRelationship[];
-  notes: { target: string; span: Span; label: DraftLabel }[];
+  notes: { target: string; span: Span; label: DraftLabel; written?: SourceInfo }[];
   metadata: { target: string; span: Span; properties: DraftProperty[]; statement: GraphStatement }[];
   classes: { targets: { id: string; span: Span }[]; classes: string[] }[];
   styles: { target: string; span: Span; styles: string[] }[];
@@ -311,8 +319,11 @@ export function resolveUsecase(
     }
     if (state.stereotype) element.stereotype = state.stereotype;
     if (state.parent?.id) element.parentId = state.parent.id;
+    if (state.written) element.source = state.written;
   };
 
+  // An element comes from its first declaration, which every later one has to agree with and can
+  // only add to; a metadata, class or style statement only restyles it.
   const declareElement = (draft: DraftElement): void => {
     claim(draft, draft.kind);
     const parent = draft.parent?.id ? draft.parent : undefined;
@@ -329,6 +340,7 @@ export function resolveUsecase(
         shape: draft.shape,
         stereotype: draft.stereotype,
         stereotypeSpan: draft.stereotype ? draft.span : undefined,
+        written: draft.written,
       };
       elementMetadata(state, draft.metadata, false);
       elements.set(draft.id, state);
@@ -370,7 +382,8 @@ export function resolveUsecase(
     register(draft, 'boundary');
   };
 
-  // An end of a relationship that nothing declares becomes a use case.
+  // An end of a relationship that nothing declares becomes a use case, written where the first
+  // relationship names it.
   const endpoint = (end: DraftEndpoint): SymbolKind => {
     if (end.classed && !end.declares) {
       fail(`Relationship endpoint '${end.id}' uses ::: without declaring the node`, end.span);
@@ -422,8 +435,9 @@ export function resolveUsecase(
   for (const declaration of declarations) declaration.run();
 
   for (const state of inOrder(elements.values())) publish(state);
+  // A boundary declared twice comes from the first, whose title the second has to repeat.
   for (const state of inOrder(boundaries.values())) {
-    systemBoundaries.set(state.id, {
+    const boundary: SystemBoundary = {
       id: state.id,
       label: state.label.text,
       labelType: state.label.type,
@@ -431,16 +445,20 @@ export function resolveUsecase(
       members: [],
       classes: [],
       styles: [],
-    });
+    };
+    if (state.written) boundary.source = state.written;
+    systemBoundaries.set(state.id, boundary);
   }
   for (const draft of inOrder(drafts.jsons)) {
-    model.jsonNodes.set(draft.id, {
+    const json: UsecaseJsonNode = {
       id: draft.id,
       value: draft.value,
       propertyOrder: draft.propertyOrder,
       classes: [...draft.classes],
       styles: [],
-    });
+    };
+    if (draft.written) json.source = draft.written;
+    model.jsonNodes.set(draft.id, json);
   }
 
   let anonymous = 0;
@@ -484,6 +502,7 @@ export function resolveUsecase(
       relationship.label = draft.label.text;
       relationship.labelType = draft.label.type;
     }
+    if (draft.written) relationship.written = draft.written;
     model.relationships.push(relationship);
     edges.set(id, relationship);
   }
@@ -563,7 +582,9 @@ export function resolveUsecase(
       conflict(`Note target '${draft.target}' must be an actor or use case, not ${origin.kind}`, draft.span, origin.span);
     }
     const id = `note-${notes++}`;
-    model.notes.set(id, { id, target: draft.target, label: draft.label.text, labelType: draft.label.type });
+    const note: UsecaseNote = { id, target: draft.target, label: draft.label.text, labelType: draft.label.type };
+    if (draft.written) note.source = draft.written;
+    model.notes.set(id, note);
   }
 
   for (const definition of drafts.classDefs) {

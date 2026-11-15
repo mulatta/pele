@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import {
   Arrow,
   type ActorType,
@@ -47,6 +48,7 @@ export interface UsecaseGraphNode {
   noteTarget?: string;
   jsonRows?: JsonRow[];
   boundaryType?: BoundaryType;
+  written?: SourceInfo;
 }
 
 export interface UsecaseGraphEdge {
@@ -68,6 +70,7 @@ export interface UsecaseGraphEdge {
   explicitId: boolean;
   // The dotted line from a note to what it is about.
   internal: boolean;
+  written?: SourceInfo;
 }
 
 export interface UsecaseGraph {
@@ -183,6 +186,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       icon: actor.icon || undefined,
       stereotype: actor.stereotype || undefined,
       parentId: actor.parentId || undefined,
+      written: actor.source,
     });
   }
   for (const useCase of model.useCases.values()) {
@@ -206,6 +210,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       business: useCase.business,
       stereotype: useCase.stereotype || undefined,
       parentId: useCase.parentId || undefined,
+      written: useCase.source,
     });
   }
   for (const note of model.notes.values()) {
@@ -220,6 +225,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       cssStyles: [],
       cssCompiledStyles: compiled([]),
       noteTarget: note.target,
+      written: note.source,
     });
   }
   for (const json of model.jsonNodes.values()) {
@@ -234,6 +240,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       cssStyles: [...json.styles],
       cssCompiledStyles: compiled(json.classes),
       jsonRows: flattenJsonRows(json),
+      written: json.source,
     });
   }
   for (const boundary of model.systemBoundaries.values()) {
@@ -248,6 +255,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       cssStyles: [...boundary.styles],
       cssCompiledStyles: compiled(boundary.classes),
       boundaryType: boundary.type,
+      written: boundary.source,
     });
   }
 
@@ -277,6 +285,7 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       minlen: relationship.minlen,
       explicitId: relationship.explicitId,
       internal: false,
+      written: relationship.written,
     };
     // Include and extend are labelled with their kind, whatever label the relationship carries.
     if (semantic) {
@@ -304,6 +313,8 @@ export function buildUsecaseGraph(model: UsecaseModel): UsecaseGraph {
       minlen: 1,
       explicitId: false,
       internal: true,
+      // Drawn for the note, from its lines.
+      written: note.source,
     });
   }
   return { nodes, edges };

@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export type LabelType = 'text' | 'markdown';
 export type ActorType = 'normal' | 'hollow' | 'awesome' | 'icon';
 export type UseCaseShape = 'ellipse' | 'rect';
@@ -21,6 +23,7 @@ export interface Actor {
   parentId?: string;
   classes: string[];
   styles: string[];
+  source?: SourceInfo;
 }
 
 export interface UseCase {
@@ -33,6 +36,7 @@ export interface UseCase {
   parentId?: string;
   classes: string[];
   styles: string[];
+  source?: SourceInfo;
 }
 
 export interface SystemBoundary {
@@ -43,6 +47,7 @@ export interface SystemBoundary {
   members: string[];
   classes: string[];
   styles: string[];
+  source?: SourceInfo;
 }
 
 export const enum Arrow {
@@ -69,6 +74,8 @@ export interface Relationship {
   styles: string[];
   animate: boolean;
   animation?: Animation;
+  // Where the relationship is written; `source` is the element it starts at.
+  written?: SourceInfo;
 }
 
 export interface UsecaseNote {
@@ -76,6 +83,7 @@ export interface UsecaseNote {
   target: string;
   label: string;
   labelType: LabelType;
+  source?: SourceInfo;
 }
 
 export interface UsecaseJsonNode {
@@ -85,6 +93,7 @@ export interface UsecaseJsonNode {
   propertyOrder: Map<string, string[]>;
   classes: string[];
   styles: string[];
+  source?: SourceInfo;
 }
 
 export interface ClassDef {
