@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import { esc, labelSvg, num } from '../../svg/builder.js';
+import { esc, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { turnToFit, titleRoom } from '../common/fit-width.js';
 import { literalLabel } from '../common/literal-label.js';
 import type { PacketBlock } from './model.js';
@@ -17,6 +17,7 @@ export function renderPacket(model: PacketModel, config: Config, options: Render
 }
 
 function draw(model: PacketModel, config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const labelSize = Math.round(size * 0.875);
   const bitSize = Math.round(size * 0.625);
@@ -52,13 +53,24 @@ function draw(model: PacketModel, config: Config, options: RenderOptions, down: 
         prev.bits = prev.end - prev.start;
       } else whole.push({ ...block });
     }
+    // Two fields with one label are joined too, and a new piece may then hold bits of both: it
+    // comes from the lines of the fields it holds.
+    const parts = model.rows.flat();
+    let at = 0;
+    const written = (start: number, end: number): SourceInfo | undefined => {
+      while (at < parts.length - 1 && parts[at].end < start) at++;
+      const first = parts[at].source;
+      let last = first;
+      for (let k = at + 1; k < parts.length && parts[k].start <= end; k++) last = parts[k].source;
+      return first === last || first === undefined || last === undefined ? first : { line: first.line, end: last.end ?? last.line };
+    };
     rows = [];
     for (const block of whole) {
       for (let start = block.start; start <= block.end;) {
         const end = Math.min(block.end, (Math.floor(start / bitsPerRow) + 1) * bitsPerRow - 1);
         const index = Math.floor(start / bitsPerRow);
         const target = rows[index] ?? (rows[index] = []);
-        target.push({ ...block, start, end });
+        target.push({ ...block, start, end, source: written(start, end) });
         start = end + 1;
       }
     }
@@ -110,7 +122,7 @@ function draw(model: PacketModel, config: Config, options: RenderOptions, down: 
       const w = count * bitWidth - gap;
       const text = down ? undefined : fit(block.label, w - 6);
       fields +=
-        `<g class="pele-node" data-id="${block.start}-${block.end}">` +
+        `<g class="pele-node" data-id="${block.start}-${block.end}"${srcAttrs(block.source)}>` +
         `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(rowHeight)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
         (down ? labelSvg(labels.get(block)!, x + w / 2, y + rowHeight / 2, '') : text && text.size <= rowHeight
           ? `<text x="${num(x + w / 2)}" y="${num(y + rowHeight / 2 + text.size * 0.35)}"${
