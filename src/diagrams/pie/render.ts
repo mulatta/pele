@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import type { Out, Pen } from '../../draw/out.js';
+import { num } from '../../svg/builder.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -20,24 +19,30 @@ function option(config: Config, key: string): unknown {
   return (config.pie as Config | undefined)?.[key];
 }
 
-function point(angle: number, radius: number): string {
-  return `${num(Math.sin(angle) * radius)},${num(-Math.cos(angle) * radius)}`;
+function point(angle: number, radius: number): [number, number] {
+  return [Math.sin(angle) * radius, -Math.cos(angle) * radius];
 }
 
-function slice(start: number, end: number, outer: number, inner: number): string {
+function slice(out: Out, start: number, end: number, outer: number, inner: number): Pen {
+  const pen = out.pen();
   if (end - start >= Math.PI * 2 - 1e-9) {
-    const ring = (r: number, sweep: number): string =>
-      `M0,${num(-r)}A${num(r)},${num(r)} 0 1 ${sweep} 0,${num(r)}A${num(r)},${num(r)} 0 1 ${sweep} 0,${num(-r)}Z`;
-    return ring(outer, 1) + (inner > 0 ? ring(inner, 0) : '');
+    const ring = (r: number, sweep: 0 | 1): void => {
+      pen.M(0, -r).A(r, r, 0, 1, sweep, 0, r).A(r, r, 0, 1, sweep, 0, -r).Z();
+    };
+    ring(outer, 1);
+    if (inner > 0) ring(inner, 0);
+    return pen;
   }
   const large = end - start > Math.PI ? 1 : 0;
   if (inner <= 0) {
-    return `M0,0L${point(start, outer)}A${num(outer)},${num(outer)} 0 ${large} 1 ${point(end, outer)}Z`;
+    return pen.M(0, 0).L(...point(start, outer)).A(outer, outer, 0, large, 1, ...point(end, outer)).Z();
   }
-  return (
-    `M${point(start, outer)}A${num(outer)},${num(outer)} 0 ${large} 1 ${point(end, outer)}` +
-    `L${point(end, inner)}A${num(inner)},${num(inner)} 0 ${large} 0 ${point(start, inner)}Z`
-  );
+  return pen
+    .M(...point(start, outer))
+    .A(outer, outer, 0, large, 1, ...point(end, outer))
+    .L(...point(end, inner))
+    .A(inner, inner, 0, large, 0, ...point(start, inner))
+    .Z();
 }
 
 export function renderPie(model: PieModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -46,7 +51,6 @@ export function renderPie(model: PieModel, config: Config, options: RenderOption
 
 // `tight` is set when the chart does not fit the width it has with its legend beside it.
 function draw(out: Out, model: PieModel, config: Config, options: RenderOptions, radius: number, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -104,9 +108,14 @@ function draw(out: Out, model: PieModel, config: Config, options: RenderOptions,
   const bodyTop = pad + titleHeight;
   const cy = bodyTop + (legendPosition === 'top' ? legendHeight + 20 + diameter / 2 : stacked ? diameter / 2 : height / 2);
 
-  let slices = '';
-  let labels = '';
-  let outside = '';
+  const totalWidth = Math.ceil(width + 2 * pad);
+  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
+
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  const move = ` transform="translate(${num(cx)},${num(cy)})"`;
+  const slices: { label: string; index: number; start: number; end: number }[] = [];
+  const labels: { x: number; y: number; index: number }[] = [];
+  const outside: { x: number; y: number; text: string }[] = [];
   let angle = 0;
   const rim = radius + OUTSIDE / 2;
   const placedOutside: { x: number; y: number; width: number }[] = [];
@@ -116,7 +125,7 @@ function draw(out: Out, model: PieModel, config: Config, options: RenderOptions,
     const share = shares[index];
     if (share === 0) return;
     const end = angle + share * Math.PI * 2;
-    slices += `<path class="pele-slice" data-id="${escText(label)}"${srcAttrs(model.sources?.get(label))} d="${slice(angle, end, radius, inner)}" fill="${seriesColor(index)}"/>`;
+    slices.push({ label, index, start: angle, end });
     const mid = (angle + end) / 2;
     const text = (share * 100).toFixed(0) + '%';
     if (narrow[index]) {
@@ -126,18 +135,30 @@ function draw(out: Out, model: PieModel, config: Config, options: RenderOptions,
       const x = Math.sin(at) * rim;
       const y = -Math.cos(at) * rim;
       placedOutside.push({ x, y, width });
-      outside += `<text x="${num(x)}" y="${num(y + small * 0.35)}">${text}</text>`;
+      outside.push({ x, y: y + small * 0.35, text });
     } else {
       const r = radius * textPosition;
-      labels += `<text x="${num(Math.sin(mid) * r)}" y="${num(-Math.cos(mid) * r + small * 0.35)}"${seriesInkFill(index)}>${text}</text>`;
+      labels.push({ x: Math.sin(mid) * r, y: -Math.cos(mid) * r + small * 0.35, index });
     }
     angle = end;
   });
-  if (slices === '') {
-    slices = `<circle class="pele-slice" r="${radius}" fill="none" stroke="var(--_b)"/>`;
+  out.group({ cls: 'pele-slices', before: move, attrs: ' stroke="var(--_bg)" stroke-width="1" stroke-linejoin="round"' });
+  for (const { label, index, start, end } of slices) {
+    out.path(slice(out, start, end, radius, inner), ` fill="${seriesColor(index)}"`, undefined, { cls: 'pele-slice', id: label, source: model.sources?.get(label) });
+  }
+  if (slices.length === 0) out.circle(0, 0, radius, ' fill="none" stroke="var(--_b)"', { cls: 'pele-slice' });
+  out.end();
+  if (labels.length > 0) {
+    out.group({ cls: 'pele-slice-labels', before: move, attrs: ` font-size="${small}" text-anchor="middle" fill="var(--_bg)"` });
+    for (const l of labels) out.text(l.x, l.y, (shares[l.index] * 100).toFixed(0) + '%', '', seriesInkFill(l.index));
+    out.end();
+  }
+  if (outside.length > 0) {
+    out.group({ cls: 'pele-slice-labels', before: move, attrs: ` font-size="${small}" text-anchor="middle"` });
+    for (const o of outside) out.text(o.x, o.y, o.text, '');
+    out.end();
   }
 
-  let legendOut = '';
   let lx: number;
   let ly: number;
   if (side === 'right') {
@@ -153,32 +174,15 @@ function draw(out: Out, model: PieModel, config: Config, options: RenderOptions,
     lx = pad + (width - legendWidth) / 2;
     ly = legendPosition === 'top' ? bodyTop : bodyTop + diameter + 20;
   }
+  if (legend.length > 0) out.group({ cls: 'pele-legend', attrs: ` font-size="${small}"` });
   legend.forEach((label, index) => {
     const y = ly + index * ROW + ROW / 2;
-    legendOut +=
-      `<g class="pele-legend-item" data-id="${escText(entries[index][0])}"${srcAttrs(model.sources?.get(entries[index][0]))}>` +
-      `<rect x="${num(lx)}" y="${num(y - SWATCH / 2)}" width="${SWATCH}" height="${SWATCH}" rx="2" fill="${seriesColor(index)}"/>` +
-      labelSvg(label, lx + SWATCH + 8 + label.width / 2, y, '') +
-      '</g>';
+    out.group({ cls: 'pele-legend-item', id: entries[index][0], source: model.sources?.get(entries[index][0]) });
+    out.rect(lx, y - SWATCH / 2, SWATCH, SWATCH, ` rx="2" fill="${seriesColor(index)}"`);
+    out.label(label, lx + SWATCH + 8 + label.width / 2, y, '');
+    out.end();
   });
+  if (legend.length > 0) out.end();
 
-  const totalWidth = Math.ceil(width + 2 * pad);
-  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g class="pele-slices" transform="translate(${num(cx)},${num(cy)})" stroke="var(--_bg)" stroke-width="1" stroke-linejoin="round">${slices}</g>` +
-    (labels
-      ? `<g class="pele-slice-labels" transform="translate(${num(cx)},${num(cy)})" font-size="${small}" text-anchor="middle" fill="var(--_bg)">${labels}</g>`
-      : '') +
-    (outside
-      ? `<g class="pele-slice-labels" transform="translate(${num(cx)},${num(cy)})" font-size="${small}" text-anchor="middle">${outside}</g>`
-      : '') +
-    (legendOut ? `<g class="pele-legend" font-size="${small}">${legendOut}</g>` : '');
-
-  return {
-    svg: documentOf(out, 'pie', totalWidth, totalHeight, size, options, model, content),
-    width: totalWidth,
-    height: totalHeight,
-    links: [],
-  };
+  return { svg: out.done('pie', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
 }
