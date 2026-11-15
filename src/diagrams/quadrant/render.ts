@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { labelSvg, num } from '../../svg/builder.js';
 import { ROUNDED, classNames, resolveStyle, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -39,7 +38,6 @@ function hex(color: string): string {
 }
 
 export function renderQuadrant(model: QuadrantModel, config: Config, options: RenderOptions, out: Out): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const titleSize = textSize(config, 'titleFontSize', size);
   const quadrantSize = textSize(config, 'quadrantLabelFontSize', size);
@@ -100,8 +98,10 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
     return true;
   };
 
+  out.label(title, width / 2, titlePad / 2 + title.height / 2, ` class="pele-title"${sizeAttr(titleSize, size)} font-weight="var(--_tw)"`);
+  out.section('quadrants', ' class="pele-quadrants" fill="var(--_s)" stroke="var(--_b)"', true);
+  out.section('axes', ` class="pele-axis-labels" font-size="${xAxisSize}" fill="var(--_m)"`);
   const textTop = length(config, 'quadrantTextTopPadding', 5, 200);
-  let quadrants = '';
   for (let k = 0; k < 4; k++) {
     const x = k === 0 || k === 3 ? left + w - tileW : left;
     const y = k < 2 ? top : top + h - tileH;
@@ -109,33 +109,34 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
     const cx = x + tileW / 2;
     const cy = hasPoints ? y + textTop + text.height / 2 : y + tileH / 2;
     taken.push(cx - text.width / 2, cy - text.height / 2, cx + text.width / 2, cy + text.height / 2);
-    quadrants +=
-      `<g class="pele-quadrant" data-id="${k + 1}"${srcAttrs(model.quadrants[k]?.source)}>` +
-      `<rect x="${num(x)}" y="${num(y)}" width="${num(tileW)}" height="${num(tileH)}"${ROUNDED}/>` +
-      labelSvg(text, cx, cy, ` class="pele-label"${sizeAttr(quadrantSize, size)} fill="var(--_fg)" stroke="none"`) +
-      '</g>';
+    out.section('quadrants');
+    out.group({ cls: 'pele-quadrant', id: String(k + 1), source: model.quadrants[k]?.source });
+    out.rect(x, y, tileW, tileH, ROUNDED);
+    out.label(text, cx, cy, ` class="pele-label"${sizeAttr(quadrantSize, size)} fill="var(--_fg)" stroke="none"`);
+    out.end();
   }
 
-  let axes = '';
+  out.section('axes');
   if (hasX) {
     const y = xBelow ? top + h + xPad + xHeight / 2 : top - xPad - xHeight / 2;
-    axes +=
-      labelSvg(xLeft, xRight.height > 0 ? left + w / 4 : left + xLeft.width / 2, y, '') +
-      labelSvg(xRight, left + (w * 3) / 4, y, '');
+    out.label(xLeft, xRight.height > 0 ? left + w / 4 : left + xLeft.width / 2, y, '');
+    out.label(xRight, left + (w * 3) / 4, y, '');
   }
   if (hasY) {
     const x = yRight ? left + w + yPad + yHeight / 2 : left - yPad - yHeight / 2;
-    const turned = (text: Label, y: number): string =>
-      text.height > 0 ? `<g transform="translate(${num(x)},${num(y)}) rotate(-90)"${sizeAttr(yAxisSize, xAxisSize)}>${labelSvg(text, 0, 0, '')}</g>` : '';
-    axes +=
-      turned(yBottom, yTop.height > 0 ? top + (h * 3) / 4 : top + h - yBottom.width / 2) + turned(yTop, top + h / 4);
+    // A rotation is not a move, so the turned labels stay markup.
+    const turned = (text: Label, y: number): void => {
+      if (text.height > 0) out.fragment(`<g transform="translate(${num(x)},${num(y)}) rotate(-90)"${sizeAttr(yAxisSize, xAxisSize)}>${labelSvg(text, 0, 0, '')}</g>`);
+    };
+    turned(yBottom, yTop.height > 0 ? top + (h * 3) / 4 : top + h - yBottom.width / 2);
+    turned(yTop, top + h / 4);
   }
 
   const radius = length(config, 'pointRadius', 5, 200);
   const textPad = length(config, 'pointTextPadding', 5, 200);
   const fill = seriesColor(0);
   const dots: Dot[] = [];
-  const circles: string[] = [];
+  const circles: { cx: number; cy: number; r: number; attrs: string; item: { cls: string; id: string; source: typeof model.points[number]['source'] } }[] = [];
   for (const point of model.points) {
     if (!(point.x >= 0 && point.x <= 1 && point.y >= 0 && point.y <= 1)) continue;
     const shared = model.classes.get(point.className);
@@ -158,11 +159,13 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
       // Mermaid keeps point labels on one line; wrap only what is wider than the plot.
       text: label(point.text, pointSize, w),
     });
-    circles.push(
-      `<circle class="pele-point${classNames(point.className)}" data-id="${escText(point.text.text)}"${srcAttrs(point.source)} cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"${
-        strokeWidth && !strokeColor ? ` stroke="${fill}"` : ''
-      }${resolveStyle(styles).shape}/>`
-    );
+    circles.push({
+      cx,
+      cy,
+      r,
+      attrs: `${strokeWidth && !strokeColor ? ` stroke="${fill}"` : ''}${resolveStyle(styles).shape}`,
+      item: { cls: `pele-point${classNames(point.className)}`, id: point.text.text, source: point.source },
+    });
   }
 
   // A label goes below its point, or above, right or left of it, or below its quadrant's title,
@@ -171,7 +174,12 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
   // Large charts skip the search for a free place.
   const careful = dots.length <= CAREFUL;
   if (careful) for (const { cx, cy, reach } of dots) taken.push(cx - reach, cy - reach, cx + reach, cy + reach);
-  let labels = '';
+  if (dots.length > 0) {
+    out.section('points', ` class="pele-points" fill="${fill}"`, true);
+    // Mermaid puts each new point under the ones before it.
+    for (let i = circles.length - 1; i >= 0; i--) out.circle(circles[i].cx, circles[i].cy, circles[i].r, circles[i].attrs, circles[i].item);
+    out.section('point-labels', ` class="pele-point-labels" font-size="${pointSize}"`, true);
+  }
   for (const { cx, cy, reach, text } of dots) {
     const halfW = text.width / 2;
     const halfH = text.size * 0.6 + (text.height - text.lineHeight) / 2;
@@ -200,23 +208,8 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
       if (free) break;
     }
     if (careful) taken.push(tx - halfW, ty - halfH, tx + halfW, ty + halfH);
-    labels += labelSvg(text, tx, ty, ' class="pele-label"');
+    out.label(text, tx, ty, ' class="pele-label"');
   }
 
-  // Mermaid puts each new point under the ones before it.
-  const content =
-    labelSvg(title, width / 2, titlePad / 2 + title.height / 2, ` class="pele-title"${sizeAttr(titleSize, size)} font-weight="var(--_tw)"`) +
-    `<g class="pele-quadrants" fill="var(--_s)" stroke="var(--_b)">${quadrants}</g>` +
-    (axes ? `<g class="pele-axis-labels" font-size="${xAxisSize}" fill="var(--_m)">${axes}</g>` : '') +
-    (dots.length > 0
-      ? `<g class="pele-points" fill="${fill}">${circles.reverse().join('')}</g>` +
-        `<g class="pele-point-labels" font-size="${pointSize}">${labels}</g>`
-      : '');
-
-  return {
-    svg: documentOf(out, 'quadrantChart', width, height, size, options, model, content),
-    width,
-    height,
-    links: [],
-  };
+  return { svg: out.done('quadrantChart', width, height, size, options, model), width, height, links: [] };
 }
