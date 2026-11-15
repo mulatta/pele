@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export interface XyText {
   text: string;
   type: 'text' | 'markdown';
@@ -30,6 +32,7 @@ export interface Plot {
   title: string;
   data: PlotData;
   pointLabels?: string[];
+  source?: SourceInfo;
 }
 
 export interface XyChartModel {
@@ -56,6 +59,9 @@ export class XyChartDb implements XyChartModel {
   hasSetXAxis = false;
   hasSetYAxis = false;
   plots: Plot[] = [];
+  // Where the statement being read is written, when the parser records it: the series it adds
+  // comes from there.
+  source: SourceInfo | undefined;
 
   setOrientation(orientation: string): void {
     this.orientation = orientation === 'horizontal' ? 'horizontal' : 'vertical';
@@ -108,6 +114,7 @@ export class XyChartDb implements XyChartModel {
     const plot: Plot = { type, title: title.text.trim(), data: this.plotData(data.map((d) => d.value)) };
     // Mermaid accepts labels on the points of a bar series and ignores them.
     if (type === 'line' && data.some((d) => d.label.trim() !== '')) plot.pointLabels = data.map((d) => d.label.trim());
+    if (this.source) plot.source = this.source;
     this.plots.push(plot);
   }
 
