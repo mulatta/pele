@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
+import { esc, num } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
 import { FONT_MONO, ROUNDED, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
-import { breakLabel, leftLabelSvg, literalLabel } from '../common/literal-label.js';
+import { breakLabel, literalLabel } from '../common/literal-label.js';
+import { leftLabel } from '../treeview/render.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
@@ -30,6 +30,17 @@ const LANE_GAP = 8;
 const DATA_COLUMNS = 48;
 const NOTE_COLUMNS = 80;
 const CARD_GAP = 8;
+const OUTLINE = new Paint(` fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}`);
+const BACKING = new Paint(` fill="var(--_bg)"${ROUNDED}`);
+const LANE_FILL = new Paint(` fill="var(--_s)"${ROUNDED}`);
+const EDGE_LINE = new Paint(' fill="none" stroke="var(--_l)"');
+const TITLE = ' class="pele-title" font-weight="var(--_tw)"';
+const tint = (color: string): string => ` fill="${color}" fill-opacity="0.22" stroke="${color}"${ROUNDED}`;
+
+// The sections of a drawing, made in the order they are painted.
+function layers(out: Out, names: string[]): void {
+  for (const name of names) out.section(name);
+}
 
 interface Placed {
   box: EmBox;
@@ -85,7 +96,6 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
   const smallStep = Math.round(small * 1.5);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const widest = (rows: string[], fontSize: number, style: number): number => {
     let width = 0;
     for (const row of rows) width = Math.max(width, measurer.width(row, fontSize, style));
@@ -134,53 +144,56 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
   const left = pad;
   const top = pad + titleHeight;
 
+  layers(out, ['lanes', 'edges', 'nodes', 'cards']);
+  out.section('lanes');
   let y = top;
-  let lanes = '';
   // A lane follows from the kinds and namespaces of its frames and is written nowhere, so it has no lines.
   for (const band of bands.values()) {
     band.y = y;
     band.h += 2 * LANE_PAD;
-    lanes +=
-      `<g class="pele-cluster pele-em-lane" data-id="${escText(band.lane.label)}">` +
-      `<rect x="${num(left)}" y="${num(y)}" width="${num(laneWidth)}" height="${num(band.h)}" fill="var(--_s)"${ROUNDED}/>` +
-      labelSvg(band.label, left + LANE_PAD + band.label.width / 2, y + band.h / 2, ` class="pele-cluster-label" font-size="${small}" font-weight="var(--_hw)" fill="var(--_m)"`) +
-      '</g>';
+    out.group({ cls: 'pele-cluster pele-em-lane', id: band.lane.label });
+    out.rect(left, y, laneWidth, band.h, LANE_FILL);
+    out.label(band.label, left + LANE_PAD + band.label.width / 2, y + band.h / 2, ` class="pele-cluster-label" font-size="${small}" font-weight="var(--_hw)" fill="var(--_m)"`);
+    out.end();
     y += band.h + LANE_GAP;
   }
   let bottom = bands.size > 0 ? y - LANE_GAP : top;
 
-  let nodes = '';
+  out.section('nodes');
   for (const item of placed) {
     const band = bands.get(item.box.lane)!;
     item.x += left + labelColumn;
     item.y = band.y + (band.h - item.h) / 2;
     const series = SERIES.get(item.box.kind);
-    const frame = `x="${num(item.x)}" y="${num(item.y)}" width="${num(item.w)}" height="${num(item.h)}"`;
-    const shape =
-      series === undefined
-        ? `<rect ${frame} fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>`
-        : `<rect ${frame} fill="var(--_bg)"${ROUNDED}/><rect ${frame} fill="${seriesColor(series)}" fill-opacity="0.22" stroke="${seriesColor(series)}"${ROUNDED}/>`;
+    out.group({ cls: `pele-node pele-em-${item.box.kind}${item.box.reset ? ' pele-em-reset' : ''}`, id: item.box.id, source: item.box.written });
+    if (series === undefined) out.rect(item.x, item.y, item.w, item.h, OUTLINE);
+    else {
+      out.rect(item.x, item.y, item.w, item.h, BACKING);
+      out.rect(item.x, item.y, item.w, item.h, tint(seriesColor(series)));
+    }
     const nameY = item.y + BOX_PAD_Y + item.name.height / 2;
-    const text =
-      labelSvg(item.name, item.x + item.w / 2, nameY, ` class="pele-label" font-size="${nameSize}" font-weight="var(--_hw)"`) +
+    out.label(item.name, item.x + item.w / 2, nameY, ` class="pele-label" font-size="${nameSize}" font-weight="var(--_hw)"`);
+    // Rows are tspans placed one by one, which no typed call writes.
+    out.fragment(
       lines(
         item.data,
         item.x + BOX_PAD_X,
         item.y + BOX_PAD_Y + item.name.height + 6 + monoStep / 2 + mono * 0.35,
         monoStep,
         ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`
-      );
-    nodes += `<g class="pele-node pele-em-${item.box.kind}${item.box.reset ? ' pele-em-reset' : ''}" data-id="${escText(item.box.id)}"${srcAttrs(item.box.written)}>${shape}${text}</g>`;
+      )
+    );
+    out.end();
   }
 
-  let edges = '';
+  out.section('edges');
   const trim = markerTrim('arrow_point');
   for (const relation of model.relations) {
     const s = byBox.get(relation.source);
     const t = byBox.get(relation.target);
     if (!s || !t || s === t) continue;
-    let d: string;
-    let head: string;
+    let d: Pen;
+    let head: () => void;
     if (s.box.lane === t.box.lane) {
       // Along the lane, from the side of one box to the side of the other.
       const forward = t.x >= s.x;
@@ -189,8 +202,8 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
       const sy = s.y + s.h / 2;
       const ty = t.y + t.h / 2;
       const dir = tx >= sx ? 1 : -1;
-      d = `M${num(sx)},${num(sy)}L${num(tx - dir * trim)},${num(ty)}`;
-      head = marker('arrow_point', tx, ty, dir, 0, 'var(--_l)');
+      d = out.pen().M(sx, sy).L(tx - dir * trim, ty);
+      head = () => out.at(tx, ty, (x, y) => marker('arrow_point', x, y, dir, 0, 'var(--_l)'));
     } else {
       // Between lanes, straight down or up where the boxes overlap, else in an S.
       const down = t.y > s.y;
@@ -204,28 +217,31 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
       const dir = down ? 1 : -1;
       const end = ty - dir * trim;
       const mid = (sy + end) / 2;
-      d = sx === tx ? `M${num(sx)},${num(sy)}V${num(end)}` : `M${num(sx)},${num(sy)}C${num(sx)},${num(mid)} ${num(tx)},${num(mid)} ${num(tx)},${num(end)}`;
-      head = marker('arrow_point', tx, ty, 0, dir, 'var(--_l)');
+      d = sx === tx ? out.pen().M(sx, sy).V(end) : out.pen().M(sx, sy).C(sx, mid, tx, mid, tx, end);
+      head = () => out.at(tx, ty, (x, y) => marker('arrow_point', x, y, 0, dir, 'var(--_l)'));
     }
-    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"${srcAttrs(relation.written)}><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
+    out.group({ cls: 'pele-edge', id: `${relation.source.id}-${relation.target.id}`, source: relation.written });
+    out.path(d, EDGE_LINE);
+    head();
+    out.end();
   }
 
   // Notes and given/when/then specifications, listed under the lanes with the frame they belong to.
   const names = new Map<string, string>();
   for (const box of model.boxes) names.set(box.id, box.name);
-  let cards = '';
+  out.section('cards');
+  let cards = 0;
   let cardsRight = 0;
   const card = (kind: string, heading: string, frame: string, rows: string[], written: SourceInfo | undefined): void => {
     const head = layoutLabel(`${heading} · ${frame}${names.has(frame) ? ' ' + names.get(frame)! : ''}`, false, measurer, small, 4000, Style.Bold);
     const w = Math.max(head.width, widest(rows, small, 0)) + 2 * BOX_PAD_X;
     const h = 2 * BOX_PAD_Y + head.height + rows.length * smallStep;
-    const cy = bottom + (cards === '' && bands.size === 0 ? 0 : CARD_GAP);
-    cards +=
-      `<g class="pele-em-${kind}" data-id="${escText(frame)}"${srcAttrs(written)}>` +
-      `<rect x="${num(left)}" y="${num(cy)}" width="${num(w)}" height="${num(h)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
-      labelSvg(head, left + BOX_PAD_X + head.width / 2, cy + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`) +
-      lines(rows, left + BOX_PAD_X, cy + BOX_PAD_Y + head.height + smallStep / 2 + small * 0.35, smallStep, ` font-size="${small}"`) +
-      '</g>';
+    const cy = bottom + (cards++ === 0 && bands.size === 0 ? 0 : CARD_GAP);
+    out.group({ cls: `pele-em-${kind}`, id: frame, source: written });
+    out.rect(left, cy, w, h, OUTLINE);
+    out.label(head, left + BOX_PAD_X + head.width / 2, cy + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`);
+    out.fragment(lines(rows, left + BOX_PAD_X, cy + BOX_PAD_Y + head.height + smallStep / 2 + small * 0.35, smallStep, ` font-size="${small}"`));
+    out.end();
     bottom = cy + h;
     cardsRight = Math.max(cardsRight, w);
   };
@@ -240,11 +256,11 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
   const width = Math.max(bands.size > 0 ? laneWidth : 0, cardsRight, title.width);
   const totalWidth = Math.ceil(width + 2 * pad);
   const totalHeight = Math.ceil(bottom + pad);
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + lanes + edges + nodes + cards;
+  out.section('main');
+  out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
 
   return {
-    svg: documentOf(out, 'eventmodeling', totalWidth, totalHeight, size, options, model, content),
+    svg: out.done('eventmodeling', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],
@@ -261,7 +277,6 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
   const mono = Math.round(size * 0.75);
   const pad = options.padding ?? 8;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const room = Math.max(160, (options.maxWidth ?? 320) - 2 * pad);
   // A relation that skips a card runs down a rail beside the cards. Relations into one card
   // share a rail; others whose runs overlap take the next rail out, so that no two follow the
@@ -297,7 +312,8 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
   let y = pad + (title.height ? title.height + 12 : 0);
   let bottom = pad + title.height;
   let width = Math.max(title.width, cardWidth + gutter);
-  let nodes = '', edges = '', cards = '';
+  layers(out, ['edges', 'nodes', 'cards']);
+  out.section('nodes');
   const placed = new Map<EmBox, { y: number; h: number; w: number; index: number; lane: number }>();
   const text = (raw: string, fontSize: number, style = 0): Label => literalLabel(decodeEntities(raw), measurer, fontSize, textRoom, style);
   model.boxes.forEach((box, index) => {
@@ -310,19 +326,22 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
     const h = 2 * BOX_PAD_Y + name.height + (data ? data.height + 6 : 0);
     const series = SERIES.get(box.kind);
     const cy = y + headH;
-    const frame = `x="${num(pad)}" y="${num(cy)}" width="${num(w)}" height="${num(h)}"`;
-    nodes += `<g class="pele-cluster pele-em-lane" data-id="${escText(box.lane.label)}">` +
-      leftLabelSvg(lane, pad + BOX_PAD_X, y, ` class="pele-cluster-label" font-size="${small}" font-weight="var(--_hw)" fill="var(--_m)"`) +
-      `<g class="pele-node pele-em-${box.kind}${box.reset ? ' pele-em-reset' : ''}" data-id="${escText(box.id)}"${srcAttrs(box.written)}><rect ${frame} fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
-      (series === undefined ? '' : `<rect ${frame} fill="${seriesColor(series)}" fill-opacity="0.22" stroke="${seriesColor(series)}"${ROUNDED}/>`) +
-      labelSvg(name, pad + BOX_PAD_X + name.width / 2, cy + BOX_PAD_Y + name.height / 2, ` class="pele-label" font-size="${small}" font-weight="var(--_hw)"`) +
-      `<text class="pele-em-frame" x="${num(pad + w - BOX_PAD_X)}" y="${num(cy + BOX_PAD_Y + small)}" text-anchor="end" font-size="${mono}" fill="var(--_m)">${esc(box.id)}</text>` +
-      (data ? lines(data.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, cy + BOX_PAD_Y + name.height + 6 + data.lineHeight / 2 + mono * 0.35, data.lineHeight, ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`) : '') + '</g></g>';
+    out.group({ cls: 'pele-cluster pele-em-lane', id: box.lane.label });
+    leftLabel(out, lane, pad + BOX_PAD_X, y, ` class="pele-cluster-label" font-size="${small}" font-weight="var(--_hw)" fill="var(--_m)"`);
+    out.group({ cls: `pele-node pele-em-${box.kind}${box.reset ? ' pele-em-reset' : ''}`, id: box.id, source: box.written });
+    out.rect(pad, cy, w, h, OUTLINE);
+    if (series !== undefined) out.rect(pad, cy, w, h, tint(seriesColor(series)));
+    out.label(name, pad + BOX_PAD_X + name.width / 2, cy + BOX_PAD_Y + name.height / 2, ` class="pele-label" font-size="${small}" font-weight="var(--_hw)"`);
+    out.text(pad + w - BOX_PAD_X, cy + BOX_PAD_Y + small, box.id, ' class="pele-em-frame"', ` text-anchor="end" font-size="${mono}" fill="var(--_m)"`);
+    if (data) out.fragment(lines(data.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, cy + BOX_PAD_Y + name.height + 6 + data.lineHeight / 2 + mono * 0.35, data.lineHeight, ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`));
+    out.end();
+    out.end();
     placed.set(box, { y: cy, h, w, index, lane: lane.width });
     width = Math.max(width, w + gutter);
     bottom = cy + h;
     y = bottom + 28;
   });
+  out.section('edges');
   for (const relation of model.relations) {
     const s = placed.get(relation.source), t = placed.get(relation.target);
     if (!s || !t || s === t) continue;
@@ -330,30 +349,36 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
     const dir = down ? 1 : -1;
     const sy = down ? s.y + s.h : s.y;
     const ty = down ? t.y : t.y + t.h;
-    let d: string, head: string;
+    let d: Pen, head: () => void;
     if (Math.abs(s.index - t.index) === 1) {
       // The lower card's lane heading sits in the gap, and wraps to leave the arrow room beside it.
       const cx = pad + Math.max(Math.min(s.w, t.w) / 2, BOX_PAD_X + (down ? t : s).lane + 16);
-      d = `M${num(cx)},${num(sy)}V${num(ty - dir * markerTrim('arrow_point'))}`;
-      head = marker('arrow_point', cx, ty, 0, dir, 'var(--_l)');
+      d = out.pen().M(cx, sy).V(ty - dir * markerTrim('arrow_point'));
+      head = () => out.at(cx, ty, (x, y) => marker('arrow_point', x, y, 0, dir, 'var(--_l)'));
     } else {
       const rail = pad + width - gutter + 12 + RAIL_GAP * (railOf.get(relation.target) ?? 0);
       // A card can send one relation and receive another: they leave above and arrive below its middle.
       const from = s.y + s.h / 2 - 5, to = t.y + t.h / 2 + 5;
-      d = `M${num(pad + s.w)},${num(from)}H${num(rail)}V${num(to)}H${num(pad + t.w + markerTrim('arrow_point'))}`;
-      head = marker('arrow_point', pad + t.w, to, -1, 0, 'var(--_l)');
+      d = out.pen().M(pad + s.w, from).H(rail).V(to).H(pad + t.w + markerTrim('arrow_point'));
+      head = () => out.at(pad + t.w, to, (x, y) => marker('arrow_point', x, y, -1, 0, 'var(--_l)'));
     }
-    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"${srcAttrs(relation.written)}><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
+    out.group({ cls: 'pele-edge', id: `${relation.source.id}-${relation.target.id}`, source: relation.written });
+    out.path(d, EDGE_LINE);
+    head();
+    out.end();
   }
+  out.section('cards');
   const names = new Map(model.boxes.map(box => [box.id, box.name]));
   const card = (kind: string, heading: string, frame: string, raw: string, written: SourceInfo | undefined): void => {
     const head = layoutLabel(`${heading} · ${frame}${names.has(frame) ? ' ' + names.get(frame)! : ''}`, false, measurer, small, textRoom, Style.Bold);
     const body = text(raw, small);
     const w = Math.max(cardWidth, head.width + 2 * BOX_PAD_X, body.width + 2 * BOX_PAD_X);
     const h = 2 * BOX_PAD_Y + head.height + body.height;
-    cards += `<g class="pele-em-${kind}" data-id="${escText(frame)}"${srcAttrs(written)}><rect x="${num(pad)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
-      labelSvg(head, pad + BOX_PAD_X + head.width / 2, y + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`) +
-      lines(body.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, y + BOX_PAD_Y + head.height + body.lineHeight / 2 + small * 0.35, body.lineHeight, ` font-size="${small}"`) + '</g>';
+    out.group({ cls: `pele-em-${kind}`, id: frame, source: written });
+    out.rect(pad, y, w, h, OUTLINE);
+    out.label(head, pad + BOX_PAD_X + head.width / 2, y + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`);
+    out.fragment(lines(body.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, y + BOX_PAD_Y + head.height + body.lineHeight / 2 + small * 0.35, body.lineHeight, ` font-size="${small}"`));
+    out.end();
     bottom = y + h;
     y = bottom + CARD_GAP;
     width = Math.max(width, w);
@@ -366,6 +391,7 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
     card('specification', 'Given / When / Then', spec.frame, rows.join('\n'), spec.written);
   }
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(bottom + pad);
-  const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + edges + nodes + cards;
-  return { svg: documentOf(out, 'eventmodeling', totalWidth, height, size, options, model, content), width: totalWidth, height, links: [] };
+  out.section('main');
+  out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
+  return { svg: out.done('eventmodeling', totalWidth, height, size, options, model), width: totalWidth, height, links: [] };
 }
