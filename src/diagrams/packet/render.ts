@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -12,12 +13,12 @@ import type { PacketBlock } from './model.js';
 import { fitText, type Fitted } from '../common/fit-text.js';
 import { packetOption, type PacketModel } from './model.js';
 
-export function renderPacket(model: PacketModel, config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, config, options, down));
+export function renderPacket(model: PacketModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, config, options, down), out);
 }
 
-function draw(model: PacketModel, config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: PacketModel, config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const labelSize = Math.round(size * 0.875);
   const bitSize = Math.round(size * 0.625);
@@ -152,7 +153,7 @@ function draw(model: PacketModel, config: Config, options: RenderOptions, down: 
     labelSvg(title, totalWidth / 2, totalHeight - pad - title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
   return {
-    svg: svgDocument('packet', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'packet', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

@@ -3,6 +3,7 @@ import { PeleError, render } from '../../src/index.js';
 import { SankeyDb } from '../../src/diagrams/sankey/db.js';
 import { renderSankey } from '../../src/diagrams/sankey/render.js';
 import type { Config } from '../../src/preprocess.js';
+import { SvgOut } from '../../src/draw/svg.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
 import { PAYLOADS, assertInert } from '../support/inert.js';
@@ -116,9 +117,9 @@ describe('inert sankey output', () => {
       db.addLink(b, c, NaN);
       db.addLink(a, c, Infinity);
       db.addLink(a, c, -1);
-      assertInert(renderSankey(db, { sankey: { prefix: payload, linkColor: payload } }, options).svg, JSON.stringify(payload));
+      assertInert(renderSankey(db, { sankey: { prefix: payload, linkColor: payload } }, options, new SvgOut(options)).svg, JSON.stringify(payload));
     }
-    assertInert(renderSankey(new SankeyDb(), {}, options).svg, 'empty model');
+    assertInert(renderSankey(new SankeyDb(), {}, options, new SvgOut(options)).svg, 'empty model');
   });
 
   it('holds for mutated inputs', () => {

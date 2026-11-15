@@ -1,7 +1,8 @@
 import { PeleError } from '../../errors.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -54,11 +55,11 @@ function aligned(label: Label, x: number, y: number, anchor: 'start' | 'middle' 
   return labelSvg(label, x + (anchor === 'start' ? label.width / 2 : anchor === 'end' ? -label.width / 2 : 0), y, '');
 }
 
-export function renderXyChart(model: XyChartModel, config: Config, options: RenderOptions): Rendered {
+export function renderXyChart(model: XyChartModel, config: Config, options: RenderOptions, out: Out): Rendered {
   if (model.plots.length === 0) {
     throw new PeleError('No Plot to render, please provide a plot with some data', 'semantic', { type: 'xychart' });
   }
-  const srcAttrs = sourceAttrsFor(options);
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const chart = record(config.xyChart);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -407,7 +408,7 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
     (legendOut ? `<g class="pele-legend" font-size="${small}">${legendOut}</g>` : '');
 
   return {
-    svg: svgDocument('xychart', width, height, size, options, model, content),
+    svg: documentOf(out, 'xychart', width, height, size, options, model, content),
     width,
     height,
     links: [],

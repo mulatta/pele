@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -39,13 +40,13 @@ function slice(start: number, end: number, outer: number, inner: number): string
   );
 }
 
-export function renderPie(model: PieModel, config: Config, options: RenderOptions): Rendered {
-  return fitWidth(options, RADIUS * 2, 140, (diameter, tight) => draw(model, config, options, diameter / 2, tight));
+export function renderPie(model: PieModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  return fitWidth(options, RADIUS * 2, 140, (diameter, tight, o) => draw(o, model, config, options, diameter / 2, tight), out);
 }
 
 // `tight` is set when the chart does not fit the width it has with its legend beside it.
-function draw(model: PieModel, config: Config, options: RenderOptions, radius: number, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: PieModel, config: Config, options: RenderOptions, radius: number, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -175,7 +176,7 @@ function draw(model: PieModel, config: Config, options: RenderOptions, radius: n
     (legendOut ? `<g class="pele-legend" font-size="${small}">${legendOut}</g>` : '');
 
   return {
-    svg: svgDocument('pie', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'pie', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

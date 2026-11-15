@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ink } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { resolveStyle, seriesColor, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -32,8 +33,8 @@ function keyOf(ids: string[]): string {
   return ids.length === 1 ? ids[0] : JSON.stringify(ids);
 }
 
-export function renderVenn(model: VennModel, _config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderVenn(model: VennModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.8125);
@@ -207,7 +208,7 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     labels += `<g class="pele-venn-region" data-id="${id}"${srcAttrs(region.source)}>${content}</g>`;
   }
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'venn',
     width,
     height,

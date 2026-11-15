@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { resolveStyle, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -51,14 +52,14 @@ function fillStyle(color: unknown): string {
   return typeof color === 'string' ? resolveStyle([`fill:${color}`]).shape : '';
 }
 
-export function renderSankey(model: SankeyModel, config: Config, options: RenderOptions): Rendered {
+export function renderSankey(model: SankeyModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const conf = isRecord(config.sankey) ? config.sankey : {};
   const natural = numberOption(conf, 'width', 600, 1, 10000);
-  return fitWidth(options, natural, 160, (chartWidth) => draw(model, conf, options, chartWidth, natural));
+  return fitWidth(options, natural, 160, (chartWidth, _narrow, o) => draw(o, model, conf, options, chartWidth, natural), out);
 }
 
-function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const least = Math.round(size * 0.625);
   // Labels shrink with a chart narrowed to fit, as they would if the whole picture were scaled down.
@@ -243,7 +244,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
   const width = Math.ceil(inner + 2 * pad);
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
 
-  const svg = svgDocument(
+  const svg = documentOf(out, 
     'sankey',
     width,
     height,

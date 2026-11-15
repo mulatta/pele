@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, classNames, resolveStyle, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -37,8 +38,8 @@ function hex(color: string): string {
   return color.startsWith('#') ? color : '#' + color;
 }
 
-export function renderQuadrant(model: QuadrantModel, config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderQuadrant(model: QuadrantModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const titleSize = textSize(config, 'titleFontSize', size);
   const quadrantSize = textSize(config, 'quadrantLabelFontSize', size);
@@ -213,7 +214,7 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
       : '');
 
   return {
-    svg: svgDocument('quadrantChart', width, height, size, options, model, content),
+    svg: documentOf(out, 'quadrantChart', width, height, size, options, model, content),
     width,
     height,
     links: [],

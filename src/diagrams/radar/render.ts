@@ -1,6 +1,7 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -51,14 +52,14 @@ function polygon(points: Point[]): string {
   return out;
 }
 
-export function renderRadar(model: RadarModel, config: Config, options: RenderOptions): Rendered {
+export function renderRadar(model: RadarModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const natural = option(config, 'width', 320, 1, 4000);
-  return fitWidth(options, natural, 160, (width, tight) => draw(model, config, options, width, (option(config, 'height', 320, 1, 4000) * width) / natural, tight));
+  return fitWidth(options, natural, 160, (width, tight, o) => draw(o, model, config, options, width, (option(config, 'height', 320, 1, 4000) * width) / natural, tight), out);
 }
 
 // `tight` is set when the chart does not fit the width it has with its legend beside it.
-function draw(model: RadarModel, config: Config, options: RenderOptions, width: number, height: number, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: RadarModel, config: Config, options: RenderOptions, width: number, height: number, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -176,7 +177,7 @@ function draw(model: RadarModel, config: Config, options: RenderOptions, width: 
     '</g>';
 
   return {
-    svg: svgDocument('radar', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'radar', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

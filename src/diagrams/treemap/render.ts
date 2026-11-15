@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { inkFill } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
@@ -43,8 +44,8 @@ function option(config: Config, key: string, fallback: number, min: number, max:
   return typeof value === 'number' && value >= min ? Math.min(value, max) : fallback;
 }
 
-export function renderTreemap(model: TreemapModel, config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderTreemap(model: TreemapModel, config: Config, options: RenderOptions, out: Out): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
@@ -163,7 +164,7 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     (leaves ? `<g class="pele-leaves" text-anchor="middle" fill="var(--_bg)">${leaves}</g>` : '');
 
   return {
-    svg: svgDocument('treemap', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'treemap', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

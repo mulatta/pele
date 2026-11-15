@@ -1,7 +1,8 @@
 import type { Config } from '../../preprocess.js';
+import type { Out } from '../../draw/out.js';
+import { documentOf } from '../../draw/svg.js';
 import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -61,13 +62,13 @@ function dimension(config: Config, given: number | undefined, key: string, fallb
   return clamp(value, 200, 10000) - 2 * CANVAS_MARGIN;
 }
 
-export function renderWardley(model: WardleyModel, config: Config, options: RenderOptions): Rendered {
+export function renderWardley(model: WardleyModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const natural = dimension(config, model.size?.width, 'width', 900);
-  return fitWidth(options, natural, 160, (plotW, tight) => draw(model, config, options, plotW, natural, tight));
+  return fitWidth(options, natural, 160, (plotW, tight, o) => draw(o, model, config, options, plotW, natural, tight), out);
 }
 
-function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW: number, naturalW: number, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: WardleyModel, config: Config, options: RenderOptions, plotW: number, naturalW: number, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const tiny = Math.round(size * 0.6875);
@@ -416,7 +417,7 @@ function draw(model: WardleyModel, config: Config, options: RenderOptions, plotW
     '</g>';
 
   return {
-    svg: svgDocument('wardley', totalWidth, totalHeight, size, options, model, content),
+    svg: documentOf(out, 'wardley', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

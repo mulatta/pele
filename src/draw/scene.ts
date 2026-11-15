@@ -556,6 +556,8 @@ function parseFragment(svg: string): Op[] {
   if (ops) return ops;
   ops = [];
   fragmentOps(elements(svg), ops);
+  // A whole drawing is read once: only small pieces come again.
+  if (svg.length > 2000) return ops;
   if (fragmentCache.size > 4000) fragmentCache.clear();
   fragmentCache.set(svg, ops);
   return ops;

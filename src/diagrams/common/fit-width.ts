@@ -21,19 +21,20 @@ export function fitWidth(
   options: RenderOptions,
   natural: number,
   least: number,
-  draw: (plot: number, narrow: boolean) => Rendered
+  draw: (plot: number, narrow: boolean, out: Out) => Rendered,
+  out?: Out
 ): Rendered {
-  let result = draw(natural, false);
+  let result = attempt(out, (o) => draw(natural, false, o));
   const available = options.maxWidth;
-  if (available === undefined || !(available > 0) || result.width <= available) return result;
+  if (available === undefined || !(available > 0) || result[0].width <= available) return keep(out, result);
   const floor = Math.min(least, natural);
   let plot = natural;
-  result = draw(plot, true);
-  for (let round = 0; round < 3 && result.width > available && plot > floor; round++) {
-    plot = Math.max(floor, plot - (result.width - available));
-    result = draw(plot, true);
+  result = attempt(out, (o) => draw(plot, true, o));
+  for (let round = 0; round < 3 && result[0].width > available && plot > floor; round++) {
+    plot = Math.max(floor, plot - (result[0].width - available));
+    result = attempt(out, (o) => draw(plot, true, o));
   }
-  return result;
+  return keep(out, result);
 }
 
 // The width a title may take before it wraps.
