@@ -1,8 +1,7 @@
 import { PeleError } from '../../errors.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { labelSvg, num } from '../../svg/builder.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -45,21 +44,21 @@ function widest(marks: Mark[]): number {
   return width;
 }
 
-// Writes a label with its left edge, center or right edge at x. A plain one-line label keeps
+// Draws a label with its left edge, center or right edge at x. A plain one-line label keeps
 // its place when the text is wider or narrower than measured.
-function aligned(label: Label, x: number, y: number, anchor: 'start' | 'middle' | 'end'): string {
+function aligned(out: Out, label: Label, x: number, y: number, anchor: 'start' | 'middle' | 'end'): void {
   const line = label.lines.length === 1 ? label.lines[0] : undefined;
   if (line && line.length === 1 && line[0].icon === undefined && line[0].style === 0) {
-    return `<text x="${num(x)}" y="${num(y + label.size * 0.35)}" text-anchor="${anchor}">${esc(line[0].text)}</text>`;
+    out.text(x, y + label.size * 0.35, line[0].text, '', ` text-anchor="${anchor}"`);
+    return;
   }
-  return labelSvg(label, x + (anchor === 'start' ? label.width / 2 : anchor === 'end' ? -label.width / 2 : 0), y, '');
+  out.label(label, x + (anchor === 'start' ? label.width / 2 : anchor === 'end' ? -label.width / 2 : 0), y, '');
 }
 
 export function renderXyChart(model: XyChartModel, config: Config, options: RenderOptions, out: Out): Rendered {
   if (model.plots.length === 0) {
     throw new PeleError('No Plot to render, please provide a plot with some data', 'semantic', { type: 'xychart' });
   }
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const chart = record(config.xyChart);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -235,22 +234,41 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
   const rule = (v: number): string =>
     horizontal ? `M${num(px(0, v))},${num(top)}V${num(bottom)}` : `M${num(left)},${num(py(0, v))}H${num(right)}`;
 
-  let grid = '';
-  for (const mark of horizontal ? bottomMarks : leftMarks) grid += rule(mark.at);
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  // Layers are painted in the order they are made; empty ones are left out.
+  out.section('grid');
+  out.section('plot', ' class="pele-plot"', true);
+  out.section('axis');
+  out.section('labels', ` class="pele-axis-labels" font-size="${small}" fill="var(--_m)"`);
+  out.section('titles', ` class="pele-axis-titles" font-size="${small}"`);
+  out.section('data-labels', ` class="pele-data-labels" font-size="${tiny}"`);
+  out.section('point-labels', ` class="pele-point-labels" font-size="${tiny}"`);
+  out.section('legend', ` class="pele-legend" font-size="${small}"`);
+
+  const gridMarks = horizontal ? bottomMarks : leftMarks;
+  if (gridMarks.length > 0) {
+    const grid = out.pen();
+    for (const mark of gridMarks) {
+      if (horizontal) grid.M(px(0, mark.at), top).V(bottom);
+      else grid.M(left, py(0, mark.at)).H(right);
+    }
+    out.section('grid');
+    out.path(grid, ' stroke="var(--_a)"', undefined, { cls: 'pele-grid' });
+  }
 
   let axis = '';
-  let labels = '';
+  out.section('labels');
   if (on(leftConf, 'showAxisLine')) axis += `M${num(left)},${num(top)}V${num(bottom)}`;
   if (on(bottomConf, 'showAxisLine')) axis += `M${num(left)},${num(bottom)}H${num(right)}`;
   for (const mark of leftMarks) {
     const y = horizontal ? top + mark.at * plotHeight : bottom - mark.at * plotHeight;
     if (leftTick) axis += `M${num(left)},${num(y)}h${-leftTick}`;
-    if (leftLabels) labels += aligned(mark.label, left - leftTick - 6, y, 'end');
+    if (leftLabels) aligned(out, mark.label, left - leftTick - 6, y, 'end');
   }
   for (const mark of bottomMarks) {
     const at = left + mark.at * plotWidth;
     if (bottomTick) axis += `M${num(at)},${num(bottom)}v${bottomTick}`;
-    if (bottomLabels) labels += aligned(mark.label, at, bottom + bottomTick + 4 + mark.label.height / 2, 'middle');
+    if (bottomLabels) aligned(out, mark.label, at, bottom + bottomTick + 4 + mark.label.height / 2, 'middle');
   }
 
   const span = (horizontal ? plotHeight : plotWidth) * slot;
@@ -262,19 +280,19 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
   if (bars > 0 && base > 0 && base < 1) axis += rule(base);
   // Lines are drawn over the bars wherever they were declared, as a bar would hide part of one
   // under it. A series keeps the color of its place in the source.
-  let series = '';
-  let lines = '';
-  let outside = '';
-  let pointLabels = '';
+  const dataLabels: { x: number; y: number; text: string; anchor: string }[] = [];
+  const pointLabels: (() => void)[] = [];
+  const lines: (() => void)[] = [];
   let bar = 0;
+  out.section('plot');
   plots.forEach((plot, index) => {
     const color = seriesColor(index);
-    const id = plot.title ? ` data-id="${escText(plot.title)}"${srcAttrs(plot.source)}` : '';
+    const own = plot.title ? { id: plot.title, source: plot.source } : {};
     // A series declared before the categories can hold more values than there are categories.
     const n = x.type === 'band' ? Math.min(plot.data.length, count) : plot.data.length;
     if (plot.type === 'bar') {
       const offset = (bar++ - (bars - 1) / 2) * thickness - (thickness - gap) / 2;
-      let rects = '';
+      out.group({ cls: 'pele-series pele-bars', ...own, attrs: ` fill="${color}"` });
       for (let i = 0; i < n; i++) {
         const value = finite(plot.data[i][1]);
         if (value === undefined) continue;
@@ -286,32 +304,33 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
         const by = horizontal ? py(c, 0) + offset : py(c, to);
         const bw = horizontal ? (to - from) * plotWidth : thickness - gap;
         const bh = horizontal ? thickness - gap : (to - from) * plotHeight;
-        rects += `<rect x="${num(bx)}" y="${num(by)}" width="${num(bw)}" height="${num(bh)}"/>`;
+        out.rect(bx, by, bw, bh, '');
         if (!showValues) continue;
         const label = String(value);
         const w = measurer.width(label, tiny, 0);
         // Towards the end of the bar: 1 when it runs up or right from the baseline, -1 the other way.
-        const out = v >= base ? 1 : -1;
+        const dir = v >= base ? 1 : -1;
         let tx = bx + bw / 2;
         let ty = by + bh / 2;
         let anchor = 'middle';
         if (horizontal) {
           if (bh < tiny) continue;
-          tx = (out > 0 ? bx + bw : bx) + out * 6;
-          anchor = out > 0 ? 'start' : 'end';
+          tx = (dir > 0 ? bx + bw : bx) + dir * 6;
+          anchor = dir > 0 ? 'start' : 'end';
         } else {
           if (w + 2 > span / bars) continue;
-          ty = (out > 0 ? by : by + bh) - out * (tinyHeight / 2 + 2);
+          ty = (dir > 0 ? by : by + bh) - dir * (tinyHeight / 2 + 2);
         }
-        outside += `<text x="${num(tx)}" y="${num(ty + tiny * 0.35)}" text-anchor="${anchor}">${label}</text>`;
+        dataLabels.push({ x: tx, y: ty + tiny * 0.35, text: label, anchor });
       }
-      series += `<g class="pele-series pele-bars"${id} fill="${color}">${rects}</g>`;
+      out.end();
       return;
     }
 
     // A line is cut where it leaves the value range, so it stays inside the plot.
-    let d = '';
-    let dots = '';
+    const d = out.pen();
+    let drawn = false;
+    const dots: [number, number][] = [];
     let pen = false;
     let pc = 0;
     let pv = NaN;
@@ -325,7 +344,10 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
       const v = scale(value);
       const visible = v >= 0 && v <= 1;
       if (pv !== pv) {
-        if (visible) d += `M${num(px(c, v))},${num(py(c, v))}`;
+        if (visible) {
+          d.M(px(c, v), py(c, v));
+          drawn = true;
+        }
         pen = visible;
       } else {
         const dv = v - pv;
@@ -344,8 +366,9 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
           const v0 = pv + dv * t0;
           const c1 = pc + (c - pc) * t1;
           const v1 = pv + dv * t1;
-          if (!pen || t0 > 0) d += `M${num(px(c0, v0))},${num(py(c0, v0))}`;
-          d += `L${num(px(c1, v1))},${num(py(c1, v1))}`;
+          if (!pen || t0 > 0) d.M(px(c0, v0), py(c0, v0));
+          d.L(px(c1, v1), py(c1, v1));
+          drawn = true;
         }
         pen = visible;
       }
@@ -354,29 +377,42 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
       if (!visible) continue;
       const cx = px(c, v);
       const cy = py(c, v);
-      if (span >= 12) dots += `<circle cx="${num(cx)}" cy="${num(cy)}" r="3"/>`;
+      if (span >= 12) dots.push([cx, cy]);
       const label = text(plot.pointLabels?.[i], tiny, 4000);
       if (label.height > 0) {
         const half = label.width / 2;
-        pointLabels += horizontal
-          ? aligned(label, cx + 10, cy, 'start')
-          : aligned(label, Math.max(Math.min(cx, right - half), left + half), cy - 6 - label.height / 2, 'middle');
+        pointLabels.push(() =>
+          horizontal
+            ? aligned(out, label, cx + 10, cy, 'start')
+            : aligned(out, label, Math.max(Math.min(cx, right - half), left + half), cy - 6 - label.height / 2, 'middle')
+        );
       }
     }
-    lines +=
-      `<g class="pele-series pele-line"${id} fill="${color}">` +
-      (d ? `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : '') +
-      dots +
-      '</g>';
+    lines.push(() => {
+      out.group({ cls: 'pele-series pele-line', ...own, attrs: ` fill="${color}"` });
+      if (drawn) out.path(d, ` fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`);
+      for (const [cx, cy] of dots) out.circle(cx, cy, 3, '');
+      out.end();
+    });
   });
+  for (const draw of lines) draw();
 
-  let titles = '';
-  if (leftTitle.height > 0) {
-    titles += `<g transform="translate(${num(pad + leftTitle.height / 2)},${num(top + plotHeight / 2)}) rotate(-90)">${labelSvg(leftTitle, 0, 0, '')}</g>`;
+  if (axis) {
+    out.section('axis');
+    out.path(axis, ' fill="none" stroke="var(--_b)"', undefined, { cls: 'pele-axis' });
   }
-  titles += labelSvg(bottomTitle, left + plotWidth / 2, height - pad - bottomTitle.height / 2, '');
+  out.section('titles');
+  if (leftTitle.height > 0) {
+    out.fragment(`<g transform="translate(${num(pad + leftTitle.height / 2)},${num(top + plotHeight / 2)}) rotate(-90)">${labelSvg(leftTitle, 0, 0, '')}</g>`);
+  }
+  out.label(bottomTitle, left + plotWidth / 2, height - pad - bottomTitle.height / 2, '');
 
-  let legendOut = '';
+  out.section('data-labels');
+  for (const l of dataLabels) out.text(l.x, l.y, l.text, '', ` text-anchor="${l.anchor}"`);
+  out.section('point-labels');
+  for (const draw of pointLabels) draw();
+
+  out.section('legend');
   let legendHeight = 0;
   for (const item of legend) legendHeight += Math.max(ROW, item.label.height + 6);
   let ly = top + Math.max(0, (plotHeight - legendHeight) / 2);
@@ -386,31 +422,14 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
     if (ly + row > height) break;
     const y = ly + row / 2;
     const color = seriesColor(index);
-    legendOut +=
-      `<g class="pele-legend-item" data-id="${escText(plots[index].title)}"${srcAttrs(plots[index].source)}>` +
-      (plots[index].type === 'bar'
-        ? `<rect x="${num(lx)}" y="${num(y - SWATCH / 2)}" width="${SWATCH}" height="${SWATCH}" rx="2" fill="${color}"/>`
-        : `<path d="M${num(lx)},${num(y)}h${SWATCH}" stroke="${color}" stroke-width="2" stroke-linecap="round"/>`) +
-      labelSvg(label, lx + SWATCH + 8 + label.width / 2, y, '') +
-      '</g>';
+    out.group({ cls: 'pele-legend-item', id: plots[index].title, source: plots[index].source });
+    if (plots[index].type === 'bar') out.rect(lx, y - SWATCH / 2, SWATCH, SWATCH, ` rx="2" fill="${color}"`);
+    // Relative path data, which the pen does not write.
+    else out.path(`M${num(lx)},${num(y)}h${SWATCH}`, ` stroke="${color}" stroke-width="2" stroke-linecap="round"`);
+    out.label(label, lx + SWATCH + 8 + label.width / 2, y, '');
+    out.end();
     ly += row;
   }
 
-  const content =
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    (grid ? `<path class="pele-grid" d="${grid}" stroke="var(--_a)"/>` : '') +
-    `<g class="pele-plot">${series}${lines}</g>` +
-    (axis ? `<path class="pele-axis" d="${axis}" fill="none" stroke="var(--_b)"/>` : '') +
-    (labels ? `<g class="pele-axis-labels" font-size="${small}" fill="var(--_m)">${labels}</g>` : '') +
-    (titles ? `<g class="pele-axis-titles" font-size="${small}">${titles}</g>` : '') +
-    (outside ? `<g class="pele-data-labels" font-size="${tiny}">${outside}</g>` : '') +
-    (pointLabels ? `<g class="pele-point-labels" font-size="${tiny}">${pointLabels}</g>` : '') +
-    (legendOut ? `<g class="pele-legend" font-size="${small}">${legendOut}</g>` : '');
-
-  return {
-    svg: documentOf(out, 'xychart', width, height, size, options, model, content),
-    width,
-    height,
-    links: [],
-  };
+  return { svg: out.done('xychart', width, height, size, options, model), width, height, links: [] };
 }
