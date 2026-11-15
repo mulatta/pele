@@ -1,4 +1,5 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { QuadrantDb, QuadrantText } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -30,9 +31,22 @@ const EOL = flags(T.NEWLINE, T.SEMI, T.EOF);
 const QUADRANT_SETTERS = ['setQuadrant1Text', 'setQuadrant2Text', 'setQuadrant3Text', 'setQuadrant4Text'] as const;
 const TEXT_TOKENS = "'STR', 'MD_STR', 'ALPHA', 'NUM', 'UNICODE_TEXT', 'PUNCTUATION'";
 
-export function parseQuadrant(src: string, db: QuadrantDb): void {
+// With `lines`, the quadrants and points record where they are written (see sourceLine). Mermaid's
+// specs hand the parser a mock model that must not change, so they parse without.
+export function parseQuadrant(src: string, db: QuadrantDb, lines = false): void {
   const { types, texts, starts } = tokenize(src);
   let i = 0;
+
+  // Where the statement from token `first` is written. It ends before the line break or `;` at
+  // `i`, as a point's closing bracket has no token of its own.
+  const written = (first: number, symbol?: string): SourceInfo | undefined => {
+    const line = sourceLine(src, starts[first]);
+    if (line === undefined) return undefined;
+    const end = sourceLine(src, starts[i] - 1) ?? line;
+    const source: SourceInfo = end > line ? { line, end } : { line };
+    if (symbol !== undefined) source.symbol = symbol;
+    return source;
+  };
 
   const fail = (expected: string): never => {
     const t = types[i];
@@ -106,10 +120,14 @@ export function parseQuadrant(src: string, db: QuadrantDb): void {
       case T.QUADRANT_1:
       case T.QUADRANT_2:
       case T.QUADRANT_3:
-      case T.QUADRANT_4:
-        i++;
-        db[QUADRANT_SETTERS[t - T.QUADRANT_1]](text());
+      case T.QUADRANT_4: {
+        const first = i++;
+        const label = text();
+        // A quadrant goes by its keyword, as written.
+        if (lines) db.source = written(first, texts[first].trim());
+        db[QUADRANT_SETTERS[t - T.QUADRANT_1]](label);
         break;
+      }
       case T.title:
         i++;
         db.setDiagramTitle(expect(T.title_value).trim());
@@ -127,12 +145,16 @@ export function parseQuadrant(src: string, db: QuadrantDb): void {
         break;
       default:
         if (isText(t)) {
+          const first = i;
           const label = text();
           const className = types[i] === T.class_name ? texts[i++] : '';
           expect(T.point_start);
           const x = expect(T.point_x);
           const y = expect(T.point_y);
-          db.addPoint(label, className, x, y, STYLE[types[i]] === 1 ? styles() : []);
+          const style = STYLE[types[i]] === 1 ? styles() : [];
+          // A point's label is free text, which need not tell points apart.
+          if (lines) db.source = written(first);
+          db.addPoint(label, className, x, y, style);
         }
     }
     if (EOL[types[i]] === 0) fail("'NEWLINE', 'SEMI', 'EOF'");
