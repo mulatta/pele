@@ -1,8 +1,7 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { documentOf } from '../../draw/svg.js';
 import { titleLabel } from '../../svg/title.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { drawShape, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, seriesColor } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -32,16 +31,18 @@ const INDENT = 28;
 const STEM = 12;
 const BEND = 8;
 const ROW_GAP = 10;
+const EDGE = { cls: 'pele-edge' };
+
+const LABEL = ' class="pele-label"';
+const TITLE = ' class="pele-title" font-weight="var(--_tw)"';
 
 // A label with each line starting at `left`, for an outline, where centered lines would look ragged.
-function leftLabel(label: Label, left: number, cy: number, icons: RenderOptions['icons']): string {
-  if (label.lines.length < 2) return labelSvg(label, left + label.width / 2, cy, ' class="pele-label"', icons);
-  let out = '';
+function leftLabel(out: Out, label: Label, left: number, cy: number, icons: RenderOptions['icons']): void {
+  if (label.lines.length < 2) return out.label(label, left + label.width / 2, cy, LABEL, icons);
   const top = cy - label.height / 2;
   for (let k = 0; k < label.lines.length; k++) {
-    out += labelSvg(labelLine(label, k), left + label.widths[k] / 2, top + lineMiddle(label, k), ' class="pele-label"', icons);
+    out.label(labelLine(label, k), left + label.widths[k] / 2, top + lineMiddle(label, k), LABEL, icons);
   }
-  return out;
 }
 
 export function renderMindmap(model: MindmapModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -51,7 +52,6 @@ export function renderMindmap(model: MindmapModel, config: Config, options: Rend
 // `down` draws the map as an outline: the root at the top, and each level set in under its parent.
 // It is far narrower than branches spreading to both sides, and as tall as it needs to be.
 function draw(out: Out, model: MindmapModel, config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -208,16 +208,35 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
   let maxX = 0;
   let minY = 0;
   let maxY = 0;
-  let tree = '';
-  let edges = '';
-  let body = '';
+  for (let i = 0; i < n; i++) {
+    minX = Math.min(minX, x[i] - w[i] / 2);
+    maxX = Math.max(maxX, x[i] + w[i] / 2);
+    minY = Math.min(minY, y[i]);
+    maxY = Math.max(maxY, y[i] + h[i]);
+  }
+  const title = titleLabel(model.title, measurer, size, titleRoom(options));
+  const titleHeight = title.height > 0 ? title.height + 16 : 0;
+  const width = Math.max(maxX - minX, title.width);
+  const totalWidth = Math.ceil(width + 2 * pad);
+  const totalHeight = Math.ceil(maxY - minY + titleHeight + 2 * pad);
+  out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
+  out.frame(pad - minX + (width - maxX + minX) / 2, pad + titleHeight - minY);
+  out.section('tree');
+
+  // A branch is written with its links first, but they are known as its nodes are placed.
+  let edges: (() => void)[] = [];
+  let body: (() => void)[] = [];
   let color = '';
   const flush = (section: number | undefined): void => {
-    if (body === '') return;
-    tree +=
-      `<g class="pele-branch pele-section-${section ?? 0}">` +
-      `<g class="pele-edges" fill="none" stroke="${color}" stroke-width="1.5">${edges}</g>${body}</g>`;
-    edges = body = '';
+    if (body.length === 0) return;
+    out.group({ cls: `pele-branch pele-section-${section ?? 0}` });
+    out.group({ cls: 'pele-edges', attrs: ` fill="none" stroke="${color}" stroke-width="1.5"` });
+    for (const draw of edges) draw();
+    out.end();
+    for (const draw of body) draw();
+    out.end();
+    edges = [];
+    body = [];
   };
 
   // The root is drawn last, on top of the links that leave it.
@@ -228,12 +247,8 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
     const label = labels[i];
     const cx = x[i];
     const top = y[i];
-    minX = Math.min(minX, cx - w[i] / 2);
-    maxX = Math.max(maxX, cx + w[i] / 2);
-    minY = Math.min(minY, top);
-    maxY = Math.max(maxY, top + h[i]);
 
-    if (i === 0 || parent[i] === 0) flush(nodes[k - 1].section);
+    if (i > 0 && parent[i] === 0) flush(nodes[k - 1].section);
     if (i > 0 && down) {
       if (parent[i] === 0) color = seriesColor(node.section ?? 0);
       const p = parent[i];
@@ -249,7 +264,8 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
       const bend = Math.max(0, Math.min(BEND, x2 - x1, y2 - y1));
       // The next link carries on from where this one leaves the trunk, so the trunk has no gap.
       trunk[p] = y2 - bend;
-      edges += `<path class="pele-edge" d="M${num(x1)},${num(y1)}V${num(y2 - bend)}Q${num(x1)},${num(y2)} ${num(x1 + bend)},${num(y2)}H${num(x2)}"/>`;
+      const d = out.pen().M(x1, y1).V(y2 - bend).Q(x1, y2, x1 + bend, y2).H(x2);
+      edges.push(() => out.path(d, '', undefined, EDGE));
     } else if (i > 0) {
       if (parent[i] === 0) color = seriesColor(node.section ?? 0);
       const p = parent[i];
@@ -260,8 +276,9 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
       const near = cx - (dir * w[i]) / 2;
       const x2 = near + (shape ? dir * shapeInset(shape, w[i], h[i], 4 - from) : 0);
       const y2 = top + anchor[i];
-      const mid = num((x1 + x2) / 2);
-      edges += `<path class="pele-edge" d="M${num(x1)},${num(y1)}C${mid},${num(y1)} ${mid},${num(y2)} ${num(x2)},${num(y2)}"/>`;
+      const mid = (x1 + x2) / 2;
+      const d = out.pen().M(x1, y1).C(mid, y1, mid, y2, x2, y2);
+      edges.push(() => out.path(d, '', undefined, EDGE));
     }
 
     const pill = !shape && node.children.length > 0;
@@ -269,36 +286,34 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
     // whether its shape was given in the source or is the pill of a node that branches.
     // The root is neutral.
     const tint = ` fill="${color}" fill-opacity="${TINT}" stroke="${color}"`;
-    let inner = '';
-    if (shape) inner = i > 0 ? drawShape(shape, w[i], h[i], tint, ` stroke="${color}"`) : drawShape(shape, w[i], h[i], ' fill="var(--_s)" stroke="var(--_b)"', ' stroke="var(--_b)"');
-    else if (pill) inner = `<rect x="${num(-w[i] / 2)}" y="${num(-h[i] / 2)}" width="${num(w[i])}" height="${num(h[i])}" rx="${num(h[i] / 2)}"${tint}/>`;
+    const stroke = color;
     let shift = 0;
-    if (node.icon && drawn[i]) {
-      shift = (glyph + (label.width > 0 ? ICON_GAP : 0)) / 2;
-      inner += iconSvg(node.icon, -shift - label.width / 2, dy[i] - glyph / 2, glyph, icons);
+    const withIcon = node.icon && drawn[i];
+    if (withIcon) shift = (glyph + (label.width > 0 ? ICON_GAP : 0)) / 2;
+    const place = (): void => {
+      out.group({
+        cls: `pele-node pele-shape-${shape || (pill ? 'branch' : 'text')}${i > 0 ? '' : ' pele-root'}${classNames(node.class ?? '')}`,
+        id: node.nodeId,
+        source: node.source,
+        x: cx,
+        y: top + h[i] / 2,
+      });
+      if (shape) out.fragment(i > 0 ? drawShape(shape, w[i], h[i], tint, ` stroke="${stroke}"`) : drawShape(shape, w[i], h[i], ' fill="var(--_s)" stroke="var(--_b)"', ' stroke="var(--_b)"'));
+      else if (pill) out.rect(-w[i] / 2, -h[i] / 2, w[i], h[i], ` rx="${num(h[i] / 2)}"${tint}`);
+      if (withIcon) out.fragment(iconSvg(node.icon!, -shift - label.width / 2, dy[i] - glyph / 2, glyph, icons));
+      if (down && !shape) leftLabel(out, label, shift - label.width / 2, dy[i], icons);
+      else out.label(label, shift, dy[i], LABEL, icons);
+      out.end();
+    };
+    if (i > 0) body.push(place);
+    else {
+      flush(nodes[k - 1].section);
+      place();
     }
-    const group =
-      `<g class="pele-node pele-shape-${shape || (pill ? 'branch' : 'text')}${i > 0 ? '' : ' pele-root'}${classNames(node.class ?? '')}" data-id="${escText(
-        node.nodeId
-      )}"${srcAttrs(node.source)} transform="translate(${num(cx)},${num(top + h[i] / 2)})">` +
-      inner +
-      (down && !shape ? leftLabel(label, shift - label.width / 2, dy[i], icons) : labelSvg(label, shift, dy[i], ' class="pele-label"', icons)) +
-      '</g>';
-    if (i > 0) body += group;
-    else tree += group;
   }
 
-  const title = titleLabel(model.title, measurer, size, titleRoom(options));
-  const titleHeight = title.height > 0 ? title.height + 16 : 0;
-  const width = Math.max(maxX - minX, title.width);
-  const totalWidth = Math.ceil(width + 2 * pad);
-  const totalHeight = Math.ceil(maxY - minY + titleHeight + 2 * pad);
-  const content =
-    labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g transform="translate(${num(pad - minX + (width - maxX + minX) / 2)},${num(pad + titleHeight - minY)})">${tree}</g>`;
-
   return {
-    svg: documentOf(out, 'mindmap', totalWidth, totalHeight, size, options, {}, content),
+    svg: out.done('mindmap', totalWidth, totalHeight, size, options, {}),
     width: totalWidth,
     height: totalHeight,
     links: [],
