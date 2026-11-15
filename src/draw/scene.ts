@@ -14,7 +14,7 @@ import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import type { SourceInfo } from '../types.js';
-import type { Group, Out } from './out.js';
+import type { Attrs, Group, Item, Out, Pen } from './out.js';
 
 export const SCENE_VERSION = 2;
 
@@ -152,6 +152,48 @@ const weight = (v: string | undefined, fallback: number): number => {
 };
 
 const NO_LOOK: Look = {};
+const NO_FILL: Look = { fill: 'none' };
+
+// A Paint keeps what it was read as, so it is read once however often it is drawn.
+const lookAt = (a: Attrs): Look => (typeof a === 'string' ? parseLook(a) : ((a.look as Look | undefined) ?? (a.look = parseLook(a.attrs)) as Look));
+
+class ScenePen implements Pen {
+  cmds: Path = [];
+  private x = 0;
+  private y = 0;
+  M(x: number, y: number): this {
+    this.cmds.push(M, (this.x = x), (this.y = y));
+    return this;
+  }
+  L(x: number, y: number): this {
+    this.cmds.push(L, (this.x = x), (this.y = y));
+    return this;
+  }
+  H(x: number): this {
+    this.cmds.push(L, (this.x = x), this.y);
+    return this;
+  }
+  V(y: number): this {
+    this.cmds.push(L, this.x, (this.y = y));
+    return this;
+  }
+  C(x1: number, y1: number, x2: number, y2: number, x: number, y: number): this {
+    this.cmds.push(C, x1, y1, x2, y2, (this.x = x), (this.y = y));
+    return this;
+  }
+  Q(x1: number, y1: number, x: number, y: number): this {
+    this.cmds.push(Q, x1, y1, (this.x = x), (this.y = y));
+    return this;
+  }
+  A(rx: number, ry: number, rotation: number, large: 0 | 1, sweep: 0 | 1, x: number, y: number): this {
+    this.cmds.push(A, Math.abs(rx), Math.abs(ry), rotation, large, sweep, (this.x = x), (this.y = y));
+    return this;
+  }
+  Z(): this {
+    this.cmds.push(Z);
+    return this;
+  }
+}
 const merges = new WeakMap<Look, WeakMap<Look, Look>>();
 
 // `own` over `base`. Looks are never changed once made, so a merge is kept for the next drawing.
@@ -699,11 +741,48 @@ export class SceneOut implements Out {
     this.touch(box);
   }
 
-  rect(x: number, y: number, w: number, h: number, attrs = ''): void {
-    if (!(w > 0 && h > 0)) return;
-    const look = parseLook(attrs);
+  // A shape, in an item of its own when it is a part, as a reader of its SVG would see it.
+  private part(cmds: Path, look: Look, item: Item | undefined, tag: string): void {
+    if (item === undefined || item.id === undefined) return this.shape(cmds, look);
+    this.open(item.id, item.cls ?? tag, 0, 0, null, item.source);
+    this.shape(cmds, look);
+    this.end();
+  }
+
+  rect(x: number, y: number, w: number, h: number, attrs: Attrs = '', item?: Item): void {
+    const look = lookAt(attrs);
     const rx = len(look.rx, 0);
-    this.shape(roundRect(x, y, w, h, rx, rx), look);
+    if (w > 0 && h > 0) this.part(roundRect(x, y, w, h, rx, rx), look, item, 'rect');
+    else if (item?.id !== undefined) this.part([], look, item, 'rect');
+  }
+
+  circle(cx: number, cy: number, r: number, attrs: Attrs, item?: Item): void {
+    this.part(r > 0 ? ellipse(cx, cy, r, r) : [], lookAt(attrs), item, 'circle');
+  }
+
+  ellipse(cx: number, cy: number, rx: number, ry: number, attrs: Attrs, item?: Item): void {
+    this.part(rx > 0 && ry > 0 ? ellipse(cx, cy, rx, ry) : [], lookAt(attrs), item, 'ellipse');
+  }
+
+  line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
+    // A line has no inside, whatever fill it inherits.
+    this.part([M, x1, y1, L, x2, y2], merge(lookAt(attrs), NO_FILL), item, 'line');
+  }
+
+  polygon(list: number[], attrs: Attrs, item?: Item): void {
+    this.part(points(list, true), lookAt(attrs), item, 'polygon');
+  }
+
+  at(x: number, y: number, draw: (x: number, y: number) => string): void {
+    const svg = draw(0, 0);
+    if (!svg) return;
+    this.open(undefined, '', x, y, null);
+    this.fragment(svg);
+    this.end();
+  }
+
+  pen(): Pen {
+    return new ScenePen();
   }
 
   // A small SVG fragment: a shape's outline, an arrowhead.
@@ -733,11 +812,11 @@ export class SceneOut implements Out {
   }
 
   // A measured label centered on (cx, cy), placed as labelSvg places it.
-  label(label: Label, cx: number, cy: number, attrs = ''): void {
+  label(label: Label, cx: number, cy: number, attrs: Attrs = ''): void {
     const lines = label.lines;
     if (lines.length === 0) return;
     const f = this.top;
-    const look = merge(f.look, parseLook(attrs));
+    const look = merge(f.look, lookAt(attrs));
     const base = {
       size: label.size,
       weight: weight(look['font-weight'], 400),
@@ -874,13 +953,13 @@ export class SceneOut implements Out {
 
   tooltip(): void {}
 
-  text(x: number, y: number, text: string, attrs: string, after = ''): void {
-    const look = merge(this.top.look, parseLook(after ? attrs + after : attrs));
+  text(x: number, y: number, text: string, attrs: Attrs, after = ''): void {
+    const look = merge(this.top.look, after ? parseLook((typeof attrs === 'string' ? attrs : attrs.attrs) + after) : lookAt(attrs));
     this.put(x, y, [{ text }], textBase(look, len(look['font-size'], 16)), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
   }
 
-  path(d: string, attrs = '', tokens?: number[]): void {
-    this.shape(tokens ? tokensToCmds(tokens) : parsePathData(d), parseLook(attrs));
+  path(d: string | Pen, attrs: Attrs = '', tokens?: number[], item?: Item): void {
+    this.part(typeof d !== 'string' ? (d as ScenePen).cmds : tokens ? tokensToCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
   }
 
   raw(): void {}

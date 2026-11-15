@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Out } from '../../src/draw/out.js';
+import { Paint, type Out } from '../../src/draw/out.js';
 import { SceneOut } from '../../src/draw/scene.js';
 import { SvgOut } from '../../src/draw/svg.js';
 import { layoutLabel } from '../../src/text/label.js';
@@ -64,6 +64,25 @@ describe('drawing outputs', () => {
     expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
     expect(scene.items.map((i) => i.id)).toEqual(['x']);
     expect(scene.skipped).toEqual({ transform: 1 });
+  });
+
+  it('draw shapes, path data and paints as numbers', () => {
+    const edge = new Paint(' fill="none" stroke="var(--_l)" stroke-width="2"');
+    const { svg, scene } = both((out) => {
+      out.group({ cls: 'pele-node', id: 'n', x: 10, y: 5 });
+      out.circle(0, 0, 4, edge);
+      out.circle(9, 9, 3, ' fill="var(--_c)"');
+      out.ellipse(20, 10, 6, 3, ' fill="var(--_s)"');
+      out.line(0, 0, 30, 0, edge);
+      out.polygon([0, 0, 10, 0, 5, 8], ' fill="var(--_b)"');
+      out.path(out.pen().M(0, 0).L(1.234, 5).H(9).V(2).C(1, 2, 3, 4, 5, 6).Q(7, 8, 9, 10).A(4, 4, 0, 0, 1, 12, 12).Z(), edge);
+      out.text(3, 4, 'a<b', edge, ' text-anchor="end"');
+      out.end();
+    });
+    expect(svg).toContain('<path d="M0,0L1.23,5H9V2C1,2 3,4 5,6Q7,8 9,10A4,4 0 0 1 12,12Z" fill="none" stroke="var(--_l)" stroke-width="2"/>');
+    expect(svg).toContain('<polygon points="0,0 10,0 5,8" fill="var(--_b)"/>');
+    expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
+    expect(scene.shapes.length).toBe(6);
   });
 
   it('keep each attempt apart and take the one adopted', () => {
