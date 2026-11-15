@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { getType } from '../common/outline.js';
 
 export interface MindmapNode {
@@ -13,6 +14,8 @@ export interface MindmapNode {
   section?: number;
   class?: string;
   icon?: string;
+  // Where the node is written; its children are on lines of their own (see SourceInfo).
+  source?: SourceInfo;
 }
 
 export interface MindmapModel {
@@ -29,6 +32,8 @@ export class MindmapDb implements MindmapModel {
   title: string | undefined;
   nodes: MindmapNode[] = [];
   getType = getType;
+  // Where the node added next is written, which the parser says before it adds it.
+  written: SourceInfo | undefined;
 
   private baseLevel = 0;
   // The chain of nodes that can still take children, with strictly increasing levels.
@@ -50,6 +55,7 @@ export class MindmapDb implements MindmapModel {
       });
     }
     const node: MindmapNode = { id: this.nodes.length, nodeId: id, level, descr, type, children: [], isRoot };
+    if (this.written) node.source = this.written;
     if (parent) {
       node.section = parent.isRoot ? parent.children.length % SECTIONS : parent.section;
       parent.children.push(node);
