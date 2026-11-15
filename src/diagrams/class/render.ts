@@ -1,13 +1,13 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
 import { wrapComponents } from '../../layout/components.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
 import { edgeLabelSvg, routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
 import { endSide } from '../../svg/shapes.js';
-import { withTitle } from '../../svg/title.js';
+import { titleLabel, withTitle } from '../../svg/title.js';
 import { FONT_MONO, ROUNDED, classNames, resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { hasMath, layoutLabel, type Label } from '../../text/label.js';
@@ -19,6 +19,7 @@ import type { ClassDb } from './db.js';
 import { buildClassGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { classMarker, classMarkerTrim } from './markers.js';
 import { parseGenericTypes } from '../common/generics.js';
+import { Z, L, M, activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
 import type { ClassMember } from './members.js';
 import type { ClassNode } from './types.js';
 
@@ -35,6 +36,8 @@ const MIN_WIDTH = 64;
 const FOLD = 8;
 const LINE = 'var(--_l)';
 const TARGETS = new Set(['_self', '_blank', '_parent', '_top']);
+// Paint layers of a class scene, bottom to top, as the SVG stacks its groups.
+const SCENE_ORDER = ['title', 'clusters', 'edges', 'cluster-titles', 'labels', 'cardinalities', 'nodes'];
 
 function numberOption(config: Config, key: string, fallback: number): number {
   const value = config[key];
@@ -91,6 +94,7 @@ export function renderClass(db: ClassDb, config: Config, options: RenderOptions)
 // that keeps a namespace's name clear of an edge coming in beside it.
 function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boolean, tight: boolean): Rendered {
   const conf = (config.class ?? {}) as Config;
+  const srcAttrs = sourceAttrsFor(options);
   const graph = buildClassGraph(db, conf.hierarchicalNamespaces !== false);
   const hideEmpty = conf.hideEmptyMembersBox === true;
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('members');
@@ -494,6 +498,29 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
     for (const e of cedges) markCrossings(crossings, e.route);
   }
 
+  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text. The
+  // title is drawn first and the rest of the picture is moved down below it, as withTitle does.
+  const sink = activeSink();
+  let titled: ReturnType<typeof withTitle> | undefined;
+  let shiftX = 0;
+  let shiftY = 0;
+  if (sink) {
+    sink.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
+    sink.section('title');
+    titled = withTitle(db.title, measurer, size, pad, width, height, '');
+    const heading = titleLabel(db.title, measurer, size, 4000);
+    if (heading.height > 0) {
+      shiftX = (titled.width - width) / 2;
+      shiftY = heading.height + 12;
+    }
+  }
+  // Switches to a layer of the picture below the title.
+  const layer = (name: string, attrs = ''): void => {
+    if (!sink) return;
+    sink.section(name, attrs);
+    if (shiftX !== 0 || shiftY !== 0) sink.begin(undefined, '', shiftX, shiftY);
+  };
+
   let clusters = '';
   let struckTitles = '';
   let nodesOut = '';
@@ -511,29 +538,64 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       const titleY = y - h / 2 + 8 + view.label.height / 2;
       const titleAttrs = ' class="pele-cluster-label" fill="var(--_m)"';
       const struck = c.isGroup && titleCrossed(c, view.label.width, titleX, crossings);
+      if (sink) {
+        if (struck) {
+          sink.into('cluster-titles', '', () => {
+            if (shiftX !== 0 || shiftY !== 0) sink.begin(undefined, '', shiftX, shiftY);
+            sink.begin(node.id, 'pele-cluster-title');
+            sink.fragment(struckTitle(view.label, titleX + ox, titleY, titleAttrs, id, graph.nodes, i));
+            sink.end();
+          });
+        }
+        layer('clusters');
+        sink.begin(node.id, 'pele-cluster pele-namespace', 0, 0, '', node.written);
+        sink.rect(x - w / 2, y - h / 2, w, h, ` fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}`);
+        if (!struck) labelSvg(view.label, titleX + ox, titleY, titleAttrs);
+        sink.end();
+        continue;
+      }
       if (struck) struckTitles += struckTitle(view.label, titleX + ox, titleY, titleAttrs, id, graph.nodes, i);
       clusters +=
-        `<g class="pele-cluster pele-namespace" data-id="${id}">` +
+        `<g class="pele-cluster pele-namespace" data-id="${id}"${srcAttrs(node.written)}>` +
         `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}/>` +
         (struck ? '' : labelSvg(view.label, titleX + ox, titleY, titleAttrs)) +
         '</g>';
       continue;
     }
     const at = ` transform="translate(${num(x)},${num(y)})"`;
+    if (sink) {
+      layer('nodes');
+      const cls = node.classNode;
+      const kind = cls ? `pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}` : `pele-node pele-${node.shape === 'note' ? 'note' : 'interface'}`;
+      sink.begin(node.id, kind, x, y, '', cls ? cls.source : node.written);
+      if (cls) classSvg(view, cls, id, at);
+      else {
+        if (node.shape === 'note') {
+          const r = w / 2;
+          const t = -h / 2;
+          const edge = ' stroke="var(--_b)" stroke-linejoin="round"';
+          sink.shape([M, -r, t, L, r - FOLD, t, L, r, t + FOLD, L, r, -t, L, -r, -t, Z], parseLook(` fill="var(--_a)"${edge}`));
+          sink.shape([M, r - FOLD, t, L, r - FOLD, t + FOLD, L, r, t + FOLD], parseLook(` fill="none"${edge}`));
+        }
+        labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons);
+      }
+      sink.end();
+      continue;
+    }
     if (node.classNode) {
       nodesOut += classSvg(view, node.classNode, id, at);
     } else if (node.shape === 'note') {
       const r = w / 2;
       const t = -h / 2;
       nodesOut +=
-        `<g class="pele-node pele-note" data-id="${id}"${at}>` +
+        `<g class="pele-node pele-note" data-id="${id}"${srcAttrs(node.written)}${at}>` +
         `<path d="M${num(-r)},${num(t)}H${num(r - FOLD)}L${num(r)},${num(t + FOLD)}V${num(-t)}H${num(-r)}Z" fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"/>` +
         `<path d="M${num(r - FOLD)},${num(t)}V${num(t + FOLD)}H${num(r)}" fill="none" stroke="var(--_b)" stroke-linejoin="round"/>` +
         labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons) +
         '</g>';
     } else {
       nodesOut +=
-        `<g class="pele-node pele-interface" data-id="${id}"${at}>` +
+        `<g class="pele-node pele-interface" data-id="${id}"${srcAttrs(node.written)}${at}>` +
         labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons) +
         '</g>';
     }
@@ -545,18 +607,23 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
     const top = -h / 2;
     const memberSize = Math.round(view.fontSize * 0.875);
     const lineHeight = Math.round(memberSize * 1.5);
-    let body = `<rect x="${num(left)}" y="${num(top)}" width="${num(w)}" height="${num(h)}" fill="var(--_s)" stroke="var(--_b)"${rounded(style.shape)}/>`;
+    const shapeAttrs = ` fill="var(--_s)" stroke="var(--_b)"${rounded(style.shape)}`;
+    let body = '';
+    if (sink) sink.rect(left, top, w, h, shapeAttrs);
+    else body = `<rect x="${num(left)}" y="${num(top)}" width="${num(w)}" height="${num(h)}"${shapeAttrs}/>`;
     const ink = inkFill(style);
     const first = top + view.titleH;
     const second = first + view.attributesH;
     if (h > view.titleH) {
       const stroke = style.stroke ? ` style="stroke:${esc(style.stroke)}"` : '';
-      body += `<path class="pele-divider" d="M${num(left)},${num(first)}H${num(-left)}M${num(left)},${num(second)}H${num(-left)}" fill="none" stroke="var(--_b)"${stroke}/>`;
+      if (sink) sink.shape([M, left, first, L, -left, first, M, left, second, L, -left, second], parseLook(` fill="none" stroke="var(--_b)"${stroke}`));
+      else body += `<path class="pele-divider" d="M${num(left)},${num(first)}H${num(-left)}M${num(left)},${num(second)}H${num(-left)}" fill="none" stroke="var(--_b)"${stroke}/>`;
     }
     let y = top + TITLE_PAD;
     for (const annotation of view.annotations) {
       if (typeof annotation === 'string') {
-        body += `<text class="pele-annotation" x="0" y="${num(y + tinyHeight / 2 + tiny * 0.35)}" text-anchor="middle" font-size="${tiny}"${ink || ' fill="var(--_m)"'}>${esc(annotation)}</text>`;
+        if (sink) sink.textAt(0, y + tinyHeight / 2 + tiny * 0.35, annotation, ` font-size="${tiny}"${ink || ' fill="var(--_m)"'}`, 'middle');
+        else body += `<text class="pele-annotation" x="0" y="${num(y + tinyHeight / 2 + tiny * 0.35)}" text-anchor="middle" font-size="${tiny}"${ink || ' fill="var(--_m)"'}>${esc(annotation)}</text>`;
         y += tinyHeight;
       } else {
         const h = Math.max(tinyHeight, annotation.height);
@@ -570,6 +637,12 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       let out = '';
       let baseline = from + SECTION_PAD + lineHeight / 2 + memberSize * 0.35;
       for (const line of list) {
+        if (sink) {
+          const look = line.classifier === '*' ? ` font-style="italic"${style.text}` : style.text;
+          sink.textAt(left + PAD_X, baseline, line.text, look, 'start');
+          baseline += lineHeight;
+          continue;
+        }
         const mark =
           line.classifier === '$'
             ? ` pele-static"${style.text ? style.text.slice(0, -1) + 'text-decoration:underline"' : ' style="text-decoration:underline"'}`
@@ -581,12 +654,17 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       }
       return out;
     };
-    if (view.attributes.length > 0 || view.methods.length > 0) {
+    if (sink && (view.attributes.length > 0 || view.methods.length > 0)) {
+      sink.begin(undefined, '', 0, 0, ` font-size="${memberSize}"${ink}`);
+      lines(view.attributes, 'attribute', first);
+      lines(view.methods, 'method', second);
+      sink.end();
+    } else if (view.attributes.length > 0 || view.methods.length > 0) {
       body += `<g class="pele-members" font-size="${memberSize}"${ink}${mono(style) ? ` font-family="${FONT_MONO}"` : ''}>${lines(view.attributes, 'attribute', first)}${lines(view.methods, 'method', second)}</g>`;
     }
     if (cls.tooltip) body = `<title>${escText(cls.tooltip)}</title>` + body;
     if (cls.link) body = linked(body, cls.link, cls.id, links, options, cls.linkTarget && TARGETS.has(cls.linkTarget) ? ` target="${cls.linkTarget}"` : '');
-    return `<g class="pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}" data-id="${id}"${at}>${body}</g>`;
+    return `<g class="pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}" data-id="${id}"${srcAttrs(cls.source)}${at}>${body}</g>`;
   }
 
   let edgesOut = '';
@@ -630,8 +708,15 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       path = routePath(route, undefined, startTrim, endTrim);
     }
     const attrs = edge.pattern === 'dashed' ? ' stroke-dasharray="6 4"' : edge.pattern === 'dotted' ? ' stroke-dasharray="2 4"' : '';
+    if (sink) {
+      layer('edges', ` fill="none" stroke="${LINE}"`);
+      sink.begin(edge.id, `pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}`, 0, 0, '', edge.written);
+      sink.shape(path.tokens ? tokensToCmds(path.tokens) : parsePathData(path.d), parseLook(attrs));
+      sink.fragment(classMarker(startType, path.sx, path.sy, path.sdx, path.sdy, LINE) + classMarker(endType, path.ex, path.ey, path.edx, path.edy, LINE));
+      sink.end();
+    } else
     edgesOut +=
-      `<g class="pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}" data-id="${escText(edge.id)}">` +
+      `<g class="pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
       `<path d="${path.d}"${attrs}/>` +
       classMarker(startType, path.sx, path.sy, path.sdx, path.sdy, LINE) +
       classMarker(endType, path.ex, path.ey, path.edx, path.edy, LINE) +
@@ -639,18 +724,33 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
     if (label.width > 0) {
       const x = ce.labelX + ox;
       const y = ce.labelY + oy;
-      labelsOut += edgeLabelSvg(edge.id, label, x, y, '', options.icons);
+      if (sink) {
+        // As edgeLabelSvg: the label on a patch of the page color.
+        layer('labels', ` font-size="${small}"`);
+        sink.begin(edge.id, 'pele-edge-label');
+        sink.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+        labelSvg(label, x, y, '', options.icons);
+        sink.end();
+      } else labelsOut += edgeLabelSvg(edge.id, label, x, y, '', options.icons);
     }
   }
 
   let cardsOut = '';
+  if (sink) layer('cardinalities', ` font-size="${tiny}" fill="var(--_m)"`);
   for (const item of cards) {
+    if (sink) {
+      if (item.math) labelSvg(item.math, item.x + ox, item.y + oy, ' class="pele-cardinality"', options.icons);
+      else sink.textAt(item.x + ox, item.y + oy + tiny * 0.35, item.text, '', 'middle');
+      continue;
+    }
     cardsOut += item.math
       ? labelSvg(item.math, item.x + ox, item.y + oy, ' class="pele-cardinality"', options.icons)
       : `<text class="pele-cardinality" x="${num(item.x + ox)}" y="${num(item.y + oy + tiny * 0.35)}" text-anchor="middle">${esc(item.text)}</text>`;
   }
 
-  const titled = withTitle(
+  if (sink && titled) return { svg: '', width: titled.width, height: titled.height, links, scene: sink.finish(SCENE_ORDER, titled.width, titled.height) };
+
+  const framed = withTitle(
     db.title,
     measurer,
     size,
@@ -664,8 +764,8 @@ function draw(db: ClassDb, config: Config, options: RenderOptions, turned: boole
       (cardsOut ? `<g class="pele-cardinalities" font-size="${tiny}" fill="var(--_m)">${cardsOut}</g>` : '') +
       `<g class="pele-nodes">${nodesOut}</g>`
   );
-  const svg = svgDocument('class', titled.width, titled.height, size, options, db, titled.content);
+  const svg = svgDocument('class', framed.width, framed.height, size, options, db, framed.content);
 
-  return { svg, width: titled.width, height: titled.height, links };
+  return { svg, width: framed.width, height: framed.height, links };
 }
 

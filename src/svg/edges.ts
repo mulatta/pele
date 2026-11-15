@@ -1,4 +1,5 @@
 import { ease } from '../layout/layered.js';
+import { Z, L, M, activeSink, circleCmds, type SceneSink } from '../scene/sink.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver } from '../types.js';
 import { escText, labelSvg, num } from './builder.js';
@@ -137,11 +138,13 @@ export function routePath(
     last++;
   }
 
-  // Keep tokens to avoid parsing d when checking fills.
+  // Keep tokens to avoid parsing d when checking fills. A scene takes the tokens alone, so the
+  // path data is not written while one is drawn.
   const tokens: number[] = [];
+  const text = activeSink() === null;
   const tok = (v: number): string => {
     tokens.push(written(v));
-    return num(v);
+    return text ? num(v) : '';
   };
   tokens.push(77, 2);
   let d = `M${tok(xs[0])},${tok(ys[0])}`;
@@ -200,21 +203,23 @@ export function markerTrim(type: string): number {
   return type === 'arrow_point' ? ARROW - 1 : type === 'arrow_circle' ? ARROW : type === 'arrow_cross' ? 4 : 0;
 }
 
-// Draws a marker whose tip is at (x, y), pointing along (dx, dy).
-export function marker(type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): string {
+// A marker's geometry, its tip at (x, y) pointing along (dx, dy): a filled triangle, a circle, or
+// a stroked cross.
+type MarkerShape =
+  | { kind: 'point'; x: number; y: number; ax: number; ay: number; bx: number; by: number }
+  | { kind: 'circle'; cx: number; cy: number; r: number }
+  | { kind: 'cross'; x0: number; y0: number; x1: number; y1: number; x2: number; y2: number; x3: number; y3: number };
+
+function markerShape(type: string, x: number, y: number, dx: number, dy: number): MarkerShape | undefined {
   const nx = -dy;
   const ny = dx;
   if (type === 'arrow_point') {
     const bx = x - dx * ARROW;
     const by = y - dy * ARROW;
     const half = ARROW * 0.42;
-    return `<path class="pele-marker" d="M${num(x)},${num(y)}L${num(bx + nx * half)},${num(by + ny * half)}L${num(
-      bx - nx * half
-    )},${num(by - ny * half)}Z" fill="${color}" stroke="${stroke}"/>`;
+    return { kind: 'point', x, y, ax: bx + nx * half, ay: by + ny * half, bx: bx - nx * half, by: by - ny * half };
   }
-  if (type === 'arrow_circle') {
-    return `<circle class="pele-marker" cx="${num(x - dx * 4)}" cy="${num(y - dy * 4)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
-  }
+  if (type === 'arrow_circle') return { kind: 'circle', cx: x - dx * 4, cy: y - dy * 4, r: 3.5 };
   if (type === 'arrow_cross') {
     const cx = x - dx * 4;
     const cy = y - dy * 4;
@@ -223,11 +228,36 @@ export function marker(type: string, x: number, y: number, dx: number, dy: numbe
     const uy = (dy + ny) * a;
     const vx = (dx - nx) * a;
     const vy = (dy - ny) * a;
-    return `<path class="pele-marker" d="M${num(cx - ux)},${num(cy - uy)}L${num(cx + ux)},${num(cy + uy)}M${num(
-      cx - vx
-    )},${num(cy - vy)}L${num(cx + vx)},${num(cy + vy)}"/>`;
+    return { kind: 'cross', x0: cx - ux, y0: cy - uy, x1: cx + ux, y1: cy + uy, x2: cx - vx, y2: cy - vy, x3: cx + vx, y3: cy + vy };
   }
-  return '';
+  return undefined;
+}
+
+// Draws a marker whose tip is at (x, y), pointing along (dx, dy).
+export function marker(type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): string {
+  const m = markerShape(type, x, y, dx, dy);
+  if (!m) return '';
+  if (m.kind === 'point') {
+    return `<path class="pele-marker" d="M${num(m.x)},${num(m.y)}L${num(m.ax)},${num(m.ay)}L${num(m.bx)},${num(m.by)}Z" fill="${color}" stroke="${stroke}"/>`;
+  }
+  if (m.kind === 'circle') {
+    return `<circle class="pele-marker" cx="${num(m.cx)}" cy="${num(m.cy)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
+  }
+  return `<path class="pele-marker" d="M${num(m.x0)},${num(m.y0)}L${num(m.x1)},${num(m.y1)}M${num(m.x2)},${num(m.y2)}L${num(m.x3)},${num(m.y3)}"/>`;
+}
+
+// The same marker, straight into a scene.
+export function sceneMarker(sink: SceneSink, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): void {
+  const m = markerShape(type, x, y, dx, dy);
+  if (!m) return;
+  if (m.kind === 'point') {
+    sink.shape([M, m.x, m.y, L, m.ax, m.ay, L, m.bx, m.by, Z], { fill: color, stroke });
+  } else if (m.kind === 'circle') {
+    sink.shape(circleCmds(m.cx, m.cy, m.r), { fill: color, stroke });
+  } else {
+    // A cross is only a stroke, in the edge's color.
+    sink.shape([M, m.x0, m.y0, L, m.x1, m.y1, M, m.x2, m.y2, L, m.x3, m.y3], { fill: 'none' });
+  }
 }
 
 const TENS = Array.from({ length: 23 }, (_, i) => Number(`1e${i}`));
@@ -457,11 +487,11 @@ export function overFills(d: string, tips: number[], fills: Fill[], line = '', t
 
 const CASE = 4;
 
-// A wider page-colored stroke under an edge, as faint as it; markers drop their class so marker styles skip it.
-export function casing(d: string, markers: string, line = '', thick = false): string {
+// The attributes of a casing's group: '' for none, undefined when the edge has no casing.
+export function casingAttrs(line = '', thick = false): string | undefined {
   const decl = (prop: string): string | undefined => (line.includes(prop) ? new RegExp(`[";]${prop}:([^;"]+);`).exec(line)?.[1].trim() : undefined);
   const stroke = decl('stroke');
-  if (stroke === 'none' || stroke === 'transparent') return '';
+  if (stroke === 'none' || stroke === 'transparent') return undefined;
   const width = thick ? '2.5' : decl('stroke-width');
   let attrs = '';
   let style = '';
@@ -474,8 +504,15 @@ export function casing(d: string, markers: string, line = '', thick = false): st
     const value = decl(prop);
     if (value !== undefined) style += `${prop}:${value};`;
   }
+  return attrs + (style ? ` style="${style}"` : '');
+}
+
+// A wider page-colored stroke under an edge, as faint as it; markers drop their class so marker styles skip it.
+export function casing(d: string, markers: string, line = '', thick = false): string {
+  const attrs = casingAttrs(line, thick);
+  if (attrs === undefined) return '';
   const body = `<path d="${d}"/>` + markers.replace(/ class="pele-marker"/g, '');
-  return attrs || style ? `<g${attrs}${style ? ` style="${style}"` : ''}>${body}</g>` : body;
+  return attrs ? `<g${attrs}>${body}</g>` : body;
 }
 
 export function edgeCasing(path: EdgePath, startType: string, endType: string, line = '', thick = false): string {

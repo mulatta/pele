@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { JourneyDb } from './db.js';
 import { T, TOKEN_NAMES, tokenize } from './lexer.js';
 
@@ -11,6 +11,12 @@ export function parseJourney(src: string, db: JourneyDb): void {
   const fail = (i: number, expected: string): never => {
     const got = types[i] === T.END ? '1' : TOKEN_NAMES[types[i]];
     throw syntaxError('journey', src, starts[i], `Expecting ${expected}, got '${got}'`);
+  };
+
+  // Where tokens `first` to `last` are written. A bare `section` takes its name from the next line.
+  const lines = (first: number, last: number): void => {
+    db.line = sourceLine(src, starts[first]);
+    db.end = sourceLine(src, starts[last] + texts[last].length - 1);
   };
 
   if (types[0] !== T.journey) fail(0, "'journey'");
@@ -33,10 +39,12 @@ export function parseJourney(src: string, db: JourneyDb): void {
         db.setAccDescription(text.trim());
         break;
       case T.section:
+        lines(i, i);
         db.addSection(text.substring(8));
         break;
       case T.taskName:
         if (types[++i] !== T.taskData) fail(i, "'taskData'");
+        lines(i - 1, i);
         db.addTask(text, texts[i]);
         break;
       case T.EOF:

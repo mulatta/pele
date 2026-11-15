@@ -57,7 +57,7 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
 
   for (const anchor of ast.anchors) {
     const at = toCoordinates(anchor.visibility, anchor.evolution, `Anchor "${anchor.name}"`);
-    db.addNode({ id: anchor.name, label: anchor.name, x: at.x, y: at.y, className: 'anchor' });
+    db.addNode({ id: anchor.name, label: anchor.name, x: at.x, y: at.y, className: 'anchor' }, anchor.$source);
   }
 
   for (const component of ast.components) {
@@ -73,7 +73,7 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
       labelOffsetY,
       inertia: component.inertia,
       sourceStrategy: component.decorator?.strategy as SourceStrategy | undefined,
-    });
+    }, component.$source);
   }
 
   for (const note of ast.notes) {
@@ -89,7 +89,7 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
       });
     }
     const y = parent.y;
-    db.startPipeline(pipeline.parent);
+    db.startPipeline(pipeline.parent, pipeline.$source);
     for (const component of pipeline.components) {
       const id = `${pipeline.parent}_${component.name}`;
       const [labelOffsetX, labelOffsetY] = offsets(component.label);
@@ -104,7 +104,7 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
         labelOffsetY,
         inertia: undefined,
         sourceStrategy: undefined,
-      });
+      }, component.$source);
       db.addPipelineComponent(pipeline.parent, id);
     }
   }
@@ -119,13 +119,14 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
       dashed,
       label: fromArrow.label ?? link.linkLabel,
       flow,
-    });
+    }, link.$source);
   }
 
   for (const evolve of ast.evolves) {
     const node = db.getNode(evolve.component);
     if (node?.y !== undefined) {
-      db.addTrend({ nodeId: evolve.component, targetX: toPercent(evolve.target, `Evolve target for "${evolve.component}"`), targetY: node.y });
+      const targetX = toPercent(evolve.target, `Evolve target for "${evolve.component}"`);
+      db.addTrend({ nodeId: evolve.component, targetX, targetY: node.y }, evolve.$source);
     }
   }
 
@@ -136,17 +137,17 @@ export function populate(ast: WardleyAst, db: WardleyBuilder): void {
 
   for (const annotation of ast.annotation) {
     const at = toCoordinates(annotation.x, annotation.y, `Annotation ${annotation.number}`);
-    db.addAnnotation({ number: annotation.number, coordinates: [{ x: at.x, y: at.y }], text: annotation.text });
+    db.addAnnotation({ number: annotation.number, coordinates: [{ x: at.x, y: at.y }], text: annotation.text }, annotation.$source);
   }
 
   for (const accelerator of ast.accelerators) {
     const at = toCoordinates(accelerator.x, accelerator.y, `Accelerator "${accelerator.name}"`);
-    db.addAccelerator({ name: accelerator.name, x: at.x, y: at.y });
+    db.addAccelerator({ name: accelerator.name, x: at.x, y: at.y }, accelerator.$source);
   }
 
   for (const deaccelerator of ast.deaccelerators) {
     const at = toCoordinates(deaccelerator.x, deaccelerator.y, `Deaccelerator "${deaccelerator.name}"`);
-    db.addDeaccelerator({ name: deaccelerator.name, x: at.x, y: at.y });
+    db.addDeaccelerator({ name: deaccelerator.name, x: at.x, y: at.y }, deaccelerator.$source);
   }
 }
 

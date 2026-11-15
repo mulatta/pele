@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -146,6 +148,7 @@ export interface AxisAst {
   $type: 'Axis';
   name: string;
   label?: string;
+  source?: SourceInfo;
 }
 
 export interface EntryAst {
@@ -160,6 +163,7 @@ export interface CurveAst {
   name: string;
   label?: string;
   entries: EntryAst[];
+  source?: SourceInfo;
 }
 
 export interface OptionAst {
@@ -184,9 +188,21 @@ export function lexRadar(src: string): Tokens {
   return tokenize(src, RADAR_TOKENS, 'radar');
 }
 
-export function parseRadar(src: string): RadarAst {
+// With `lines`, each axis and curve records where it is written (see sourceLine). The tests that
+// compare the tree with Langium's parse without.
+export function parseRadar(src: string, lines = false): RadarAst {
   const r = new Reader(lexRadar(src), RADAR_TOKENS, 'radar');
   const ast: RadarAst = { $type: 'Radar', axes: [], curves: [], options: [] };
+  const { starts, ends } = r.tokens;
+
+  // Where an axis or a curve is written: from its name, which is how entries and the legend refer
+  // to it, to its last token read, as a curve's values may run over several lines.
+  const written = (first: number, symbol: string): SourceInfo | undefined => {
+    const line = lines ? sourceLine(src, starts[first]) : undefined;
+    if (line === undefined) return undefined;
+    const end = sourceLine(src, ends[r.i - 1] - 1) ?? line;
+    return end > line ? { line, end, symbol } : { line, symbol };
+  };
 
   const newlines = (): void => {
     while (r.kind === T.newline) r.i++;
@@ -213,6 +229,7 @@ export function parseRadar(src: string): RadarAst {
   };
 
   const curve = (): CurveAst => {
+    const first = r.i;
     const name = r.expect(T.id);
     const text = label();
     const node: CurveAst = { $type: 'Curve', name, entries: [] };
@@ -228,13 +245,18 @@ export function parseRadar(src: string): RadarAst {
     }
     newlines();
     r.expect(T.closeBrace);
+    const source = written(first, name);
+    if (source) node.source = source;
     return node;
   };
 
   const axis = (): AxisAst => {
+    const first = r.i;
     const node: AxisAst = { $type: 'Axis', name: r.expect(T.id) };
     const text = label();
     if (text !== undefined) node.label = text;
+    const source = written(first, node.name);
+    if (source) node.source = source;
     return node;
   };
 

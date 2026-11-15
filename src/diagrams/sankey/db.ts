@@ -1,12 +1,17 @@
+import type { SourceInfo } from '../../types.js';
+
+// `written`: where it is written, when the parser recorded it (`source` is a link's first node).
 export interface SankeyNode {
   id: string;
   index: number;
+  written?: SourceInfo;
 }
 
 export interface SankeyLink {
   source: SankeyNode;
   target: SankeyNode;
   value: number;
+  written?: SourceInfo;
 }
 
 export interface SankeyModel {

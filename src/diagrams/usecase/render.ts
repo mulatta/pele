@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, type IconResolver } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor, type IconResolver } from '../../svg/builder.js';
 import { markCrossings, type Crossings } from '../../svg/cluster.js';
 import { casing, casingsSvg, edgeInk, edgeLabelSvg, fillUnder, hollowOn, marker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
@@ -206,6 +206,7 @@ export function renderUsecase(model: UsecaseModel, config: Config, options: Rend
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(model: UsecaseModel, config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const graph = buildUsecaseGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -374,7 +375,7 @@ function draw(model: UsecaseModel, config: Config, options: RenderOptions, turne
           `<rect x="${num(x)}" y="${num(y)}" width="${num(c.w)}" height="${num(c.h)}"${rounded(box)}/>` +
           labelSvg(view.label, titleX(c, view.label.width, crossings), y + 8 + view.label.height / 2, titleAttrs, icons);
       }
-      clusters += `<g class="pele-cluster pele-boundary${classes}" data-id="${id}">${body}</g>`;
+      clusters += `<g class="pele-cluster pele-boundary${classes}" data-id="${id}"${srcAttrs(node.written)}>${body}</g>`;
       continue;
     }
 
@@ -448,7 +449,7 @@ function draw(model: UsecaseModel, config: Config, options: RenderOptions, turne
           icons
         );
     }
-    nodesOut += `<g class="pele-node ${kind}${classes}" data-id="${id}" transform="translate(${num(c.x)},${num(c.y)})">${body}</g>`;
+    nodesOut += `<g class="pele-node ${kind}${classes}" data-id="${id}"${srcAttrs(node.written)} transform="translate(${num(c.x)},${num(c.y)})">${body}</g>`;
   }
 
   let casings = '';
@@ -518,7 +519,7 @@ function draw(model: UsecaseModel, config: Config, options: RenderOptions, turne
     const dashes = edge.internal ? '2 3' : edge.pattern === 'dotted' ? '5 4' : edge.animate ? '9 5' : '';
     const marks = mark(startType, path.sx, path.sy, path.sdx, path.sdy, color) + mark(endType, path.ex, path.ey, path.edx, path.edy, color);
     edgesOut +=
-      `<g class="pele-edge pele-${edge.relationshipType}${classNames(edge.classes.replace(/^default relationship relationship-\S+\s?/, ''))}" data-id="${escText(edge.id)}"${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
+      `<g class="pele-edge pele-${edge.relationshipType}${classNames(edge.classes.replace(/^default relationship relationship-\S+\s?/, ''))}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}>` +
       `<path d="${path.d}"${dashes ? ` stroke-dasharray="${dashes}"` : ''}/>` +
       (under && over ? hollowOn(marks, under) : marks) +
       '</g>';

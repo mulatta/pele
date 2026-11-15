@@ -1,9 +1,12 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
 
 // The calls the grammar's actions make, under Mermaid's names.
 export interface GanttBuilder {
+  // The lines of the statement the parser is at: the section or task added next comes from them.
+  line?: number;
+  end?: number;
   setDateFormat(txt: string): void;
   enableInclusiveEndDates(): void;
   TopAxis(): void;
@@ -70,10 +73,17 @@ export function parseGantt(src: string, db: GanttBuilder): void {
     if (STARTS_LINE[types[i]] !== 1) fail(LINE + also);
   };
 
+  // Where tokens `first` to `last` are written. A section's name may be on the line after `section`.
+  const lines = (first: number, last: number): void => {
+    db.line = sourceLine(src, starts[first]);
+    db.end = sourceLine(src, starts[last] + texts[last].length - 1);
+  };
+
   if (types[i] !== T.gantt) fail("'gantt'");
   i++;
 
   while (true) {
+    const first = i;
     const t = types[i];
     const text = texts[i];
     if (STARTS_LINE[t] !== 1) fail(LINE);
@@ -149,12 +159,14 @@ export function parseGantt(src: string, db: GanttBuilder): void {
         break;
       case T.section:
         end();
+        lines(first, first);
         db.addSection(text.slice(8));
         break;
       case T.taskTxt: {
         if (types[i] !== T.taskData) fail("'taskData'");
         const data = texts[i++];
         end();
+        lines(first, first + 1);
         db.addTask(text, data);
         break;
       }

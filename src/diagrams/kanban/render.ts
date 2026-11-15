@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, escText, labelSvg, num, textStyle, type IconResolver } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor, textStyle, type IconResolver } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { CRITICAL, ROUNDED, classNames } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, withHeights, type Label, type Span } from '../../text/label.js';
@@ -119,6 +119,7 @@ interface Card {
 const has = (name: string | undefined): boolean => !!name && iconMarkup(name) !== '';
 
 export function renderKanban(model: KanbanModel, config: Config, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const line = Math.round(size * 1.5);
@@ -269,12 +270,12 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
       body +=
         `<g class="pele-node pele-card${color === undefined ? '' : ' pele-priority-' + priority.replace(' ', '-')}${classNames(
           item.cssClasses ?? ''
-        )}" data-id="${escText(item.id)}" transform="translate(${COLUMN_PAD},${num(y)})" font-size="${small}">${inner}</g>`;
+        )}" data-id="${escText(item.id)}"${srcAttrs(item.source)} transform="translate(${COLUMN_PAD},${num(y)})" font-size="${small}">${inner}</g>`;
       y += card.height + CARD_GAP;
     }
 
     out +=
-      `<g class="pele-cluster pele-column${classNames(section.cssClasses ?? '')}" data-id="${escText(section.id)}" transform="translate(${num(
+      `<g class="pele-cluster pele-column${classNames(section.cssClasses ?? '')}" data-id="${escText(section.id)}"${srcAttrs(section.source)} transform="translate(${num(
         left + (index % perRow) * (columnWidth + COLUMN_GAP)
       )},${num(pad + titleHeight + rowTops[row])})">${body}</g>`;
   }

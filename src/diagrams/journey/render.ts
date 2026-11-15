@@ -1,10 +1,10 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { turnToFit } from '../common/fit-width.js';
 import { fitLabel, plainLabel } from '../common/fit.js';
 import { journeyActors, type JourneyModel } from './db.js';
@@ -40,6 +40,7 @@ export function renderJourney(model: JourneyModel, _config: Config, options: Ren
 }
 
 function draw(model: JourneyModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
@@ -53,6 +54,15 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
   const names = journeyActors(tasks).filter((name) => name !== '');
   const actor = new Map<string, number>();
   names.forEach((name, i) => actor.set(name, i));
+  // An actor is only named, by tasks; its legend entry comes from the first task that names it.
+  const named = new Map<string, SourceInfo>();
+  if (options.sourceInfo) {
+    for (const task of tasks) {
+      const line = task.source?.line;
+      if (line === undefined) continue;
+      for (const name of task.people) if (name !== '' && !named.has(name)) named.set(name, { line, symbol: name });
+    }
+  }
 
   // Cards widen, up to a point, for a word that would not fit; past that the word is cut.
   let textW = MIN_TEXT;
@@ -158,7 +168,7 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
           `<title>${escText(name)}</title></circle>`;
       });
       cards.push(
-        `<g class="pele-node pele-task" data-id="${escText(task.task.trim())}">` +
+        `<g class="pele-node pele-task" data-id="${escText(task.task.trim())}"${srcAttrs(task.source)}>` +
           `<rect x="${num(x)}" y="${num(cardsY)}" width="${num(cardW)}" height="${num(cardH)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
           labelSvg(labels[i], cx, cardsY + PAD_Y + textH / 2, ` font-size="${small}"`) +
           dots +
@@ -178,8 +188,10 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
       }
       const x = left + run.start * pitch;
       const w = run.count * pitch - GAP;
+      // A band over tasks of sections of one name, one after another, comes from the first of them.
+      const first = tasks[run.start];
       body +=
-        `<g class="pele-cluster pele-section" data-id="${escText(tasks[run.start].section.trim())}">` +
+        `<g class="pele-cluster pele-section" data-id="${escText(first.section.trim())}"${srcAttrs(first.sectionSource)}>` +
         `<rect x="${num(x)}" y="${num(top)}" width="${num(w)}" height="${num(bandH)}" fill="var(--_a)"${ROUNDED}/>` +
         labelSvg(run.label, x + w / 2, top + bandH / 2, ` font-size="${small}" font-weight="var(--_hw)"`) +
         members +
@@ -194,7 +206,7 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
       for (const item of legend) {
         const cy = y0 + item.y + item.h / 2;
         items +=
-          `<g class="pele-legend-item" data-id="${escText(item.name)}">` +
+          `<g class="pele-legend-item" data-id="${escText(item.name)}"${srcAttrs(named.get(item.name))}>` +
           `<circle cx="${num(x0 + item.x + DOT)}" cy="${num(cy)}" r="${DOT}" fill="${seriesColor(actor.get(item.name) ?? 0)}"/>` +
           labelSvg(item.label, x0 + item.x + 2 * DOT + 6 + item.label.width / 2, cy, '') +
           '</g>';
@@ -217,6 +229,7 @@ function draw(model: JourneyModel, _config: Config, options: RenderOptions, down
 }
 
 function verticalJourney(model: JourneyModel, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -245,7 +258,7 @@ function verticalJourney(model: JourneyModel, options: RenderOptions): Rendered 
     let h = 2 * PAD_Y + textH;
     for (const person of people) h += Math.max(16, person.label.height) + 4;
     const w = Math.max(room, label.width + 72);
-    body += `<g class="pele-node pele-journey-step" data-id="${index}"><rect x="${num(pad)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>`;
+    body += `<g class="pele-node pele-journey-step" data-id="${index}"${srcAttrs(task.source)}><rect x="${num(pad)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>`;
     body += labelSvg(label, pad + PAD_X + label.width / 2, y + PAD_Y + label.height / 2, ' class="pele-label"');
     const cx = pad + w - 28;
     body += face(cx, y + PAD_Y + FACE, task.score > 3 ? 'happy' : task.score < 3 ? 'sad' : 'neutral');

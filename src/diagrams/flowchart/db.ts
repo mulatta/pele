@@ -117,6 +117,9 @@ export class FlowDb implements FlowchartModel {
   private pairCount = new Map<string, number>();
   private subCount = 0;
   private options: FlowDbOptions;
+  // The lines of the text the parser is at: the elements added next come from them.
+  line: number | undefined;
+  end: number | undefined;
 
   constructor(options: FlowDbOptions = {}) {
     this.options = options;
@@ -171,6 +174,12 @@ export class FlowDb implements FlowchartModel {
       }
       vertex = { id, labelType: 'text', styles: [], classes: [] };
       this.nodes.set(id, vertex);
+    }
+    // A node comes from the last line that gives it a label or a shape (that is what is drawn),
+    // else from the one that first names it.
+    const defines = textObj !== undefined || type !== undefined || doc !== undefined;
+    if (this.line !== undefined && (vertex.source === undefined || defines)) {
+      vertex.source = this.end !== undefined && this.end > this.line ? { line: this.line, end: this.end, symbol: id } : { line: this.line, symbol: id };
     }
 
     if (textObj !== undefined) {
@@ -231,6 +240,9 @@ export class FlowDb implements FlowchartModel {
       isUserDefinedId: false,
       interpolate: this.defaultInterpolate,
     };
+    if (this.line !== undefined) {
+      edge.source = this.end !== undefined && this.end > this.line ? { line: this.line, end: this.end, from: start, to: end } : { line: this.line, from: start, to: end };
+    }
     const linkText = type?.text;
     if (linkText !== undefined) {
       edge.text = unquote(linkText.text.trim());
@@ -370,14 +382,17 @@ export class FlowDb implements FlowchartModel {
     this.accDescr = text.replace(/\n\s+/g, '\n');
   }
 
+  // `lines`: where the subgraph starts and where its `end` is.
   addSubGraph(
     idText: { text: string } | undefined,
     list: DocItem[],
-    titleText: { text: string; type?: string } | undefined
+    titleText: { text: string; type?: string } | undefined,
+    lines?: [start: number, end: number]
   ): string {
     let id: string | undefined = idText?.text.trim();
     let title = titleText?.text ?? '';
     if (idText !== undefined && idText === titleText && /\s/.test(title)) id = undefined;
+    const named = id;
 
     const seen = new Set<string>();
     const nodeList: string[] = [];
@@ -413,6 +428,10 @@ export class FlowDb implements FlowchartModel {
       dir,
       labelType: labelType(titleText?.type),
     };
+    if (lines !== undefined) {
+      subgraph.source = { line: lines[0], end: lines[1] };
+      if (named !== undefined) subgraph.source.symbol = named;
+    }
     // A node belongs to the first subgraph that lists it, and a subgraph never contains itself.
     const members = this.members;
     subgraph.nodes = nodeList.filter((nodeId) => !members.has(nodeId) && nodeId !== id);

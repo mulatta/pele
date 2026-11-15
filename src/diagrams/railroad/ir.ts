@@ -14,11 +14,13 @@ import {
   repetition,
   sequence,
   special,
+  stated,
   terminal,
   title,
   toRules,
   unescape,
   type Grammar,
+  type Stated,
 } from './common.js';
 import type { RailroadNode, RailroadRule } from './types.js';
 
@@ -78,10 +80,10 @@ export type IrExpression =
   | { $type: 'RailroadChoiceExpr'; alternatives: IrExpression[] }
   | { $type: 'RailroadOptionalExpr' | 'RailroadOneOrMoreExpr' | 'RailroadZeroOrMoreExpr'; element: IrExpression }
   | { $type: 'RailroadTerminalExpr'; value: string }
-  | { $type: 'RailroadNonTerminalExpr'; name: string }
+  | ({ $type: 'RailroadNonTerminalExpr'; name: string } & Stated)
   | { $type: 'RailroadSpecialExpr'; text: string };
 
-export interface IrRule {
+export interface IrRule extends Stated {
   $type: 'RailroadRule';
   name: string;
   definition: IrExpression;
@@ -109,9 +111,15 @@ function expression(r: Reader): IrExpression {
       case T.terminal:
         value = { $type: 'RailroadTerminalExpr', value: argument(r) };
         break;
-      case T.nonterminal:
-        value = { $type: 'RailroadNonTerminalExpr', name: argument(r) };
+      case T.nonterminal: {
+        // The whole call `nonterminal("name")` draws it. A name with an escape in its quotes, the
+        // token before `)`, does not read as written.
+        const first = r.i;
+        const name = argument(r);
+        const symbol = r.text(r.i - 2).includes('\\') ? undefined : name;
+        value = { $type: 'RailroadNonTerminalExpr', name, $source: stated(r, first, symbol) };
         break;
+      }
       case T.special:
         value = { $type: 'RailroadSpecialExpr', text: argument(r) };
         break;
@@ -170,7 +178,7 @@ function node(e: IrExpression, kids: RailroadNode[]): RailroadNode {
     case 'RailroadTerminalExpr':
       return terminal(e.value);
     case 'RailroadNonTerminalExpr':
-      return nonterminal(e.name);
+      return nonterminal(e.name, e.$source);
     case 'RailroadSpecialExpr':
       return special(e.text);
     case 'RailroadSequenceExpr':

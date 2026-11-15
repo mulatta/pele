@@ -10,6 +10,7 @@ import {
   tokenize,
   type TokenType,
 } from '../common/tokens.js';
+import type { SourceInfo } from '../../types.js';
 import { isBlank } from '../../util/chars.js';
 
 const enum T {
@@ -89,6 +90,7 @@ export interface TreeNodeAst {
   classAnnotation?: string;
   iconAnnotation?: string;
   descAnnotation?: string;
+  source?: SourceInfo;
 }
 
 export interface TreeViewAst {
@@ -127,9 +129,12 @@ export function convertValue(rule: string, input: string): string | number | und
   }
 }
 
-export function parseTreeView(src: string): TreeViewAst {
+// With `lineOf`, which gives the line an offset of `src` is written on, each node records where it
+// is written. The tests that compare the tree with Langium's parse without.
+export function parseTreeView(src: string, lineOf?: (at: number) => number | undefined): TreeViewAst {
   const r = new Reader(tokenize(src, TREEVIEW_TOKENS, 'treeView'), TREEVIEW_TOKENS, 'treeView');
   const ast: TreeViewAst = { $type: 'TreeView', nodes: [] };
+  const { starts, ends } = r.tokens;
   r.expect(T.keyword);
   for (;;) {
     if (r.kind === T.accDescr) ast.accDescr = accDescrValue(r.take());
@@ -140,6 +145,7 @@ export function parseTreeView(src: string): TreeViewAst {
   while (r.kind !== -1) {
     const node: TreeNodeAst = { $type: 'TreeNode', name: '' };
     if (r.kind === T.indentation) node.indent = r.take().length;
+    const first = r.i;
     if (r.kind === T.quotedName) {
       const text = r.take();
       node.name = text.substring(1, text.length - 1);
@@ -153,6 +159,13 @@ export function parseTreeView(src: string): TreeViewAst {
       else if (r.kind === T.iconAnnotation) node.iconAnnotation = convertValue('ICON_ANNOTATION', r.take()) as string;
       else if (r.kind === T.descAnnotation) node.descAnnotation = convertValue('DESC_ANNOTATION', r.take()) as string;
       else break;
+    }
+    const line = lineOf?.(starts[first]);
+    if (line !== undefined) {
+      // A node is its own line, without the lines under it, unless a quoted name runs on. The name
+      // is free text, which need not tell nodes apart.
+      const end = lineOf?.(ends[r.i - 1] - 1) ?? line;
+      node.source = end > line ? { line, end } : { line };
     }
     ast.nodes.push(node);
   }

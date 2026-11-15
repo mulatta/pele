@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { C4Attr, C4Boundary, C4Element, C4Model, C4Named, C4Rel, C4Shape } from './types.js';
 
 const ELEMENT_FIELDS = new Set([
@@ -42,6 +43,14 @@ function text(target: Target, field: 'descr' | 'techn', attr: C4Attr | undefined
   else put(target, field, attr);
 }
 
+// Where a statement is written, with the names it gives: its line, and its last when it runs over several.
+function lines(line: number, end: number | undefined, names: SourceInfo): SourceInfo {
+  return end !== undefined && end > line ? { line, end, ...names } : { line, ...names };
+}
+
+// An element goes by its alias, unless that is empty or a named argument.
+const symbolOf = (el: C4Element): SourceInfo => (el.aliasAttr === undefined && el.alias !== '' ? { symbol: el.alias } : {});
+
 function label(target: Target, attr: C4Attr | undefined): void {
   target.labelAttr = undefined;
   if (typeof attr === 'object') {
@@ -64,6 +73,10 @@ export class C4Db implements C4Model {
   rels: C4Rel[] = [];
   shapeInRow = 4;
   boundaryInRow = 2;
+  // The lines of the statement the parser is at, when sources are asked for. A later statement
+  // for the same alias or the same two ends says what is drawn, so the last one is recorded.
+  line: number | undefined;
+  end: number | undefined;
 
   private shapeIndex = new Map<string, C4Shape>();
   // The top-level boundary is not listed, so a boundary a diagram names `global` is its own box.
@@ -72,6 +85,8 @@ export class C4Db implements C4Model {
   private relIndex = new Map<string, Map<string, C4Rel>>();
   private current: C4Boundary = this.boundaries[0];
   private stack: C4Boundary[] = [];
+  // The first line of each open boundary's statement.
+  private opened: (number | undefined)[] = [];
 
   setC4Type(type: string): void {
     this.c4Type = type;
@@ -127,6 +142,7 @@ export class C4Db implements C4Model {
     put(shape, 'link', attrs[at + 2]);
     shape.kind = kind;
     shape.parent = this.current;
+    if (this.line !== undefined) shape.source = lines(this.line, this.end, symbolOf(shape));
   }
 
   private boundary(attrs: C4Attr[], fallback: string): C4Boundary {
@@ -139,6 +155,7 @@ export class C4Db implements C4Model {
   private open(boundary: C4Boundary): void {
     boundary.parent = this.current;
     this.stack.push(this.current);
+    this.opened.push(this.line);
     this.current = boundary;
   }
 
@@ -166,7 +183,10 @@ export class C4Db implements C4Model {
     this.open(boundary);
   }
 
+  // A boundary spans its lines, from its statement to the closing brace at `end`.
   popBoundaryParseStack(): void {
+    const line = this.opened.pop();
+    if (line !== undefined) this.current.source = lines(line, this.end, symbolOf(this.current));
     this.current = this.stack.pop() ?? this.boundaries[0];
   }
 
@@ -197,6 +217,10 @@ export class C4Db implements C4Model {
     put(rel, 'sprite', attrs[5]);
     put(rel, 'tags', attrs[6]);
     put(rel, 'link', attrs[7]);
+    // Only a relation between two written aliases is drawn.
+    if (this.line !== undefined && typeof from === 'string' && typeof to === 'string') {
+      rel.source = lines(this.line, this.end, { from, to });
+    }
   }
 
   getC4Shape(alias: string): C4Shape | C4Boundary | undefined {

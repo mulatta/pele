@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { marker, markerTrim } from '../../svg/edges.js';
 import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED, seriesColor } from '../../svg/theme.js';
@@ -7,7 +7,7 @@ import { decodeEntities } from '../../text/entities.js';
 import { breakLabel, leftLabelSvg, literalLabel } from '../common/literal-label.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { turnToFit } from '../common/fit-width.js';
 import type { EmBox, EmLane, EntityKind, EventModelingModel } from './model.js';
 
@@ -84,6 +84,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
   const smallStep = Math.round(small * 1.5);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
+  const srcAttrs = sourceAttrsFor(options);
   const widest = (rows: string[], fontSize: number, style: number): number => {
     let width = 0;
     for (const row of rows) width = Math.max(width, measurer.width(row, fontSize, style));
@@ -134,6 +135,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
 
   let y = top;
   let lanes = '';
+  // A lane follows from the kinds and namespaces of its frames and is written nowhere, so it has no lines.
   for (const band of bands.values()) {
     band.y = y;
     band.h += 2 * LANE_PAD;
@@ -167,7 +169,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
         monoStep,
         ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`
       );
-    nodes += `<g class="pele-node pele-em-${item.box.kind}${item.box.reset ? ' pele-em-reset' : ''}" data-id="${escText(item.box.id)}">${shape}${text}</g>`;
+    nodes += `<g class="pele-node pele-em-${item.box.kind}${item.box.reset ? ' pele-em-reset' : ''}" data-id="${escText(item.box.id)}"${srcAttrs(item.box.written)}>${shape}${text}</g>`;
   }
 
   let edges = '';
@@ -204,7 +206,7 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
       d = sx === tx ? `M${num(sx)},${num(sy)}V${num(end)}` : `M${num(sx)},${num(sy)}C${num(sx)},${num(mid)} ${num(tx)},${num(mid)} ${num(tx)},${num(end)}`;
       head = marker('arrow_point', tx, ty, 0, dir, 'var(--_l)');
     }
-    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
+    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"${srcAttrs(relation.written)}><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
   }
 
   // Notes and given/when/then specifications, listed under the lanes with the frame they belong to.
@@ -212,13 +214,13 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
   for (const box of model.boxes) names.set(box.id, box.name);
   let cards = '';
   let cardsRight = 0;
-  const card = (kind: string, heading: string, frame: string, rows: string[]): void => {
+  const card = (kind: string, heading: string, frame: string, rows: string[], written: SourceInfo | undefined): void => {
     const head = layoutLabel(`${heading} · ${frame}${names.has(frame) ? ' ' + names.get(frame)! : ''}`, false, measurer, small, 4000, Style.Bold);
     const w = Math.max(head.width, widest(rows, small, 0)) + 2 * BOX_PAD_X;
     const h = 2 * BOX_PAD_Y + head.height + rows.length * smallStep;
     const cy = bottom + (cards === '' && bands.size === 0 ? 0 : CARD_GAP);
     cards +=
-      `<g class="pele-em-${kind}" data-id="${escText(frame)}">` +
+      `<g class="pele-em-${kind}" data-id="${escText(frame)}"${srcAttrs(written)}>` +
       `<rect x="${num(left)}" y="${num(cy)}" width="${num(w)}" height="${num(h)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
       labelSvg(head, left + BOX_PAD_X + head.width / 2, cy + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`) +
       lines(rows, left + BOX_PAD_X, cy + BOX_PAD_Y + head.height + smallStep / 2 + small * 0.35, smallStep, ` font-size="${small}"`) +
@@ -226,12 +228,12 @@ function draw(model: EventModelingModel, _config: Config, options: RenderOptions
     bottom = cy + h;
     cardsRight = Math.max(cardsRight, w);
   };
-  for (const note of model.notes) card('note', 'Note', note.frame, hardWrap(note.text, NOTE_COLUMNS));
+  for (const note of model.notes) card('note', 'Note', note.frame, hardWrap(note.text, NOTE_COLUMNS), note.written);
   for (const spec of model.specifications) {
     const rows = [`Given  ${spec.given.join(', ')}`];
     if (spec.when.length > 0) rows.push(`When  ${spec.when.join(', ')}`);
     rows.push(`Then  ${spec.then.join(', ')}`);
-    card('specification', 'Given / When / Then', spec.frame, rows.flatMap((row) => hardWrap(row, NOTE_COLUMNS)));
+    card('specification', 'Given / When / Then', spec.frame, rows.flatMap((row) => hardWrap(row, NOTE_COLUMNS)), spec.written);
   }
 
   const width = Math.max(bands.size > 0 ? laneWidth : 0, cardsRight, title.width);
@@ -258,6 +260,7 @@ function verticalEventModel(model: EventModelingModel, options: RenderOptions): 
   const mono = Math.round(size * 0.75);
   const pad = options.padding ?? 8;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
+  const srcAttrs = sourceAttrsFor(options);
   const room = Math.max(160, (options.maxWidth ?? 320) - 2 * pad);
   // A relation that skips a card runs down a rail beside the cards. Relations into one card
   // share a rail; others whose runs overlap take the next rail out, so that no two follow the
@@ -309,7 +312,7 @@ function verticalEventModel(model: EventModelingModel, options: RenderOptions): 
     const frame = `x="${num(pad)}" y="${num(cy)}" width="${num(w)}" height="${num(h)}"`;
     nodes += `<g class="pele-cluster pele-em-lane" data-id="${escText(box.lane.label)}">` +
       leftLabelSvg(lane, pad + BOX_PAD_X, y, ` class="pele-cluster-label" font-size="${small}" font-weight="var(--_hw)" fill="var(--_m)"`) +
-      `<g class="pele-node pele-em-${box.kind}${box.reset ? ' pele-em-reset' : ''}" data-id="${escText(box.id)}"><rect ${frame} fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
+      `<g class="pele-node pele-em-${box.kind}${box.reset ? ' pele-em-reset' : ''}" data-id="${escText(box.id)}"${srcAttrs(box.written)}><rect ${frame} fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
       (series === undefined ? '' : `<rect ${frame} fill="${seriesColor(series)}" fill-opacity="0.22" stroke="${seriesColor(series)}"${ROUNDED}/>`) +
       labelSvg(name, pad + BOX_PAD_X + name.width / 2, cy + BOX_PAD_Y + name.height / 2, ` class="pele-label" font-size="${small}" font-weight="var(--_hw)"`) +
       `<text class="pele-em-frame" x="${num(pad + w - BOX_PAD_X)}" y="${num(cy + BOX_PAD_Y + small)}" text-anchor="end" font-size="${mono}" fill="var(--_m)">${esc(box.id)}</text>` +
@@ -339,27 +342,27 @@ function verticalEventModel(model: EventModelingModel, options: RenderOptions): 
       d = `M${num(pad + s.w)},${num(from)}H${num(rail)}V${num(to)}H${num(pad + t.w + markerTrim('arrow_point'))}`;
       head = marker('arrow_point', pad + t.w, to, -1, 0, 'var(--_l)');
     }
-    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
+    edges += `<g class="pele-edge" data-id="${escText(relation.source.id)}-${escText(relation.target.id)}"${srcAttrs(relation.written)}><path d="${d}" fill="none" stroke="var(--_l)"/>${head}</g>`;
   }
   const names = new Map(model.boxes.map(box => [box.id, box.name]));
-  const card = (kind: string, heading: string, frame: string, raw: string): void => {
+  const card = (kind: string, heading: string, frame: string, raw: string, written: SourceInfo | undefined): void => {
     const head = layoutLabel(`${heading} · ${frame}${names.has(frame) ? ' ' + names.get(frame)! : ''}`, false, measurer, small, textRoom, Style.Bold);
     const body = text(raw, small);
     const w = Math.max(cardWidth, head.width + 2 * BOX_PAD_X, body.width + 2 * BOX_PAD_X);
     const h = 2 * BOX_PAD_Y + head.height + body.height;
-    cards += `<g class="pele-em-${kind}" data-id="${escText(frame)}"><rect x="${num(pad)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
+    cards += `<g class="pele-em-${kind}" data-id="${escText(frame)}"${srcAttrs(written)}><rect x="${num(pad)}" y="${num(y)}" width="${num(w)}" height="${num(h)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>` +
       labelSvg(head, pad + BOX_PAD_X + head.width / 2, y + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`) +
       lines(body.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, y + BOX_PAD_Y + head.height + body.lineHeight / 2 + small * 0.35, body.lineHeight, ` font-size="${small}"`) + '</g>';
     bottom = y + h;
     y = bottom + CARD_GAP;
     width = Math.max(width, w);
   };
-  for (const note of model.notes) card('note', 'Note', note.frame, note.text);
+  for (const note of model.notes) card('note', 'Note', note.frame, note.text, note.written);
   for (const spec of model.specifications) {
     const rows = [`Given  ${spec.given.join(', ')}`];
     if (spec.when.length) rows.push(`When  ${spec.when.join(', ')}`);
     rows.push(`Then  ${spec.then.join(', ')}`);
-    card('specification', 'Given / When / Then', spec.frame, rows.join('\n'));
+    card('specification', 'Given / When / Then', spec.frame, rows.join('\n'), spec.written);
   }
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(bottom + pad);
   const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + edges + nodes + cards;

@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { DataPoint, XyChartDb, XyText } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -12,7 +12,9 @@ function flags(...tokens: number[]): Uint8Array {
 const WORD = flags(T.AMP, T.NUM, T.ALPHA, T.PLUS, T.EQUALS, T.MULT, T.DOT, T.BRKT, T.MINUS, T.UNDERSCORE);
 const EOL = flags(T.NEWLINE, T.SEMI, T.EOF);
 
-export function parseXyChart(src: string, db: XyChartDb): void {
+// With `lines`, each series records where it is written (see sourceLine). Mermaid's specs hand the
+// parser a mock model that must not change, so they parse without.
+export function parseXyChart(src: string, db: XyChartDb, lines = false): void {
   const { types, texts, starts } = tokenize(src);
   let i = 0;
 
@@ -62,6 +64,7 @@ export function parseXyChart(src: string, db: XyChartDb): void {
   }
 
   while (types[i] !== T.END) {
+    const first = i;
     const t = types[i++];
     switch (t) {
       case T.title:
@@ -91,6 +94,13 @@ export function parseXyChart(src: string, db: XyChartDb): void {
       case T.BAR: {
         const title: XyText = types[i] === T.SQUARE_BRACES_START ? { text: '', type: 'text' } : text();
         const data = points();
+        if (lines) {
+          // A series runs to its closing bracket, which may be lines below. Its title is free text,
+          // which need not tell series apart.
+          const line = sourceLine(src, starts[first]);
+          const end = sourceLine(src, starts[i - 1]);
+          db.source = line === undefined || end === undefined ? undefined : end > line ? { line, end } : { line };
+        }
         if (t === T.LINE) db.setLineData(title, data);
         else db.setBarData(title, data);
         break;

@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { ArchitectureAst, Side } from './parser.js';
 
 export interface ArchService {
@@ -8,12 +9,14 @@ export interface ArchService {
   iconText?: string;
   title?: string;
   in?: string;
+  source?: SourceInfo;
 }
 
 export interface ArchJunction {
   id: string;
   type: 'junction';
   in?: string;
+  source?: SourceInfo;
 }
 
 export type ArchNode = ArchService | ArchJunction;
@@ -23,6 +26,7 @@ export interface ArchGroup {
   icon?: string;
   title?: string;
   in?: string;
+  source?: SourceInfo;
 }
 
 export interface ArchEdge {
@@ -35,6 +39,7 @@ export interface ArchEdge {
   rhsInto?: boolean;
   rhsGroup?: boolean;
   title?: string;
+  source?: SourceInfo;
 }
 
 export interface ArchLayoutHint {
@@ -55,6 +60,13 @@ export interface ArchitectureModel {
 
 function fail(message: string): never {
   throw new PeleError(message, 'semantic', { type: 'architecture' });
+}
+
+// Where an element is written, set only when it was recorded, so that a model parsed without
+// sources has the same fields as before.
+function written<T extends { source?: SourceInfo }>(item: T, source: SourceInfo | undefined): T {
+  if (source !== undefined) item.source = source;
+  return item;
 }
 
 export class ArchitectureDb implements ArchitectureModel {
@@ -82,22 +94,22 @@ export class ArchitectureDb implements ArchitectureModel {
     this.registered.set(id, kind === 'group' ? 'group' : 'node');
   }
 
-  addService({ id, icon, iconText, title, in: parent }: Omit<ArchService, 'type'> & { type?: 'service' }): void {
+  addService({ id, icon, iconText, title, in: parent, source }: Omit<ArchService, 'type'> & { type?: 'service' }): void {
     this.register('service', id, parent);
-    this.nodes.set(id, { id, type: 'service', icon, iconText, title, in: parent });
+    this.nodes.set(id, written<ArchService>({ id, type: 'service', icon, iconText, title, in: parent }, source));
   }
 
-  addJunction({ id, in: parent }: Omit<ArchJunction, 'type'> & { type?: 'junction' }): void {
+  addJunction({ id, in: parent, source }: Omit<ArchJunction, 'type'> & { type?: 'junction' }): void {
     this.register('junction', id, parent);
-    this.nodes.set(id, { id, type: 'junction', in: parent });
+    this.nodes.set(id, written<ArchJunction>({ id, type: 'junction', in: parent }, source));
   }
 
-  addGroup({ id, icon, title, in: parent }: ArchGroup): void {
+  addGroup({ id, icon, title, in: parent, source }: ArchGroup): void {
     this.register('group', id, parent);
-    this.groups.set(id, { id, icon, title, in: parent });
+    this.groups.set(id, written<ArchGroup>({ id, icon, title, in: parent }, source));
   }
 
-  addEdge({ lhsId, rhsId, lhsDir, rhsDir, lhsInto, rhsInto, lhsGroup, rhsGroup, title }: ArchEdge): void {
+  addEdge({ lhsId, rhsId, lhsDir, rhsDir, lhsInto, rhsInto, lhsGroup, rhsGroup, title, source }: ArchEdge): void {
     const ends = [
       ['left', lhsId, lhsGroup],
       ['right', rhsId, rhsGroup],
@@ -117,7 +129,7 @@ export class ArchitectureDb implements ArchitectureModel {
         if (crosses) fail(`The ${side}-hand id [${id}] is modified to traverse the group boundary, but the edge does not pass through two groups.`);
       }
     }
-    this.edges.push({ lhsId, lhsDir, lhsInto, lhsGroup, rhsId, rhsDir, rhsInto, rhsGroup, title });
+    this.edges.push(written<ArchEdge>({ lhsId, lhsDir, lhsInto, lhsGroup, rhsId, rhsDir, rhsInto, rhsGroup, title }, source));
   }
 
   addLayoutHint(hint: ArchLayoutHint): void {
@@ -139,9 +151,9 @@ export function populate(ast: ArchitectureAst, db: ArchitectureDb): void {
   if (ast.accDescr) db.accDescr = ast.accDescr.replace(/\n\s+/g, '\n');
   if (ast.accTitle) db.accTitle = ast.accTitle.replace(/^\s+/g, '');
   if (ast.title) db.title = ast.title;
-  for (const group of ast.groups) db.addGroup(group);
-  for (const service of ast.services) db.addService(service);
-  for (const junction of ast.junctions) db.addJunction(junction);
-  for (const edge of ast.edges) db.addEdge(edge);
+  for (const group of ast.groups) db.addGroup({ ...group, source: group.$source });
+  for (const service of ast.services) db.addService({ ...service, source: service.$source });
+  for (const junction of ast.junctions) db.addJunction({ ...junction, source: junction.$source });
+  for (const edge of ast.edges) db.addEdge({ ...edge, source: edge.$source });
   for (const alignment of ast.alignments) db.addLayoutHint({ direction: alignment.direction, members: [...alignment.members] });
 }

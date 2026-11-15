@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ink } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
 import { resolveStyle, seriesColor, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { normalizeText } from './db.js';
 import { findSpot, layoutCircles, regionPath, type Circle, type Spot } from './layout.js';
 import type { VennModel, VennSubset } from './types.js';
@@ -19,10 +19,12 @@ interface Region {
   inside: number[];
   spot: Spot;
   // What is written in the region: its label first, then its texts. The id is that of a text.
-  lines: { id: string | undefined; raw: string; size: number; base: number; label: Label }[];
+  lines: { id: string | undefined; raw: string; size: number; base: number; label: Label; source?: SourceInfo }[];
   style: ResolvedStyle;
   // Whether its text is written across other circles.
   across: boolean;
+  // Where the last statement of these sets is written: its circle, overlap and label come from it.
+  source: SourceInfo | undefined;
 }
 
 // One key for a list of set ids. Ids may hold any character, so they are not simply joined.
@@ -31,6 +33,7 @@ function keyOf(ids: string[]): string {
 }
 
 export function renderVenn(model: VennModel, _config: Config, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.8125);
@@ -86,7 +89,7 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     // A region that other circles cover, or all but cover, is written across them instead.
     const across = others.length > 0 && spot.margin < circles[smallest].r * 0.2;
     if (across) spot = findSpot(circles, inside, []);
-    const region: Region = { sets, inside, spot, lines: [], style, across };
+    const region: Region = { sets, inside, spot, lines: [], style, across, source: subset.source };
     if (text) {
       const fontSize = sets.length === 1 ? size : small;
       region.lines.push({ id: undefined, raw: text, size: fontSize, base, label: layoutLabel(text, false, measurer, fontSize, 4000, base) });
@@ -95,7 +98,7 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
   }
   for (const node of model.textNodes) {
     const raw = node.label ?? node.id;
-    regions.get(keyOf(node.sets))?.lines.push({ id: node.id, raw, size: tiny, base: 0, label: layoutLabel(raw, false, measurer, tiny, 4000) });
+    regions.get(keyOf(node.sets))?.lines.push({ id: node.id, raw, size: tiny, base: 0, label: layoutLabel(raw, false, measurer, tiny, 4000), source: node.source });
   }
 
   // Lengths so far are in units of the layout. The scale gives the largest circle a set radius,
@@ -161,8 +164,9 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
   let sets = '';
   placed.forEach((c, i) => {
     const color = seriesColor(i);
-    const style = regions.get(c.id)?.style ?? NO_STYLE;
-    sets += `<circle class="pele-venn-set" data-id="${escText(c.id)}" cx="${num(c.x)}" cy="${num(c.y)}" r="${num(c.r)}" fill="${color}" fill-opacity="0.2" stroke="${color}"${style.shape}/>`;
+    const region = regions.get(c.id);
+    const style = region?.style ?? NO_STYLE;
+    sets += `<circle class="pele-venn-set" data-id="${escText(c.id)}"${srcAttrs(region?.source)} cx="${num(c.x)}" cy="${num(c.y)}" r="${num(c.r)}" fill="${color}" fill-opacity="0.2" stroke="${color}"${style.shape}/>`;
   });
 
   const painted = [...regions.values()].filter((r) => r.sets.length > 1 && r.style.shape !== '');
@@ -181,7 +185,7 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     // An overlap is only drawn when a style gives it a look of its own; otherwise the circles show it.
     if (region.sets.length > 1 && region.style.shape !== '') {
       const d = regionPath(region.inside.map((i) => placed[i]), num);
-      if (d !== '') overlaps += `<path class="pele-venn-overlap" data-id="${id}" d="${d}" fill="none"${region.style.shape}/>`;
+      if (d !== '') overlaps += `<path class="pele-venn-overlap" data-id="${id}"${srcAttrs(region.source)} d="${d}" fill="none"${region.style.shape}/>`;
     }
     let total = 0;
     for (const line of region.lines) total += line.label.height;
@@ -196,11 +200,11 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
       const attrs =
         line.id === undefined
           ? ` class="pele-label"${line.size === size ? '' : ` font-size="${line.size}"`}${color ? ` fill="${color}"` : ''}${own}`
-          : ` class="pele-venn-text" data-id="${escText(line.id)}" font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
+          : ` class="pele-venn-text" data-id="${escText(line.id)}"${srcAttrs(line.source)} font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
       content += labelSvg(line.label, x, y + line.label.height / 2, attrs);
       y += line.label.height;
     }
-    labels += `<g class="pele-venn-region" data-id="${id}">${content}</g>`;
+    labels += `<g class="pele-venn-region" data-id="${id}"${srcAttrs(region.source)}>${content}</g>`;
   }
 
   const svg = svgDocument(

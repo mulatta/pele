@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export interface JourneyTask {
   task: string;
   // As written: any number, or NaN when the score is not one.
@@ -5,6 +7,9 @@ export interface JourneyTask {
   people: string[];
   // Name of the section in force when the task was declared, '' before the first one.
   section: string;
+  // Where the task is written, and the section statement it comes under (see SourceInfo).
+  source?: SourceInfo;
+  sectionSource?: SourceInfo;
 }
 
 export interface JourneyModel {
@@ -23,6 +28,10 @@ export function journeyActors(tasks: JourneyTask[]): string[] {
   return [...names].sort();
 }
 
+// Where a statement is written: its line, and its last when it spans several.
+const lines = (line: number, end: number | undefined): SourceInfo =>
+  end !== undefined && end > line ? { line, end } : { line };
+
 export class JourneyDb implements JourneyModel {
   readonly type = 'journey' as const;
   title: string | undefined;
@@ -30,8 +39,12 @@ export class JourneyDb implements JourneyModel {
   accDescr: string | undefined;
   sections: string[] = [];
   tasks: JourneyTask[] = [];
+  // The lines of the statement the parser is at: the section or task added next comes from them.
+  line: number | undefined;
+  end: number | undefined;
 
   private currentSection = '';
+  private sectionSource: SourceInfo | undefined;
 
   setDiagramTitle(text: string): void {
     this.title = text;
@@ -48,13 +61,17 @@ export class JourneyDb implements JourneyModel {
   addSection(text: string): void {
     this.currentSection = text;
     this.sections.push(text);
+    this.sectionSource = this.line === undefined ? undefined : lines(this.line, this.end);
   }
 
   // `data` is the rest of the line from its first colon: `:score` or `:score:actor, actor`.
   addTask(task: string, data: string): void {
     const pieces = data.substring(1).split(':');
     const people = pieces.length === 1 ? [] : pieces[1].split(',').map((name) => name.trim());
-    this.tasks.push({ task, score: Number(pieces[0]), people, section: this.currentSection });
+    const item: JourneyTask = { task, score: Number(pieces[0]), people, section: this.currentSection };
+    if (this.line !== undefined) item.source = lines(this.line, this.end);
+    if (this.sectionSource) item.sectionSource = this.sectionSource;
+    this.tasks.push(item);
   }
 
   getActors(): string[] {

@@ -14,11 +14,13 @@ import {
   repetition,
   sequence,
   special,
+  stated,
   terminal,
   title,
   toRules,
   unescape,
   type Grammar,
+  type Stated,
 } from './common.js';
 import type { RailroadNode, RailroadRule } from './types.js';
 
@@ -70,7 +72,7 @@ export const PEG_TOKENS: readonly TokenType[] = [
 
 export type PegPrimary =
   | { $type: 'PegLiteral'; value: string }
-  | { $type: 'PegIdentifier'; name: string }
+  | ({ $type: 'PegIdentifier'; name: string } & Stated)
   | { $type: 'PegAny'; dot: string }
   | { $type: 'PegGroup'; element: PegChoice };
 
@@ -96,7 +98,7 @@ export interface PegChoice {
   alternatives: PegSequence[];
 }
 
-export interface PegRule {
+export interface PegRule extends Stated {
   $type: 'PegRule';
   name: string;
   definition: PegChoice;
@@ -130,9 +132,11 @@ function definition(r: Reader): PegChoice {
       case T.string:
         primary = { $type: 'PegLiteral', value: unescape(r.take()) };
         break;
-      case T.id:
-        primary = { $type: 'PegIdentifier', name: r.take() };
+      case T.id: {
+        const name = r.take();
+        primary = { $type: 'PegIdentifier', name, $source: stated(r, r.i - 1, name) };
         break;
+      }
       case T.dot:
         primary = { $type: 'PegAny', dot: r.take() };
         break;
@@ -212,7 +216,7 @@ function node(part: Part, kids: RailroadNode[]): RailroadNode {
     case 'PegLiteral':
       return terminal(part.value);
     case 'PegIdentifier':
-      return nonterminal(part.name);
+      return nonterminal(part.name, part.$source);
     case 'PegAny':
       return special(part.dot);
     case 'PegGroup':

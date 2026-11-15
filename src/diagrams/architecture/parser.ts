@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -91,6 +93,7 @@ export interface GroupAst {
   icon?: string;
   title?: string;
   in?: string;
+  $source?: SourceInfo;
 }
 
 export interface ServiceAst {
@@ -100,12 +103,14 @@ export interface ServiceAst {
   iconText?: string;
   title?: string;
   in?: string;
+  $source?: SourceInfo;
 }
 
 export interface JunctionAst {
   $type: 'Junction';
   id: string;
   in?: string;
+  $source?: SourceInfo;
 }
 
 export interface EdgeAst {
@@ -119,6 +124,7 @@ export interface EdgeAst {
   rhsDir: Side;
   rhsId: string;
   rhsGroup: boolean;
+  $source?: SourceInfo;
 }
 
 export interface AlignmentAst {
@@ -159,9 +165,21 @@ export function parseArchitecture(src: string): ArchitectureAst {
     while (r.kind === T.newline) r.i++;
   };
 
+  // A statement is written from its token `first` to the last one read, which for a title or a
+  // string can be on a later line. A group, service or junction comes from the one statement that
+  // declares it; edges and alignments only refer to it. Like Langium's own bookkeeping, the
+  // position goes under a `$` key, which is not part of the tree Mermaid's grammar describes.
+  const { starts, ends } = r.tokens;
+  const stamp = (item: { $source?: SourceInfo }, first: number, names: Pick<SourceInfo, 'symbol' | 'from' | 'to'>): void => {
+    const line = sourceLine(src, starts[first]);
+    const end = sourceLine(src, ends[r.i - 1] - 1);
+    if (line !== undefined && end !== undefined) item.$source = end > line ? { line, end, ...names } : { line, ...names };
+  };
+
   while (r.kind === T.newline) r.i++;
   r.expect(T.header);
   while (r.kind !== -1) {
+    const first = r.i;
     switch (r.kind) {
       case T.newline:
         r.i++;
@@ -181,6 +199,7 @@ export function parseArchitecture(src: string): ArchitectureAst {
         if (is(T.icon)) group.icon = r.take().slice(1, -1);
         if (is(T.label)) group.title = labelValue(r.take());
         if (r.accept(T.in)) group.in = r.expect(T.id);
+        stamp(group, first, { symbol: group.id });
         ast.groups.push(group);
         break;
       }
@@ -191,6 +210,7 @@ export function parseArchitecture(src: string): ArchitectureAst {
         else if (is(T.icon)) service.icon = r.take().slice(1, -1);
         if (is(T.label)) service.title = labelValue(r.take());
         if (r.accept(T.in)) service.in = r.expect(T.id);
+        stamp(service, first, { symbol: service.id });
         ast.services.push(service);
         break;
       }
@@ -198,6 +218,7 @@ export function parseArchitecture(src: string): ArchitectureAst {
         r.i++;
         const junction: JunctionAst = { $type: 'Junction', id: r.expect(T.id) };
         if (r.accept(T.in)) junction.in = r.expect(T.id);
+        stamp(junction, first, { symbol: junction.id });
         ast.junctions.push(junction);
         break;
       }
@@ -219,7 +240,9 @@ export function parseArchitecture(src: string): ArchitectureAst {
         r.expect(T.colon);
         const rhsId = r.expect(T.id);
         const rhsGroup = r.accept(T.arrowGroup);
-        ast.edges.push({ $type: 'Edge', lhsId, lhsGroup, lhsDir, lhsInto, title, rhsInto, rhsDir, rhsId, rhsGroup });
+        const edge: EdgeAst = { $type: 'Edge', lhsId, lhsGroup, lhsDir, lhsInto, title, rhsInto, rhsDir, rhsId, rhsGroup };
+        stamp(edge, first, { from: lhsId, to: rhsId });
+        ast.edges.push(edge);
         break;
       }
       case T.align: {

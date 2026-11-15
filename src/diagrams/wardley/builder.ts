@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 
 export type SourceStrategy = 'build' | 'buy' | 'outsource' | 'market';
 export type Flow = 'forward' | 'backward' | 'bidirectional';
@@ -17,6 +18,7 @@ export interface WardleyNode {
   isPipelineParent?: boolean;
   inertia?: boolean;
   sourceStrategy?: SourceStrategy;
+  source?: SourceInfo;
 }
 
 export interface WardleyLink {
@@ -25,23 +27,27 @@ export interface WardleyLink {
   dashed?: boolean;
   label?: string;
   flow?: Flow;
+  written?: SourceInfo;
 }
 
 export interface WardleyTrend {
   nodeId: string;
   targetX: number;
   targetY: number;
+  source?: SourceInfo;
 }
 
 export interface WardleyPipeline {
   nodeId: string;
   componentIds: string[];
+  source?: SourceInfo;
 }
 
 export interface WardleyAnnotation {
   number: number;
   coordinates: { x: number; y: number }[];
   text?: string;
+  source?: SourceInfo;
 }
 
 export interface WardleyNote {
@@ -54,6 +60,7 @@ export interface WardleyForce {
   name: string;
   x: number;
   y: number;
+  source?: SourceInfo;
 }
 
 export interface WardleyAxesConfig {
@@ -92,29 +99,39 @@ export class WardleyBuilder {
   private axes: WardleyAxesConfig = {};
   private size?: { width: number; height: number };
 
-  // A node added again keeps its class and label offsets unless the new one sets them.
-  addNode(node: WardleyNode): void {
+  // A node added again keeps its class and label offsets unless the new one sets them, and takes
+  // the rest, its place included, from the new one: so it comes from the new one's statement.
+  // `source`, here and below: where a statement is written, when the host asks for sources.
+  addNode(node: WardleyNode, source?: SourceInfo): void {
     const existing = this.nodes.get(node.id) ?? { id: node.id, label: node.label };
-    this.nodes.set(node.id, {
+    const next: WardleyNode = {
       ...existing,
       ...node,
       className: node.className ?? existing.className,
       labelOffsetX: node.labelOffsetX ?? existing.labelOffsetX,
       labelOffsetY: node.labelOffsetY ?? existing.labelOffsetY,
-    });
+    };
+    if (source !== undefined) next.source = source;
+    this.nodes.set(node.id, next);
     this.labels = undefined;
   }
 
-  addLink(link: WardleyLink): void {
+  addLink(link: WardleyLink, source?: SourceInfo): void {
+    if (source !== undefined) link.written = source;
     this.links.push(link);
   }
 
-  addTrend(trend: WardleyTrend): void {
+  // A later trend for a node replaces the one before, its statement too.
+  addTrend(trend: WardleyTrend, source?: SourceInfo): void {
+    if (source !== undefined) trend.source = source;
     this.trends.set(trend.nodeId, trend);
   }
 
-  startPipeline(nodeId: string): void {
-    this.pipelines.set(nodeId, { nodeId, componentIds: [] });
+  // A later pipeline for a node replaces the one before, its statement too.
+  startPipeline(nodeId: string, source?: SourceInfo): void {
+    const pipeline: WardleyPipeline = { nodeId, componentIds: [] };
+    if (source !== undefined) pipeline.source = source;
+    this.pipelines.set(nodeId, pipeline);
     const node = this.nodes.get(nodeId);
     if (node) node.isPipelineParent = true;
   }
@@ -125,7 +142,8 @@ export class WardleyBuilder {
     if (node) node.inPipeline = true;
   }
 
-  addAnnotation(annotation: WardleyAnnotation): void {
+  addAnnotation(annotation: WardleyAnnotation, source?: SourceInfo): void {
+    if (source !== undefined) annotation.source = source;
     this.annotations.push(annotation);
   }
 
@@ -133,11 +151,13 @@ export class WardleyBuilder {
     this.notes.push(note);
   }
 
-  addAccelerator(accelerator: WardleyForce): void {
+  addAccelerator(accelerator: WardleyForce, source?: SourceInfo): void {
+    if (source !== undefined) accelerator.source = source;
     this.accelerators.push(accelerator);
   }
 
-  addDeaccelerator(deaccelerator: WardleyForce): void {
+  addDeaccelerator(deaccelerator: WardleyForce, source?: SourceInfo): void {
+    if (source !== undefined) deaccelerator.source = source;
     this.deaccelerators.push(deaccelerator);
   }
 

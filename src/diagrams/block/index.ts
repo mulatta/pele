@@ -9,7 +9,7 @@ export const block: Diagram<BlockDb> = {
   parse(source, _config, title) {
     const db = new BlockDb();
     db.title = title;
-    parseBlock(source, db);
+    parseBlock(source, db, db.written);
     return db;
   },
   render: renderBlock,

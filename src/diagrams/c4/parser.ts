@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { C4Db } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -58,6 +58,9 @@ export function parseC4(src: string, db: C4Db): void {
   let i = 0;
 
   const text = (at: number): string => src.slice(starts[at], ends[at]);
+  // The line token `k` ends on, a quoted value's closing quote included: arguments may run over several lines.
+  const endLine = (k: number): number | undefined =>
+    sourceLine(src, src.charCodeAt(ends[k]) === 34 ? ends[k] : Math.max(starts[k], ends[k] - 1));
   const fail = (expected: string): never => {
     const t = types[i];
     if (t === T.ERROR) throw syntaxError('c4', src, starts[i], '', true);
@@ -112,8 +115,11 @@ export function parseC4(src: string, db: C4Db): void {
 
   // Returns true when the statement opens a boundary.
   const diagram = (t: number): boolean => {
+    // What the statement adds comes from the lines it is written on.
+    db.line = sourceLine(src, starts[i]);
     i++;
     const attrs = attributes();
+    db.end = endLine(i - 1);
     if (t <= T.SYSTEM_EXT_QUEUE) {
       db.addPersonOrSystem(KINDS[t - T.PERSON], attrs);
     } else if (t <= T.CONTAINER_EXT_QUEUE) {
@@ -189,6 +195,7 @@ export function parseC4(src: string, db: C4Db): void {
 
     if (depth > 0) {
       if (t !== T.RBRACE) fail("'NEWLINE', 'RBRACE'");
+      db.end = sourceLine(src, starts[i]);
       i++;
       db.popBoundaryParseStack();
       depth--;

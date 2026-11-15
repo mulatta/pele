@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { drawShape, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, seriesColor } from '../../svg/theme.js';
@@ -50,6 +50,7 @@ export function renderMindmap(model: MindmapModel, config: Config, options: Rend
 // `down` draws the map as an outline: the root at the top, and each level set in under its parent.
 // It is far narrower than branches spreading to both sides, and as tall as it needs to be.
 function draw(model: MindmapModel, config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -278,7 +279,7 @@ function draw(model: MindmapModel, config: Config, options: RenderOptions, down:
     const group =
       `<g class="pele-node pele-shape-${shape || (pill ? 'branch' : 'text')}${i > 0 ? '' : ' pele-root'}${classNames(node.class ?? '')}" data-id="${escText(
         node.nodeId
-      )}" transform="translate(${num(cx)},${num(top + h[i] / 2)})">` +
+      )}"${srcAttrs(node.source)} transform="translate(${num(cx)},${num(top + h[i] / 2)})">` +
       inner +
       (down && !shape ? leftLabel(label, shift - label.width / 2, dy[i], icons) : labelSvg(label, shift, dy[i], ' class="pele-label"', icons)) +
       '</g>';

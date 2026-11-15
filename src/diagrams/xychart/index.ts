@@ -9,7 +9,7 @@ export const xychart: Diagram<XyChartDb> = {
   parse(source, _config, title) {
     const db = new XyChartDb();
     db.title = title;
-    parseXyChart(source, db);
+    parseXyChart(source, db, true);
     return db;
   },
   render: renderXyChart,

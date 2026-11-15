@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
 import { LINETYPE, PLACEMENT, type SeqBoxData, type SeqItem, type SeqStatement, type SeqText } from './types.js';
@@ -61,6 +61,8 @@ interface Frame {
   list: SeqItem[];
   // Finished sections, each followed by the divider text that ended it.
   sections: (SeqItem[] | string)[] | undefined;
+  // The line the block starts on.
+  line?: number;
 }
 
 const BLOCK = new Int8Array(T.STICK_ARROW_BOTTOM_REVERSE_DOTTED + 1).fill(-1);
@@ -266,18 +268,29 @@ export function parseSequence(src: string, db: SeqBuilder): void {
   const stack: Frame[] = [];
   let frame: Frame = { kind: K.Top, text: '', startType: 0, list: [], sections: undefined };
 
+  // A statement, and the participants it names, come from the line it starts on.
+  let line: number | undefined;
+  const stamp = (item: SeqItem): SeqItem => {
+    if (Array.isArray(item)) for (const x of item) stamp(x);
+    else if (typeof item !== 'string' && item.line === undefined) item.line = line;
+    return item;
+  };
+
   while (true) {
     const t = types[i];
     const list = frame.list;
+    line = sourceLine(src, starts[i]);
     if (frame.kind === K.Box) {
       if (t === T.participant || t === T.participant_actor || t === T.destroy) {
-        list.push(participant());
+        list.push(stamp(participant()));
       } else if (t === T.NEWLINE) {
         list.push([]);
         i++;
       } else if (t === T.end) {
         i++;
         const done = close(frame);
+        // A box spans its lines, from `box` to this `end`.
+        Object.assign(done[0] as SeqStatement, { line: frame.line, end: line });
         frame = stack.pop()!;
         frame.list.push(done);
       } else {
@@ -294,7 +307,7 @@ export function parseSequence(src: string, db: SeqBuilder): void {
       case T.participant:
       case T.participant_actor:
       case T.destroy:
-        list.push(participant());
+        list.push(stamp(participant()));
         break;
       case T.create: {
         i++;
@@ -304,16 +317,16 @@ export function parseSequence(src: string, db: SeqBuilder): void {
         }
         const node = participant();
         node.type = 'createParticipant';
-        list.push(node);
+        list.push(stamp(node));
         break;
       }
       case T.ACTOR:
-        list.push(signal(actor()));
+        list.push(stamp(signal(actor())));
         expect(T.NEWLINE);
         break;
       case T.link: {
         const next = types[i + 1];
-        list.push(next === T.ACTOR || next === T.link ? menu('addALink') : signal(actor()));
+        list.push(stamp(next === T.ACTOR || next === T.link ? menu('addALink') : signal(actor())));
         expect(T.NEWLINE);
         break;
       }
@@ -330,7 +343,7 @@ export function parseSequence(src: string, db: SeqBuilder): void {
         expect(T.NEWLINE);
         break;
       case T.note:
-        list.push(note());
+        list.push(stamp(note()));
         expect(T.NEWLINE);
         break;
       case T.autonumber:
@@ -393,6 +406,7 @@ export function parseSequence(src: string, db: SeqBuilder): void {
           startType: t === T.par_over ? LINETYPE.PAR_OVER_START : LINETYPE.PAR_START,
           list: [[]],
           sections: undefined,
+          line,
         };
         break;
       }
@@ -411,6 +425,8 @@ export function parseSequence(src: string, db: SeqBuilder): void {
         if (frame.kind === K.Top) fail("'NEWLINE', 'EOF'");
         i++;
         const done = close(frame);
+        // A block spans its lines, from its keyword to this `end`.
+        Object.assign(done[0] as SeqStatement, { line: frame.line, end: line });
         frame = stack.pop()!;
         frame.list.push(done);
         break;

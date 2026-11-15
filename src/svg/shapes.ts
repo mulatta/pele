@@ -1,4 +1,5 @@
 import type { CNode } from '../layout/compound.js';
+import { activeSink, ellipseCmds, parseLook, polygonCmds } from '../scene/sink.js';
 import { num } from './builder.js';
 import { rounded } from './theme.js';
 
@@ -66,17 +67,29 @@ function path(d: string, a: string): string {
   return `<path d="${d}"${a}/>`;
 }
 
+function circle(r: number, a: string): string {
+  const sink = activeSink();
+  if (sink) return sink.defer(() => sink.shape(ellipseCmds(0, 0, r, r), parseLook(a)));
+  return `<circle r="${num(r)}"${a}/>`;
+}
+
 const leanInset: Inset = (_w, h, side) => (side & 1 ? h / 8 : 0);
 
 const box: Sizer = (tw, th) => ({ w: Math.max(tw + 2 * PAD_X, 2 * PAD_X + 12), h: th + 2 * PAD_Y, dy: 0 });
 
+// While a scene is drawn, the helpers below hand their numbers to it and leave a placeholder in
+// the fragment, so the shape's parts keep their order.
 function poly(points: number[], a: string): string {
+  const sink = activeSink();
+  if (sink) return sink.defer(() => sink.shape(polygonCmds(points), parseLook(a)));
   let d = '';
   for (let i = 0; i < points.length; i += 2) d += (i ? ' ' : '') + num(points[i]) + ',' + num(points[i + 1]);
   return `<polygon points="${d}"${a}/>`;
 }
 
 function rect(w: number, h: number, a: string, rx = ''): string {
+  const sink = activeSink();
+  if (sink) return sink.defer(() => sink.rect(-w / 2, -h / 2, w, h, rx + a));
   return `<rect x="${num(-w / 2)}" y="${num(-h / 2)}" width="${num(w)}" height="${num(h)}"${rx}${a}/>`;
 }
 
@@ -135,7 +148,7 @@ const SHAPES: Record<string, ShapeDef> = {
       const d = Math.max(Math.sqrt(tw * tw + th * th) + 16, 44);
       return { w: d, h: d, dy: 0 };
     },
-    draw: (w, _h, a) => `<circle r="${num(w / 2)}"${a}/>`,
+    draw: (w, _h, a) => circle(w / 2, a),
   },
   'dbl-circ': {
     inset: roundInset,
@@ -150,7 +163,11 @@ const SHAPES: Record<string, ShapeDef> = {
     inset: roundInset,
     span: roundSpan,
     size: (tw, th) => ({ w: tw * 1.3 + 2 * PAD_X, h: th * 1.2 + 2 * PAD_Y, dy: 0 }),
-    draw: (w, h, a) => `<ellipse rx="${num(w / 2)}" ry="${num(h / 2)}"${a}/>`,
+    draw: (w, h, a) => {
+      const sink = activeSink();
+      if (sink) return sink.defer(() => sink.shape(ellipseCmds(0, 0, w / 2, h / 2), parseLook(a)));
+      return `<ellipse rx="${num(w / 2)}" ry="${num(h / 2)}"${a}/>`;
+    },
   },
   diam: {
     inset: (w, h, side, t) => (side & 1 ? (Math.abs(t) * w) / h : (Math.abs(t) * h) / w),

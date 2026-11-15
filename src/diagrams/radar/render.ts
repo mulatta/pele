@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -58,6 +58,7 @@ export function renderRadar(model: RadarModel, config: Config, options: RenderOp
 
 // `tight` is set when the chart does not fit the width it has with its legend beside it.
 function draw(model: RadarModel, config: Config, options: RenderOptions, width: number, height: number, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -105,7 +106,7 @@ function draw(model: RadarModel, config: Config, options: RenderOptions, width: 
     // Each label hangs off its axis on the side away from the center.
     const cx = u.x * at + (u.x > 0.01 ? label.width / 2 : u.x < -0.01 ? -label.width / 2 : 0);
     const cy = u.y * at + (u.y > 0.01 ? label.height / 2 : u.y < -0.01 ? -label.height / 2 : 0);
-    labels += `<g class="pele-axis-label" data-id="${escText(axes[i].name)}">${labelSvg(label, cx, cy, '')}</g>`;
+    labels += `<g class="pele-axis-label" data-id="${escText(axes[i].name)}"${srcAttrs(axes[i].source)}>${labelSvg(label, cx, cy, '')}</g>`;
     x0 = Math.min(x0, cx - label.width / 2);
     x1 = Math.max(x1, cx + label.width / 2);
     y0 = Math.min(y0, cy - label.height / 2);
@@ -122,7 +123,7 @@ function draw(model: RadarModel, config: Config, options: RenderOptions, width: 
       return { x: unit[i].x * safe, y: unit[i].y * safe };
     });
     const color = seriesColor(index);
-    const attrs = ` class="pele-curve" data-id="${escText(curve.name)}" fill="${color}" stroke="${color}"`;
+    const attrs = ` class="pele-curve" data-id="${escText(curve.name)}"${srcAttrs(curve.source)} fill="${color}" stroke="${color}"`;
     shapes +=
       graticule === 'circle'
         ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
@@ -151,7 +152,7 @@ function draw(model: RadarModel, config: Config, options: RenderOptions, width: 
     const y = legendTop + index * ROW + ROW / 2;
     const color = seriesColor(index);
     legendOut +=
-      `<g class="pele-legend-item" data-id="${escText(curves[index].name)}">` +
+      `<g class="pele-legend-item" data-id="${escText(curves[index].name)}"${srcAttrs(curves[index].source)}>` +
       `<rect x="${num(legendX)}" y="${num(y - SWATCH / 2)}" width="${SWATCH}" height="${SWATCH}" rx="2" fill="${color}" fill-opacity="0.4" stroke="${color}"/>` +
       labelSvg(label, legendX + SWATCH + 8 + label.width / 2, y, '') +
       '</g>';

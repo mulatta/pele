@@ -1,4 +1,6 @@
-import { PeleError } from '../../errors.js';
+import { PeleError, sourceLine } from '../../errors.js';
+import { writtenCodes } from '../../text/entities.js';
+import type { SourceInfo } from '../../types.js';
 import {
   emptyDrafts,
   resolveUsecase,
@@ -78,6 +80,7 @@ interface Item {
   // Whether this mention says something about the element, and so declares it.
   explicit: boolean;
   nodeSpan: Span;
+  written?: SourceInfo;
 }
 
 interface Tail {
@@ -103,6 +106,8 @@ let parent: DraftBoundary | undefined;
 let pendingJson: [DraftJson, number][] = [];
 let edgeCount = 0;
 let noteCount = 0;
+// Whether to record where parts are written: the model Mermaid's parser publishes has no place for it.
+let recording = false;
 
 function image(k: number): string {
   return src.slice(starts[k], ends[k]);
@@ -110,6 +115,37 @@ function image(k: number): string {
 
 function span(k: number): Span {
   return [starts[k], ends[k]];
+}
+
+// Where the text from offset `from` to `to` is written; undefined unless the host asked for sources.
+function where(from: number, to: number): SourceInfo | undefined {
+  if (!recording) return undefined;
+  const line = sourceLine(src, from);
+  const end = sourceLine(src, to - 1);
+  if (line === undefined || end === undefined) return undefined;
+  return end > line ? { line, end } : { line };
+}
+
+// The name at `at` as written: the entity codes such as `#quot;` that a string may hold were
+// hidden before parsing.
+function nameAt(at: Span): string {
+  return writtenCodes(src.slice(at[0], at[1]));
+}
+
+// Puts the name written at `at` on `info` as its symbol: an element's id, or the string that
+// stands for one and makes its id. An empty string names nothing.
+function symbolAt(info: SourceInfo | undefined, at: Span): SourceInfo | undefined {
+  if (info !== undefined && at[1] > at[0]) info.symbol = nameAt(at);
+  return info;
+}
+
+// Puts the names written at `from` and `to` on `info` as the two ends of a relationship.
+function endsAt(info: SourceInfo | undefined, from: Span, to: Span): SourceInfo | undefined {
+  if (info !== undefined && from[1] > from[0] && to[1] > to[0]) {
+    info.from = nameAt(from);
+    info.to = nameAt(to);
+  }
+  return info;
 }
 
 function fail(detail: string): never {
@@ -306,6 +342,7 @@ function element(actor: boolean): Item {
   if (types[p] === T.CLASS_SEPARATOR) classSuffix(item.classes, item.classSpans);
   item.explicit = Boolean(item.shape || item.metadata || item.stereotype);
   item.nodeSpan = [starts[first], ends[p - 1]];
+  item.written = symbolAt(where(item.nodeSpan[0], item.nodeSpan[1]), item.span);
   return item;
 }
 
@@ -321,6 +358,7 @@ function draft(item: Item, kind: 'actor' | 'usecase'): DraftElement {
     metadata: item.metadata,
     stereotype: item.stereotype,
     classes: item.classes,
+    written: item.written,
   };
 }
 
@@ -332,6 +370,7 @@ function endpoint(item: Item, declares: boolean): DraftEndpoint {
     generated: item.generated,
     declares,
     classed: item.classes.length > 0,
+    written: item.written,
   };
 }
 
@@ -437,6 +476,8 @@ function relationship(source: Item, declaration: boolean, tail: Tail, nodes: Nod
     arrowType: tail.arrowType,
     label: tail.label,
     minlen: tail.minlen,
+    // A relationship runs from where its source is written to the end of its target.
+    written: endsAt(where(source.nodeSpan[0], target.nodeSpan[1]), source.span, target.span),
   });
   nodes.push(occurrence(target, target.explicit));
   const out = statement('edge');
@@ -484,7 +525,7 @@ function entity(top: boolean): GraphStatement {
 }
 
 function boundary(): GraphStatement {
-  p++;
+  const first = starts[p++];
   const named = name(true);
   const group: DraftBoundary = {
     id: named.id,
@@ -502,6 +543,8 @@ function boundary(): GraphStatement {
   while ((FLAGS[types[p]] & BOUNDARY_LINE) !== 0) children.push(line(false));
   parent = undefined;
   const end = expect(T.END);
+  // A boundary spans its lines, from `systemBoundary` to `end`.
+  group.written = symbolAt(where(first, ends[end]), named.span);
   lineEnd();
   const out = statement('group');
   out.group = group.id;
@@ -586,7 +629,7 @@ function topStatement(): GraphStatement {
     expect(T.FOR);
     const target = expect(T.IDENTIFIER);
     const text = label();
-    drafts.notes.push({ target: image(target), span: span(target), label: text });
+    drafts.notes.push({ target: image(target), span: span(target), label: text, written: where(starts[k], ends[p - 1]) });
     out = statement('note');
     out.ref = `note-${noteCount++}`;
     out.refSpan = text.span;
@@ -601,7 +644,8 @@ function topStatement(): GraphStatement {
     while (src.charCodeAt(from) === 32 || src.charCodeAt(from) === 9) from++;
     let to = from;
     while (/\w/.test(src.charAt(to))) to++;
-    const json: DraftJson = { id: src.slice(from, to), value: {}, propertyOrder: new Map(), span: [from, to], classes };
+    const written = symbolAt(where(starts[k], ends[p - 1]), [from, to]);
+    const json: DraftJson = { id: src.slice(from, to), value: {}, propertyOrder: new Map(), span: [from, to], classes, written };
     drafts.jsons.push(json);
     pendingJson.push([json, literal]);
     out = statement('json');
@@ -676,8 +720,9 @@ function line(top: boolean): GraphStatement {
   return out;
 }
 
-export function parseUsecase(source: string, title?: string): UsecaseModel {
+export function parseUsecase(source: string, title?: string, record = false): UsecaseModel {
   src = source;
+  recording = record;
   ({ types, starts, ends } = tokenize(source));
   p = 0;
   drafts = emptyDrafts();

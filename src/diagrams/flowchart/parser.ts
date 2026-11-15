@@ -1,4 +1,4 @@
-import { inputOffset, replacements, syntaxError } from '../../errors.js';
+import { inputOffset, replacements, sourceLine, syntaxError, type Edit } from '../../errors.js';
 import type { FlowDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -73,6 +73,7 @@ interface Frame {
   title: FlowText | undefined;
   list: DocItem[];
   collect: boolean;
+  line?: number;
 }
 
 const TEXT_TOKENS = "'UNICODE_TEXT', 'TEXT', 'TAGSTART'";
@@ -93,6 +94,11 @@ export function parseFlowchart(source: string, db: FlowDb): void {
     if (t === T.ERROR) throw syntaxError('flowchart', source, at, '', true);
     throw syntaxError('flowchart', source, at, `Expecting ${expected}, got '${TOKEN_NAMES[t]}'`);
   };
+
+  // The line of token `k` in the text as written: through the brace edit above, then preprocessing.
+  let braceEdits: Edit[] | undefined;
+  const lineAt = (k: number): number | undefined =>
+    sourceLine(source, src === source ? starts[k] : inputOffset([(braceEdits ??= replacements(source, RE_BRACE_TRAIL, 2))], starts[k]));
 
   const expect = (type: number, also = ''): string => {
     if (types[i] !== type) fail(`'${TOKEN_NAMES[type]}'${also ? ', ' + also : ''}`);
@@ -169,7 +175,14 @@ export function parseFlowchart(source: string, db: FlowDb): void {
     return s;
   };
 
+  // A node's label may run over several lines: it ends on the last token read before it is added.
+  const addVertex: FlowDb['addVertex'] = (...args) => {
+    db.end = lineAt(i - 1);
+    db.addVertex(...args);
+  };
+
   const vertex = (): string => {
+    db.line = lineAt(i);
     const id = idString();
     let label: FlowText;
     switch (types[i]) {
@@ -177,13 +190,13 @@ export function parseFlowchart(source: string, db: FlowDb): void {
         i++;
         label = text();
         closed(T.SQE);
-        db.addVertex(id, label, 'square');
+        addVertex(id, label, 'square');
         break;
       case T.DOUBLECIRCLESTART:
         i++;
         label = text();
         closed(T.DOUBLECIRCLEEND);
-        db.addVertex(id, label, 'doublecircle');
+        addVertex(id, label, 'doublecircle');
         break;
       case T.PS:
         i++;
@@ -192,30 +205,30 @@ export function parseFlowchart(source: string, db: FlowDb): void {
           label = text();
           closed(T.PE);
           expect(T.PE);
-          db.addVertex(id, label, 'circle');
+          addVertex(id, label, 'circle');
         } else {
           label = text();
           closed(T.PE);
-          db.addVertex(id, label, 'round');
+          addVertex(id, label, 'round');
         }
         break;
       case T.ELLIPSE_START:
         i++;
         label = text();
         closed(T.ELLIPSE_END);
-        db.addVertex(id, label, 'ellipse');
+        addVertex(id, label, 'ellipse');
         break;
       case T.STADIUMSTART:
         i++;
         label = text();
         closed(T.STADIUMEND);
-        db.addVertex(id, label, 'stadium');
+        addVertex(id, label, 'stadium');
         break;
       case T.SUBROUTINESTART:
         i++;
         label = text();
         closed(T.SUBROUTINEEND);
-        db.addVertex(id, label, 'subroutine');
+        addVertex(id, label, 'subroutine');
         break;
       case T.VERTEX_WITH_PROPS_START: {
         i++;
@@ -225,14 +238,14 @@ export function parseFlowchart(source: string, db: FlowDb): void {
         expect(T.PIPE);
         label = text();
         closed(T.SQE);
-        db.addVertex(id, label, 'rect', undefined, undefined, undefined, { [field]: value });
+        addVertex(id, label, 'rect', undefined, undefined, undefined, { [field]: value });
         break;
       }
       case T.CYLINDERSTART:
         i++;
         label = text();
         closed(T.CYLINDEREND);
-        db.addVertex(id, label, 'cylinder');
+        addVertex(id, label, 'cylinder');
         break;
       case T.DIAMOND_START:
         i++;
@@ -241,28 +254,28 @@ export function parseFlowchart(source: string, db: FlowDb): void {
           label = text();
           closed(T.DIAMOND_STOP);
           expect(T.DIAMOND_STOP);
-          db.addVertex(id, label, 'hexagon');
+          addVertex(id, label, 'hexagon');
         } else {
           label = text();
           closed(T.DIAMOND_STOP);
-          db.addVertex(id, label, 'diamond');
+          addVertex(id, label, 'diamond');
         }
         break;
       case T.TAGEND:
         i++;
         label = text();
         closed(T.SQE);
-        db.addVertex(id, label, 'odd');
+        addVertex(id, label, 'odd');
         break;
       case T.TRAPSTART:
         i++;
         label = text();
         if (types[i] === T.INVTRAPEND) {
           i++;
-          db.addVertex(id, label, 'lean_right');
+          addVertex(id, label, 'lean_right');
         } else {
           closed(T.TRAPEND);
-          db.addVertex(id, label, 'trapezoid');
+          addVertex(id, label, 'trapezoid');
         }
         break;
       case T.INVTRAPSTART:
@@ -270,14 +283,14 @@ export function parseFlowchart(source: string, db: FlowDb): void {
         label = text();
         if (types[i] === T.TRAPEND) {
           i++;
-          db.addVertex(id, label, 'lean_left');
+          addVertex(id, label, 'lean_left');
         } else {
           closed(T.INVTRAPEND);
-          db.addVertex(id, label, 'inv_trapezoid');
+          addVertex(id, label, 'inv_trapezoid');
         }
         break;
       default:
-        db.addVertex(id);
+        addVertex(id);
     }
     return id;
   };
@@ -312,6 +325,7 @@ export function parseFlowchart(source: string, db: FlowDb): void {
       while (types[i] === T.SPACE);
       const next = styledVertex();
       if (data !== undefined) {
+        db.end = undefined;
         db.addVertex(ids[ids.length - 1], undefined, undefined, undefined, undefined, undefined, undefined, data);
       }
       ids.push(next);
@@ -344,9 +358,12 @@ export function parseFlowchart(source: string, db: FlowDb): void {
     return fail("'LINK', 'START_LINK'");
   };
 
+  // An edge runs from the line its start node is written on to the end of its end node.
   const vertexStatement = (collect: boolean): string[] => {
+    let from = lineAt(i);
     let stmt = node();
     if (pendingData !== undefined) {
+      db.end = undefined;
       db.addVertex(stmt[stmt.length - 1], undefined, undefined, undefined, undefined, undefined, undefined, pendingData);
     }
     let nodes = stmt;
@@ -354,13 +371,18 @@ export function parseFlowchart(source: string, db: FlowDb): void {
       const t = types[i];
       if (t !== T.LINK && t !== T.START_LINK && t !== T.LINK_ID) return nodes;
       const info = link();
+      const to = lineAt(i);
       const next = node();
       if (pendingData !== undefined) {
+        db.end = undefined;
         db.addVertex(next[next.length - 1], undefined, undefined, undefined, undefined, undefined, undefined, pendingData);
       }
+      db.line = from;
+      db.end = lineAt(i - 1);
       db.addLink(stmt, next, info);
       if (collect) nodes = next.concat(nodes);
       stmt = next;
+      from = to;
     }
   };
 
@@ -572,8 +594,9 @@ export function parseFlowchart(source: string, db: FlowDb): void {
       if (t === T.end) {
         const frame = open.pop();
         if (frame === undefined) break;
+        const end = lineAt(i);
         i++;
-        const id = db.addSubGraph(frame.id, list, frame.title);
+        const id = db.addSubGraph(frame.id, list, frame.title, frame.line === undefined || end === undefined ? undefined : [frame.line, end]);
         list = frame.list;
         collect = frame.collect;
         if (collect) list.push(id);
@@ -581,13 +604,18 @@ export function parseFlowchart(source: string, db: FlowDb): void {
         if (collect) list.push(texts[i]);
         i++;
       } else if (t === T.subgraph) {
+        const line = lineAt(i);
         const frame = subgraphHeader();
+        frame.line = line;
         frame.list = list;
         frame.collect = collect;
         open.push(frame);
         list = [];
         collect = true;
       } else {
+        // Statements that name a node outside an edge (style, class, click) add it from their line.
+        db.line = lineAt(i);
+        db.end = undefined;
         const item = statement(collect);
         if (collect && (!Array.isArray(item) || item.length > 0)) list.push(item);
       }

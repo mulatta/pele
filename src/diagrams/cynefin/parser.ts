@@ -1,3 +1,4 @@
+import { sourceLine } from '../../errors.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -50,13 +51,26 @@ export const CYNEFIN_TOKENS: readonly TokenType[] = [
 
 export type DomainName = 'complex' | 'complicated' | 'clear' | 'chaotic' | 'confusion';
 
-export interface DomainBlockAst {
-  $type: 'DomainBlock';
-  domain: DomainName;
-  items: { $type: 'DomainItem'; label: string }[];
+// Where a statement is written, when sources are recorded: its first line, and its last when it
+// spans several. The keys start with `$`, as Langium's own bookkeeping does, which keeps them out
+// of the tree Mermaid builds.
+export interface Written {
+  $line?: number;
+  $end?: number;
 }
 
-export interface TransitionAst {
+export interface DomainItemAst extends Written {
+  $type: 'DomainItem';
+  label: string;
+}
+
+export interface DomainBlockAst extends Written {
+  $type: 'DomainBlock';
+  domain: DomainName;
+  items: DomainItemAst[];
+}
+
+export interface TransitionAst extends Written {
   $type: 'Transition';
   from: DomainName;
   to: DomainName;
@@ -74,7 +88,17 @@ export interface CynefinAst {
 
 export function parseCynefin(src: string): CynefinAst {
   const r = new Reader(tokenize(src, CYNEFIN_TOKENS, 'cynefin'), CYNEFIN_TOKENS, 'cynefin');
+  const { starts, ends } = r.tokens;
   const ast: CynefinAst = { $type: 'Cynefin', domains: [], transitions: [] };
+
+  // Records the lines from token `first` to token `last` as where `node` is written.
+  const written = (node: Written, first: number, last: number): void => {
+    const line = sourceLine(src, starts[first]);
+    if (line === undefined) return;
+    node.$line = line;
+    const end = sourceLine(src, ends[last] - 1);
+    if (end !== undefined && end > line) node.$end = end;
+  };
 
   const skipLines = (): void => {
     while (r.kinds[r.i] === T.newline) r.i++;
@@ -106,20 +130,28 @@ export function parseCynefin(src: string): CynefinAst {
         endOfLine();
         break;
       case T.domain: {
+        const at = r.i;
         const name = r.take() as DomainName;
         if (r.accept(T.arrow)) {
           const transition: TransitionAst = { $type: 'Transition', from: name, to: r.expect(T.domain) as DomainName };
           if (r.accept(T.colon)) transition.label = stringValue(r.expect(T.string));
+          written(transition, at, r.i - 1);
           endOfLine();
           ast.transitions.push(transition);
           break;
         }
         const block: DomainBlockAst = { $type: 'DomainBlock', domain: name, items: [] };
+        // A block runs from its domain to its last item.
+        let last = at;
         skipLines();
         while (r.kinds[r.i] === T.string) {
-          block.items.push({ $type: 'DomainItem', label: stringValue(r.take()) });
+          const item: DomainItemAst = { $type: 'DomainItem', label: stringValue(r.take()) };
+          last = r.i - 1;
+          written(item, last, last);
+          block.items.push(item);
           skipLines();
         }
+        written(block, at, last);
         ast.domains.push(block);
         break;
       }

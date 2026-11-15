@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, classNames, resolveStyle, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -38,6 +38,7 @@ function hex(color: string): string {
 }
 
 export function renderQuadrant(model: QuadrantModel, config: Config, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const titleSize = textSize(config, 'titleFontSize', size);
   const quadrantSize = textSize(config, 'quadrantLabelFontSize', size);
@@ -108,7 +109,7 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
     const cy = hasPoints ? y + textTop + text.height / 2 : y + tileH / 2;
     taken.push(cx - text.width / 2, cy - text.height / 2, cx + text.width / 2, cy + text.height / 2);
     quadrants +=
-      `<g class="pele-quadrant" data-id="${k + 1}">` +
+      `<g class="pele-quadrant" data-id="${k + 1}"${srcAttrs(model.quadrants[k]?.source)}>` +
       `<rect x="${num(x)}" y="${num(y)}" width="${num(tileW)}" height="${num(tileH)}"${ROUNDED}/>` +
       labelSvg(text, cx, cy, ` class="pele-label"${sizeAttr(quadrantSize, size)} fill="var(--_fg)" stroke="none"`) +
       '</g>';
@@ -157,7 +158,7 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
       text: label(point.text, pointSize, w),
     });
     circles.push(
-      `<circle class="pele-point${classNames(point.className)}" data-id="${escText(point.text.text)}" cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"${
+      `<circle class="pele-point${classNames(point.className)}" data-id="${escText(point.text.text)}"${srcAttrs(point.source)} cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"${
         strokeWidth && !strokeColor ? ` stroke="${fill}"` : ''
       }${resolveStyle(styles).shape}/>`
     );

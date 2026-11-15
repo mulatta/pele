@@ -82,8 +82,29 @@ export interface Detected {
   mermaidType: MermaidType;
 }
 
+// Every pattern starts at `^\s*` and a literal letter, so a detector can only match text whose
+// first non-space character is one of its own first letters. Indexing by that letter keeps the
+// registration order among the candidates and skips the other ~35 regex runs.
+const BY_FIRST_LETTER = new Map<string, (typeof DETECTORS)[number][]>();
+for (const detector of DETECTORS) {
+  const alternatives = detector[2].source.slice('^\\s*'.length).replace(/^\(\??:?/, '').split('|');
+  for (const alternative of alternatives) {
+    const key = alternative[0].toLowerCase();
+    const bucket = BY_FIRST_LETTER.get(key);
+    if (bucket === undefined) BY_FIRST_LETTER.set(key, [detector]);
+    else if (!bucket.includes(detector)) bucket.push(detector);
+  }
+}
+
+// What `\s*` skips, as a character class test on one UTF-16 unit.
+const RE_NOT_SPACE = /\S/;
+
 export function detectDiagram(cleaned: string): Detected | null {
-  for (const [type, mermaidType, re] of DETECTORS) if (re.test(cleaned)) return { type, mermaidType };
+  const first = RE_NOT_SPACE.exec(cleaned);
+  if (first === null) return null;
+  const candidates = BY_FIRST_LETTER.get(cleaned[first.index].toLowerCase());
+  if (candidates === undefined) return null;
+  for (const [type, mermaidType, re] of candidates) if (re.test(cleaned)) return { type, mermaidType };
   return null;
 }
 

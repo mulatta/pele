@@ -5,6 +5,6 @@ import { renderPie } from './render.js';
 
 export const pie: Diagram<PieModel> = {
   type: 'pie',
-  parse: (source, _config, title) => buildPie(parsePie(source), title),
+  parse: (source, _config, title) => buildPie(parsePie(source, true), title),
   render: renderPie,
 };

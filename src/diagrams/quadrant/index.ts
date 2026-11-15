@@ -8,7 +8,7 @@ export const quadrantChart: Diagram<QuadrantDb> = {
   parse(source, _config, title) {
     const db = new QuadrantDb();
     db.title = title;
-    parseQuadrant(source, db);
+    parseQuadrant(source, db, true);
     return db;
   },
   render: renderQuadrant,

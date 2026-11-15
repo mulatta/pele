@@ -1,4 +1,5 @@
 import { locate, PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { safeUrl } from '../../util/url.js';
 import { parseYaml, type YamlValue } from '../../util/yaml.js';
 import { isValidShape, resolveShapeAlias } from './shapes.js';
@@ -225,6 +226,9 @@ export class AgentflowDb implements AgentflowModel {
   accTitle: string | undefined;
   accDescr: string | undefined;
   lineOffset: number;
+  // The lines of the text the parser is at: the elements added next come from them.
+  line: number | undefined;
+  end: number | undefined;
 
   private subgraphLookup = new Map<string, AgentSubgraph>();
   private globalNodes = new Set<string>();
@@ -286,6 +290,15 @@ export class AgentflowDb implements AgentflowModel {
     return new PeleError(message, 'semantic', { type: 'agentflow', ...this.errorAt(loc) });
   }
 
+  // Where the parser is, under the name the element is written with there.
+  private written(symbol?: string): SourceInfo | undefined {
+    const { line, end } = this;
+    if (line === undefined) return undefined;
+    const source: SourceInfo = end !== undefined && end > line ? { line, end } : { line };
+    if (symbol) source.symbol = symbol;
+    return source;
+  }
+
   addVertex(
     id: string,
     textObj?: FlowText,
@@ -342,6 +355,13 @@ export class AgentflowDb implements AgentflowModel {
       vertex = { id, labelType: 'text', styles: [], classes: [] };
       this.nodes.set(id, vertex);
     }
+    // A node comes from the last statement that gives it a label or a shape, in brackets or in its
+    // metadata (that is what is drawn), else from the first that names it. A node named like a flow
+    // is drawn as the flow, and metadata after it is the flow's, so it records nothing.
+    const defines = textObj !== undefined || type !== undefined || !!fields?.shape || !!fields?.label;
+    if (this.line !== undefined && (vertex.source === undefined || defines) && subgraph === undefined) {
+      vertex.source = this.written(id);
+    }
 
     if (textObj !== undefined) {
       vertex.labelType = textObj.type;
@@ -389,6 +409,8 @@ export class AgentflowDb implements AgentflowModel {
       isUserDefinedId: false,
       interpolate: this.defaultInterpolate,
     };
+    const source = this.written();
+    if (source !== undefined) edge.source = { ...source, from: start, to: end };
     const linkText = type?.text;
     if (linkText !== undefined) {
       edge.text = unquote(linkText.text.trim());
@@ -537,6 +559,8 @@ export class AgentflowDb implements AgentflowModel {
     let id: string | undefined = idText?.text?.trim();
     const title = titleText?.text || '';
     if (idText !== undefined && idText === titleText && /\s/.test(title)) id = undefined;
+    // A flow spans its lines, from `flow` to its `end`, under the name written there.
+    const source = this.written(id);
 
     const seen = new Set<string>();
     const nodeList: string[] = [];
@@ -570,9 +594,13 @@ export class AgentflowDb implements AgentflowModel {
 
     const existing = this.subgraphLookup.get(id);
     if (existing) {
-      // A repeated id adds its members to the first flow; its title and direction win.
+      // A repeated id adds its members to the first flow; its title and direction win. The flow
+      // comes from the last block that gives it a title, which is what is drawn.
       for (const nodeId of nodes) existing.nodes.push(nodeId);
-      if (title.trim()) existing.title = title.trim();
+      if (title.trim()) {
+        existing.title = title.trim();
+        if (source !== undefined) existing.source = source;
+      }
       if (dir) existing.dir = dir;
       return id;
     }
@@ -585,6 +613,7 @@ export class AgentflowDb implements AgentflowModel {
       labelType: labelType(titleText?.type),
       type: 'flow',
     };
+    if (source !== undefined) subgraph.source = source;
     this.subgraphs.push(subgraph);
     this.subgraphLookup.set(id, subgraph);
     return id;
@@ -614,6 +643,9 @@ export class AgentflowDb implements AgentflowModel {
     if (!id) return '';
     const title = titleObj?.text?.trim() ?? '';
     const connector = this.connectors.get(id);
+    // A connector comes from the last statement that gives it a title (that is what is drawn), else
+    // from the first.
+    const source = this.written(id);
     if (!connector) {
       const created: AgentNode = {
         id,
@@ -623,10 +655,12 @@ export class AgentflowDb implements AgentflowModel {
         isConnector: true,
         text: title.length > 0 ? title : id,
       };
+      if (source !== undefined) created.source = source;
       this.connectors.set(id, created);
       this.nodes.set(id, created);
     } else if (title.length > 0) {
       connector.text = title;
+      if (source !== undefined) connector.source = source;
     }
     return id;
   }

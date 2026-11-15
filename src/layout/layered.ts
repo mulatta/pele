@@ -204,17 +204,25 @@ function sortRange(list: Int32Array, from: number, to: number, key: Int32Array |
   }
 }
 
-// Avoid the comparator overhead of built-in sort.
+// Avoid the comparator overhead of built-in sort. Ties in the barycenter go to the node that was
+// further left (or further right with `right`); the comparison is written out in each loop because
+// a call per comparison dominates in an interpreter.
 function sortByBary(list: Int32Array, count: number, bary: Float64Array, pos: Int32Array, right: boolean, spare: Int32Array): void {
-  const before = (a: number, b: number): boolean => bary[a] < bary[b] || (bary[a] === bary[b] && (right ? pos[a] > pos[b] : pos[a] < pos[b]));
+  const sg = right ? -1 : 1;
   const RUN = 8;
   for (let s = 0; s < count; s += RUN) {
     for (let i = s + 1, end = Math.min(count, s + RUN); i < end; i++) {
       const item = list[i];
+      const bi = bary[item];
+      const pi = pos[item] * sg;
       let j = i - 1;
-      while (j >= s && before(item, list[j])) {
-        list[j + 1] = list[j];
-        j--;
+      while (j >= s) {
+        const o = list[j];
+        const bo = bary[o];
+        if (bi < bo || (bi === bo && pi < pos[o] * sg)) {
+          list[j + 1] = o;
+          j--;
+        } else break;
       }
       list[j + 1] = item;
     }
@@ -228,7 +236,19 @@ function sortByBary(list: Int32Array, count: number, bary: Float64Array, pos: In
       let i = s;
       let j = mid;
       let k = s;
-      while (i < mid && j < end) to[k++] = before(from[j], from[i]) ? from[j++] : from[i++];
+      while (i < mid && j < end) {
+        const x = from[j];
+        const y = from[i];
+        const bx = bary[x];
+        const by = bary[y];
+        if (bx < by || (bx === by && pos[x] * sg < pos[y] * sg)) {
+          to[k++] = x;
+          j++;
+        } else {
+          to[k++] = y;
+          i++;
+        }
+      }
       while (i < mid) to[k++] = from[i++];
       while (j < end) to[k++] = from[j++];
     }
@@ -1856,6 +1876,14 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
   // Require improvements over both the grouped and ungrouped starting orders.
   const start = Math.min(best, declared);
 
+  // Pins never change while ordering, so read them once instead of through the node objects.
+  const pins = new Float64Array(n);
+  let anyPin = false;
+  for (let v = 0; v < real; v++) {
+    pins[v] = nodes[v].pin;
+    if (pins[v] !== 0) anyPin = true;
+  }
+
   const sweep = (down: boolean, biasRight: boolean): void => {
     const start = down ? predStart : succStart;
     const list = down ? predE : succE;
@@ -1869,9 +1897,8 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
       let movable = 0;
       for (let i = s; i < e; i++) {
         const v = order[i];
-        const pin = v < real ? nodes[v].pin : 0;
-        if (pin !== 0) {
-          bary[v] = pin * 1e9;
+        if (anyPin && pins[v] !== 0) {
+          bary[v] = pins[v] * 1e9;
           moving[movable++] = v;
           continue;
         }
@@ -1888,10 +1915,14 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
           continue;
         }
         let sum = 0;
-        for (let k = from; k < to; k++) {
-          const u = other[list[k]];
-          sum += pos[u];
-          if (offsets && W[u] > 0) sum += otherDx[list[k]] / W[u];
+        if (offsets) {
+          for (let k = from; k < to; k++) {
+            const u = other[list[k]];
+            sum += pos[u];
+            if (W[u] > 0) sum += otherDx[list[k]] / W[u];
+          }
+        } else {
+          for (let k = from; k < to; k++) sum += pos[other[list[k]]];
         }
         bary[v] = sum / (to - from);
         moving[movable++] = v;
@@ -1903,8 +1934,10 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
       if (movable < 2) continue;
       sortByBary(moving, movable, bary, pos, biasRight, spare);
       let k = 0;
-      for (let i = s; i < e; i++) if (bary[order[i]] !== -1) order[i] = moving[k++];
-      for (let i = s; i < e; i++) pos[order[i]] = i - s;
+      for (let i = s; i < e; i++) {
+        if (bary[order[i]] !== -1) order[i] = moving[k++];
+        pos[order[i]] = i - s;
+      }
     }
   };
 
@@ -1924,7 +1957,6 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
   };
 
   // Adjacent swaps can remove crossings missed by barycenter sweeps.
-  const pinOf = (v: number): number => (v < real ? nodes[v].pin : 0);
   const at = (e: number, up: boolean): number => {
     const u = up ? EF[e] : ET[e];
     return offsets && W[u] > 0 ? pos[u] + (up ? EFD[e] : ETD[e]) / W[u] : pos[u];
@@ -1951,7 +1983,7 @@ function reduceCrossings(g: Graph, nodes: LNode[]): [number, number] {
         for (let i = s; i + 1 < layerStart[r + 1]; i++) {
           const a = order[i];
           const b = order[i + 1];
-          if (pinOf(a) !== pinOf(b) || (GRP && GRP[a] !== GRP[b])) continue;
+          if (pins[a] !== pins[b] || (GRP && GRP[a] !== GRP[b])) continue;
           if (between(b, a) >= between(a, b)) continue;
           order[i] = b;
           order[i + 1] = a;

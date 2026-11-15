@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
-import type { RenderOptions, Rendered } from '../../types.js';
+import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { tighten, titleRoom } from '../common/fit-width.js';
 import { NONE, fold, parts } from './common.js';
 import type { RailroadModel, RailroadNode } from './types.js';
@@ -35,6 +35,8 @@ interface Box {
   id: string;
   // How far a bypass rises above the baseline, or a loop drops below it.
   reach: number;
+  // Where a non-terminal is written.
+  source?: SourceInfo;
 }
 
 interface Metrics {
@@ -122,7 +124,7 @@ function measure(root: RailroadNode, m: Metrics, room = Infinity): Box {
         return leaf(Kind.Terminal, /^ +$/.test(text) ? '␣'.repeat(text.length) : text, '', Style.Mono, m);
       }
       case 'nonterminal':
-        return leaf(Kind.NonTerminal, shown(node.name), node.name, 0, m);
+        return { ...leaf(Kind.NonTerminal, shown(node.name), node.name, 0, m), source: node.source };
       case 'special':
         return leaf(Kind.Special, '? ' + shown(node.text) + ' ?', '', Style.Italic, m);
       case 'sequence': {
@@ -208,6 +210,7 @@ export function renderRailroad(model: RailroadModel, config: Config, options: Re
 }
 
 function draw(model: RailroadModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const base = options.fontSize ?? 16;
   const fontSize = option(config, 'fontSize', 0, 200);
   const size = fontSize || Math.round(base * 0.875);
@@ -368,7 +371,7 @@ function draw(model: RailroadModel, config: Config, options: RenderOptions, tigh
           if (box.kind === Kind.Terminal) {
             nodes += `<g class="pele-node pele-terminal">${shape} rx="${num(boxTop)}" fill="var(--_s)" stroke="var(--_b)"${stroke}/>${label} font-family="${FONT_MONO}">${esc(text)}</text></g>`;
           } else if (box.kind === Kind.NonTerminal) {
-            nodes += `<g class="pele-node pele-nonterminal" data-id="${escText(box.id)}">${shape} fill="var(--_bg)" stroke="var(--_b)"${stroke}${ROUNDED}/>${label}>${esc(text)}</text></g>`;
+            nodes += `<g class="pele-node pele-nonterminal" data-id="${escText(box.id)}"${srcAttrs(box.source)}>${shape} fill="var(--_bg)" stroke="var(--_b)"${stroke}${ROUNDED}/>${label}>${esc(text)}</text></g>`;
           } else {
             nodes +=
               `<g class="pele-node pele-special">${shape} fill="var(--_bg)" stroke="var(--_b)" stroke-dasharray="4 3"${stroke}${ROUNDED}/>` +
@@ -402,7 +405,7 @@ function draw(model: RailroadModel, config: Config, options: RenderOptions, tigh
           `<circle class="pele-marker pele-end" cx="${num(end + radius)}" cy="${num(baseline)}" r="${num(radius)}" fill="var(--_l)"/>`
         : '';
     rules +=
-      `<g class="pele-rule" data-id="${escText(rule.name)}">` +
+      `<g class="pele-rule" data-id="${escText(rule.name)}"${srcAttrs(rule.source)}>` +
       `<text class="pele-rule-name" x="${num(pad)}" y="${num(top + headHeight / 2 + headSize * 0.35)}" font-size="${num(headSize)}" font-weight="var(--_hw)" text-anchor="start">${esc(name)}</text>` +
       `<path class="pele-edge pele-track" d="${track}" fill="none" stroke="var(--_l)"${stroke}/>` +
       (arrows ? `<path class="pele-marker" d="${arrows}" fill="var(--_l)"/>` : '') +

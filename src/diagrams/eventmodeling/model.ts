@@ -1,6 +1,7 @@
 import { PeleError, locate } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { accDescrValue, accTitleValue, titleValue } from '../common/tokens.js';
-import type { EmFrame, EventModelAst } from './parser.js';
+import type { EmFrame, EventModelAst, Written } from './parser.js';
 
 export type EntityKind = 'ui' | 'processor' | 'command' | 'readmodel' | 'event';
 export type LaneGroup = 'trigger' | 'state' | 'stream';
@@ -26,17 +27,20 @@ export interface EmBox {
   // Example data from the frame or from the data block it refers to.
   data?: string;
   dataType?: string;
+  written?: SourceInfo;
 }
 
 export interface EmRelation {
   source: EmBox;
   target: EmBox;
+  written?: SourceInfo;
 }
 
 export interface EmNote {
   frame: string;
   text: string;
   dataType?: string;
+  written?: SourceInfo;
 }
 
 export interface EmSpecification {
@@ -44,6 +48,7 @@ export interface EmSpecification {
   given: string[];
   when: string[];
   then: string[];
+  written?: SourceInfo;
 }
 
 export interface EventModelingModel {
@@ -78,6 +83,10 @@ const GROUPS = new Map<LaneGroup, readonly [number, string, string]>([
   ['state', [100, 'Command/Read Model', 'C/RM: ']],
   ['stream', [200, 'Events', 'Stream: ']],
 ]);
+
+// The lines a statement is written on, when they are recorded.
+const lines = (node: Written): SourceInfo | undefined =>
+  node.$line === undefined ? undefined : node.$end === undefined ? { line: node.$line } : { line: node.$line, end: node.$end };
 
 function groupOf(kind: EntityKind): LaneGroup {
   return kind === 'ui' || kind === 'processor' ? 'trigger' : kind === 'event' ? 'stream' : 'state';
@@ -145,6 +154,7 @@ export function buildEventModel(ast: EventModelAst, title: string | undefined): 
       const block = data.get(frame.dataReference.$refText);
       if (block !== undefined) text = blockText(block);
     }
+    const at = lines(frame);
     const box: EmBox = {
       id: frame.name,
       kind,
@@ -155,16 +165,22 @@ export function buildEventModel(ast: EventModelAst, title: string | undefined): 
       lane: lane(kind, namespace),
       data: text,
       dataType: frame.dataType,
+      // A box comes from its frame, under the number notes, specifications and other frames use for it.
+      written: at && { ...at, symbol: frame.name },
     };
     boxes.push(box);
     byId.set(box.id, box);
 
     if (frame.sourceFrames.length > 0) {
-      // Sources connect in frame order, and only frames that already have a box.
+      // Sources connect in frame order, and only frames that already have a box. Each relation is
+      // written in the frame that names its source.
       const wanted = new Set(frame.sourceFrames.map((ref) => ref.$refText));
-      for (const source of boxes) if (wanted.has(source.id)) relations.push({ source, target: box });
+      for (const source of boxes) {
+        if (wanted.has(source.id)) relations.push({ source, target: box, written: at && { ...at, from: source.id, to: box.id } });
+      }
     } else if (index > 0 && !box.reset) {
-      // Otherwise the nearest earlier frame in another lane feeds this one.
+      // Otherwise the nearest earlier frame in another lane feeds this one. No statement writes
+      // that relation, so it has no lines.
       for (let i = index - 1; i >= 0; i--) {
         if (boxes[i].lane !== box.lane) {
           relations.push({ source: boxes[i], target: box });
@@ -183,12 +199,18 @@ export function buildEventModel(ast: EventModelAst, title: string | undefined): 
     boxes,
     lanes: [...laneOf.values()].sort((a, b) => a.index - b.index),
     relations,
-    notes: ast.noteEntities.map((note) => ({ frame: note.sourceFrame.$refText, text: blockText(note.dataBlockValue), dataType: note.dataType })),
+    notes: ast.noteEntities.map((note) => ({
+      frame: note.sourceFrame.$refText,
+      text: blockText(note.dataBlockValue),
+      dataType: note.dataType,
+      written: lines(note),
+    })),
     specifications: ast.gwtEntities.map((gwt) => ({
       frame: gwt.sourceFrame.$refText,
       given: names(gwt.givenStatements),
       when: names(gwt.whenStatements),
       then: names(gwt.thenStatements),
+      written: lines(gwt),
     })),
     entities: ast.modelEntities.map((entity) => entity.name),
   };

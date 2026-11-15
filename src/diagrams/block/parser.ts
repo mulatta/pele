@@ -1,4 +1,6 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
+import { writtenCodes } from '../../text/entities.js';
+import type { SourceInfo } from '../../types.js';
 import type { BlockDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -25,6 +27,8 @@ interface NodeInfo {
 interface Frame {
   list: Statement[];
   header: Statement | undefined;
+  // The line the composite starts on.
+  line: number | undefined;
 }
 
 const STATEMENT_START =
@@ -38,9 +42,29 @@ function closeDocument(list: Statement[]): Statement[] {
   return list.concat(last);
 }
 
-export function parseBlock(src: string, db: BlockBuilder): void {
+// `written` collects where each block, edge and composite statement is written. It is kept off
+// the statements and the builder, which stand for what Mermaid's grammar hands over.
+export function parseBlock(src: string, db: BlockBuilder, written?: Map<Block, SourceInfo>): void {
   const { types, texts, starts } = tokenize(src);
   let i = 0;
+  // Line breaks are blanks here, which some tokens take after them, so a part ends on the line its
+  // last token starts on.
+  const lineAt = (k: number): number | undefined => sourceLine(src, starts[k]);
+  // A block or an edge is written from its token `first` to the last one read, under its id or the
+  // ids of its two ends, with the entity codes such as `#quot;` hidden before parsing put back.
+  const stamp = (block: Block, first: number): void => {
+    if (written === undefined) return;
+    const line = lineAt(first);
+    const last = lineAt(i - 1);
+    if (line === undefined || last === undefined) return;
+    const info: SourceInfo = last > line ? { line, end: last } : { line };
+    if (block.type !== 'edge') info.symbol = writtenCodes(block.id);
+    else if (block.start !== undefined && block.end !== undefined) {
+      info.from = writtenCodes(block.start);
+      info.to = writtenCodes(block.end);
+    }
+    written.set(block, info);
+  };
 
   const fail = (expected: string): never => {
     const t = types[i];
@@ -70,7 +94,9 @@ export function parseBlock(src: string, db: BlockBuilder): void {
     return { id };
   };
 
+  // A block is written where it is named, and an edge from its start block to its end block.
   const nodeStatement = (): Statement => {
+    let start = i;
     const first = node();
     const size = types[i] === T.SIZE ? parseInt(texts[i++], 10) : 1;
     let from: Block = {
@@ -80,6 +106,7 @@ export function parseBlock(src: string, db: BlockBuilder): void {
       directions: first.directions,
       widthInColumns: size,
     };
+    stamp(from, start);
     let chain: Block[] | undefined;
     while (types[i] === T.LINK || types[i] === T.START_LINK) {
       let label = '';
@@ -89,29 +116,35 @@ export function parseBlock(src: string, db: BlockBuilder): void {
         expect(T.LINK);
       }
       const link = texts[i - 1];
+      const at = i;
       const to = node();
       const arrowTypeEnd = db.edgeStrToEdgeData(link);
       const arrowTypeStart = db.edgeStrToEdgeStartData(link);
       const thickness = db.edgeStrToThickness(link);
       const pattern = db.edgeStrToPattern(link);
       // Mermaid keeps only the last link of `A --> B --> C` and loses its start. Here every link counts.
-      chain ??= [{ id: from.id, label: from.label, type: from.type, directions: from.directions }];
+      if (chain === undefined) {
+        chain = [{ id: from.id, label: from.label, type: from.type, directions: from.directions }];
+        const head = written?.get(from);
+        if (head !== undefined) written?.set(chain[0], head);
+      }
+      const edge: Block = {
+        id: chain[chain.length - 1].id + '-' + to.id,
+        start: chain[chain.length - 1].id,
+        end: to.id,
+        label,
+        type: 'edge',
+        thickness,
+        pattern,
+        directions: to.directions,
+        arrowTypeEnd,
+        arrowTypeStart,
+      };
+      stamp(edge, start);
       from = { id: to.id, label: to.label, type: db.typeStr2Type(to.typeStr), directions: to.directions };
-      chain.push(
-        {
-          id: chain[chain.length - 1].id + '-' + to.id,
-          start: chain[chain.length - 1].id,
-          end: to.id,
-          label,
-          type: 'edge',
-          thickness,
-          pattern,
-          directions: to.directions,
-          arrowTypeEnd,
-          arrowTypeStart,
-        },
-        from
-      );
+      stamp(from, at);
+      chain.push(edge, from);
+      start = at;
     }
     return chain ?? from;
   };
@@ -134,28 +167,38 @@ export function parseBlock(src: string, db: BlockBuilder): void {
         break;
       }
       case T.KEY:
+        open.push({ list, header: undefined, line: lineAt(i) });
         i++;
-        open.push({ list, header: undefined });
         list = [];
         break;
-      case T.ID_BLOCK:
+      case T.ID_BLOCK: {
+        const line = lineAt(i);
         i++;
         if (types[i] !== T.NODE_ID) fail("'NODE_ID'");
-        open.push({ list, header: nodeStatement() });
+        open.push({ list, header: nodeStatement(), line });
         list = [];
         break;
+      }
       case T.end: {
         const frame = open.pop();
         if (frame === undefined || list.length === 0) return fail(STATEMENT_START);
+        const end = lineAt(i);
         i++;
         const id = db.generateId();
         const children = closeDocument(list) as Block[];
         list = frame.list;
-        list.push(
+        const composite: Block =
           frame.header === undefined
             ? { id, type: 'composite', label: '', children }
-            : ({ ...frame.header, type: 'composite', children } as Block)
-        );
+            : ({ ...frame.header, type: 'composite', children } as Block);
+        // A composite spans its lines, from `block` to `end`, under the id of its header. Without
+        // one, or with a link for one, its id is generated.
+        if (written !== undefined && frame.line !== undefined && end !== undefined) {
+          const info: SourceInfo = end > frame.line ? { line: frame.line, end } : { line: frame.line };
+          if (frame.header !== undefined && !Array.isArray(frame.header)) info.symbol = writtenCodes(composite.id);
+          written.set(composite, info);
+        }
+        list.push(composite);
         break;
       }
       case T.CLASSDEF: {

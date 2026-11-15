@@ -1,8 +1,11 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 
 export interface QuadrantText {
   text: string;
   type: 'text' | 'markdown';
+  // Where a quadrant's text is written, when the parser recorded it.
+  source?: SourceInfo;
 }
 
 export interface PointStyle {
@@ -17,6 +20,7 @@ export interface QuadrantPoint extends PointStyle {
   y: number;
   text: QuadrantText;
   className: string;
+  source?: SourceInfo;
 }
 
 export interface QuadrantModel {
@@ -93,21 +97,31 @@ export class QuadrantDb implements QuadrantModel {
   yAxisTop: QuadrantText | undefined;
   points: QuadrantPoint[] = [];
   classes = new Map<string, PointStyle>();
+  // Where the statement being read is written, when the parser records it: the quadrant or point
+  // it sets comes from there.
+  source: SourceInfo | undefined;
+
+  // A later text for a quadrant replaces an earlier one, and with it where the quadrant comes from.
+  private quadrant(label: QuadrantText): QuadrantText {
+    const out = trimmed(label);
+    if (this.source) out.source = this.source;
+    return out;
+  }
 
   setQuadrant1Text(label: QuadrantText): void {
-    this.quadrants[0] = trimmed(label);
+    this.quadrants[0] = this.quadrant(label);
   }
 
   setQuadrant2Text(label: QuadrantText): void {
-    this.quadrants[1] = trimmed(label);
+    this.quadrants[1] = this.quadrant(label);
   }
 
   setQuadrant3Text(label: QuadrantText): void {
-    this.quadrants[2] = trimmed(label);
+    this.quadrants[2] = this.quadrant(label);
   }
 
   setQuadrant4Text(label: QuadrantText): void {
-    this.quadrants[3] = trimmed(label);
+    this.quadrants[3] = this.quadrant(label);
   }
 
   setXAxisLeftText(label: QuadrantText): void {
@@ -127,7 +141,9 @@ export class QuadrantDb implements QuadrantModel {
   }
 
   addPoint(label: QuadrantText, className: string, x: string, y: string, styles: string[]): void {
-    this.points.push({ x: Number(x), y: Number(y), text: trimmed(label), className, ...parseStyles(styles) });
+    const point: QuadrantPoint = { x: Number(x), y: Number(y), text: trimmed(label), className, ...parseStyles(styles) };
+    if (this.source) point.source = this.source;
+    this.points.push(point);
   }
 
   addClass(className: string, styles: string[]): void {

@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
@@ -73,6 +73,7 @@ export function renderGit(model: GitModel, config: Config, options: RenderOption
 }
 
 function draw(model: GitModel, config: Config, options: RenderOptions, direction: GitModel['direction']): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -227,7 +228,7 @@ function draw(model: GitModel, config: Config, options: RenderOptions, direction
       grow(px(-LABEL_GAP, c), py(-LABEL_GAP, c), px(-LABEL_GAP, c), py(-LABEL_GAP, c));
       grow(px(end + TAIL, c), py(end + TAIL, c), px(end + TAIL, c), py(end + TAIL, c));
       branches +=
-        `<g class="pele-branch" data-id="${escText(model.lanes[i])}">` +
+        `<g class="pele-branch" data-id="${escText(model.lanes[i])}"${srcAttrs(model.branchSources.get(model.lanes[i]))}>` +
         `<path class="pele-lane" d="M${point(-LABEL_GAP, c)}L${point(end + TAIL, c)}" stroke="${color}" stroke-dasharray="2 4"/>`;
       if (name.lines.length > 0) {
         grow(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
@@ -357,7 +358,7 @@ function draw(model: GitModel, config: Config, options: RenderOptions, direction
     }
 
     const merge = commit.type === commitType.MERGE && type !== commitType.MERGE ? ' pele-commit-merge' : '';
-    commits += `<g class="pele-commit pele-commit-${CLASSES[type] ?? CLASSES[0]}${merge}" data-id="${escText(commit.id)}">${body}</g>`;
+    commits += `<g class="pele-commit pele-commit-${CLASSES[type] ?? CLASSES[0]}${merge}" data-id="${escText(commit.id)}"${srcAttrs(commit.source)}>${body}</g>`;
   }
 
   if (minX > maxX) grow(0, 0, 0, 0);

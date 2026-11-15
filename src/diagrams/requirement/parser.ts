@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import { Relationships, RequirementType, RiskLevel, VerifyType, type RequirementDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -37,6 +37,14 @@ export function parseRequirement(src: string, db: RequirementDb): void {
   let i = 0;
   const fields: number[] = [];
   const values: string[] = [];
+  // The line token `k` ends on, a quoted string's closing quote included: a string may hold line breaks.
+  const endLine = (k: number): number | undefined =>
+    sourceLine(src, starts[k] + (types[k] === T.qString ? texts[k].length : Math.max(0, texts[k].length - 1)));
+  // What the parser adds next comes from the lines of tokens `first` to the last one read.
+  const record = (first: number): void => {
+    db.line = sourceLine(src, starts[first]);
+    db.end = endLine(i - 1);
+  };
 
   // Fails with Jison's wording, naming the token types `from` to `to` and any others as expected.
   const fail = (from: number, to: number = from, ...others: number[]): never => {
@@ -189,17 +197,20 @@ export function parseRequirement(src: string, db: RequirementDb): void {
       i++;
       db.setDirection(t === T.direction_tb ? 'TB' : t === T.direction_bt ? 'BT' : t === T.direction_rl ? 'RL' : 'LR');
     } else if (t >= T.REQUIREMENT && t <= T.DESIGN_CONSTRAINT) {
+      const first = i;
       const type = keyword(T.REQUIREMENT, T.DESIGN_CONSTRAINT);
       const name = string();
       const classes = classList();
       body(true);
+      record(first);
       db.addRequirement(name, type);
       if (classes) db.setClass([name], classes);
     } else if (t === T.ELEMENT) {
-      i++;
+      const first = i++;
       const name = string();
       const classes = classList();
       body(false);
+      record(first);
       db.addElement(name);
       if (classes) db.setClass([name], classes);
     } else if (t === T.STYLE) {
@@ -215,6 +226,7 @@ export function parseRequirement(src: string, db: RequirementDb): void {
       const ids = idList();
       db.setClass(ids, idList());
     } else if (t === T.unqString || t === T.qString) {
+      const first = i;
       const id = texts[i++];
       const next = types[i];
       if (next === T.STYLE_SEPARATOR) {
@@ -225,6 +237,7 @@ export function parseRequirement(src: string, db: RequirementDb): void {
         const relationship = keyword(T.CONTAINS, T.TRACES);
         expect(next === T.LINE ? T.END_ARROW_R : T.LINE);
         const other = string();
+        record(first);
         if (next === T.LINE) db.addRelationship(relationship, id, other);
         else db.addRelationship(relationship, other, id);
       } else {

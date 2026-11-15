@@ -1,6 +1,7 @@
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
-import type { PacketAst } from './parser.js';
+import type { SourceInfo } from '../../types.js';
+import type { PacketAst, PacketBlockAst } from './parser.js';
 
 export interface PacketBlock {
   start: number;
@@ -8,6 +9,8 @@ export interface PacketBlock {
   // As Mermaid counts it: one less than the width for the pieces of a field split across rows.
   bits: number;
   label: string;
+  // Where the field is written, which every piece of it has, when the parser recorded it.
+  source?: SourceInfo;
 }
 
 export interface PacketModel {
@@ -28,6 +31,13 @@ export function packetOption(config: Config, key: string, fallback: number, min:
 
 function invalid(message: string): PeleError {
   return new PeleError(message, 'semantic', { type: 'packet' });
+}
+
+// A field, or its piece on one row, with where the field is written.
+function piece(block: PacketBlockAst, start: number, end: number, bits: number): PacketBlock {
+  const out: PacketBlock = { start, end, bits, label: block.label };
+  if (block.source) out.source = block.source;
+  return out;
 }
 
 export function buildPacket(ast: PacketAst, config: Config, title: string | undefined): PacketModel {
@@ -56,7 +66,7 @@ export function buildPacket(ast: PacketAst, config: Config, title: string | unde
     while (word.length <= bitsPerRow + 1 && rows.length < MAX_ROWS) {
       const rowEnd = row * bitsPerRow - 1;
       if (end <= rowEnd) {
-        word.push({ start, end, bits, label: block.label });
+        word.push(piece(block, start, end, bits));
         if (end === rowEnd) {
           rows.push(word);
           word = [];
@@ -64,7 +74,7 @@ export function buildPacket(ast: PacketAst, config: Config, title: string | unde
         }
         break;
       }
-      word.push({ start, end: rowEnd, bits: rowEnd - start, label: block.label });
+      word.push(piece(block, start, rowEnd, rowEnd - start));
       rows.push(word);
       word = [];
       row++;

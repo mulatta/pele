@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { VennModel, VennStyle, VennSubset, VennText } from './types.js';
 
 // Mermaid takes one pair of quotes off an id, label or style value.
@@ -21,6 +22,9 @@ export class VennDb implements VennModel {
   private current: string[] | undefined;
   // Whether an indented `text` line belongs to the set or union before it. The lexer reads this.
   private indent = false;
+  // Where the statement being read is written, when the parser records it: the set, overlap or
+  // text it adds comes from there.
+  source: SourceInfo | undefined;
 
   setDiagramTitle(title: string): void {
     this.title = title;
@@ -31,11 +35,17 @@ export class VennDb implements VennModel {
     const sets = normalizeIds(ids);
     this.current = sets;
     if (sets.length === 1) this.known.add(sets[0]);
-    this.subsets.push({ sets, size: size ?? 10 / ids.length ** 2, label: label ? normalizeText(label) : undefined });
+    const subset: VennSubset = { sets, size: size ?? 10 / ids.length ** 2, label: label ? normalizeText(label) : undefined };
+    // A set goes by its name, which unions and styles refer to; an overlap has none of its own.
+    if (this.source) subset.source = sets.length === 1 ? { ...this.source, symbol: sets[0] } : this.source;
+    this.subsets.push(subset);
   }
 
   addTextData(ids: string[], id: string, label: string | undefined): void {
-    this.textNodes.push({ sets: normalizeIds(ids), id: normalizeText(id), label: label ? normalizeText(label) : undefined });
+    const text: VennText = { sets: normalizeIds(ids), id: normalizeText(id), label: label ? normalizeText(label) : undefined };
+    // A text goes by its id, which styles refer to.
+    if (this.source) text.source = { ...this.source, symbol: text.id };
+    this.textNodes.push(text);
   }
 
   addStyleData(ids: string[], data: [string, string][]): void {

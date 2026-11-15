@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { Relation, Requirement, RequirementClass, RequirementElement, RequirementModel } from './types.js';
 
 export const RequirementType = {
@@ -29,6 +30,11 @@ export const Relationships = {
   TRACES: 'traces',
 } as const;
 
+// Where a statement is written, with the names it gives: its line, and its last when it runs over several.
+function lines(line: number, end: number | undefined, names: SourceInfo): SourceInfo {
+  return end !== undefined && end > line ? { line, end, ...names } : { line, ...names };
+}
+
 // Applying a class copies its declarations onto each node, so a short text can ask for
 // hundreds of millions of copies. Past this many the diagram is refused.
 const MAX_STYLE_COPIES = 1_000_000;
@@ -43,6 +49,10 @@ export class RequirementDb implements RequirementModel {
   title: string | undefined;
   accTitle: string | undefined;
   accDescr: string | undefined;
+  // The lines of the statement the parser is at, when sources are asked for. The first
+  // definition of a name is the one drawn, so only it is recorded.
+  line: number | undefined;
+  end: number | undefined;
 
   // The grammar reports a body's fields before the requirement or element they belong to.
   private newId = '';
@@ -78,6 +88,7 @@ export class RequirementDb implements RequirementModel {
         cssStyles: [],
         classes: ['default'],
       };
+      if (this.line !== undefined) requirement.source = lines(this.line, this.end, { symbol: name });
       this.requirements.set(name, requirement);
     }
     this.newId = this.newText = this.newRisk = this.newVerifyMethod = '';
@@ -104,6 +115,7 @@ export class RequirementDb implements RequirementModel {
     let element = this.elements.get(name);
     if (element === undefined) {
       element = { name, type: this.newElementType, docRef: this.newDocRef, cssStyles: [], classes: ['default'] };
+      if (this.line !== undefined) element.source = lines(this.line, this.end, { symbol: name });
       this.elements.set(name, element);
     }
     this.newElementType = this.newDocRef = '';
@@ -119,7 +131,9 @@ export class RequirementDb implements RequirementModel {
   }
 
   addRelationship(type: string, src: string, dst: string): void {
-    this.relations.push({ type, src, dst });
+    const relation: Relation = { type, src, dst };
+    if (this.line !== undefined) relation.source = lines(this.line, this.end, { from: src, to: dst });
+    this.relations.push(relation);
   }
 
   private node(id: string): Requirement | RequirementElement | undefined {

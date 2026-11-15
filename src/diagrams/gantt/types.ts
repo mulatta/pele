@@ -1,3 +1,5 @@
+import type { SourceInfo } from '../../types.js';
+
 export interface GanttTask {
   id: string;
   // The task's label, under the name Mermaid gives it.
@@ -20,6 +22,9 @@ export interface GanttTask {
   classes: string[];
   prevTaskId: string | undefined;
   raw: { data: string; start: string | undefined; end: string };
+  // Where the task is written, and the section statement it comes under (see SourceInfo).
+  source?: SourceInfo;
+  sectionSource?: SourceInfo;
 }
 
 export interface GanttModel {

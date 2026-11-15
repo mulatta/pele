@@ -1,4 +1,4 @@
-import { inputOffset, replacements, syntaxError } from '../../errors.js';
+import { inputOffset, replacements, sourceLine, syntaxError, type Edit } from '../../errors.js';
 import type { AgentflowDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -101,6 +101,8 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
   const { types, texts, starts, locs } = tokenize(src);
   let i = 0;
   let pendingData: string | undefined;
+  // The token the node that `pendingData` belongs to starts at.
+  let pendingAt = 0;
   let dataFrom = 0;
   let dataTo = 0;
 
@@ -116,6 +118,34 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
     const at = src === source ? from : inputOffset([replacements(source, RE_BRACE_TRAIL, 2)], from);
     if (t === T.ERROR) throw syntaxError('agentflow', source, at, '', true);
     throw syntaxError('agentflow', source, at, `Expecting ${expected}, got '${TOKEN_NAMES[t]}'`);
+  };
+
+  // The line of offset `at` of `src` in the text as written: through the brace edit above, then preprocessing.
+  let braceEdits: Edit[] | undefined;
+  const lineOf = (at: number): number | undefined =>
+    sourceLine(source, src === source ? at : inputOffset([(braceEdits ??= replacements(source, RE_BRACE_TRAIL, 2))], at));
+  const lineAt = (k: number): number | undefined => lineOf(starts[k]);
+  // The line token `k` ends on. A string ends at its closing quote, and metadata at the brace that
+  // closes it, which is no token of its own.
+  const endAt = (k: number): number | undefined => {
+    const t = types[k];
+    if (t === T.SHAPE_DATA) {
+      const close = src.indexOf('}', starts[k]);
+      return lineOf(close === -1 ? starts[k] : close);
+    }
+    return lineOf(starts[k] + (t === T.STR || t === T.MD_STR ? texts[k].length : Math.max(0, texts[k].length - 1)));
+  };
+  // A node as written ends at token `k - 1`, or with the metadata block that follows it, after any
+  // `:::class`: that block is part of the same statement.
+  const nodeEnd = (k: number): number | undefined => {
+    let j = k;
+    if (types[j] === T.STYLE_SEPARATOR) {
+      do j++;
+      while (ID[types[j]] === 1);
+    }
+    if (types[j] !== T.SHAPE_DATA) return endAt(k - 1);
+    while (types[j + 1] === T.SHAPE_DATA) j++;
+    return endAt(j);
   };
 
   // The span from the start of token `a` to the end of token `b`.
@@ -202,8 +232,11 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
     return s;
   };
 
-  const attach = (id: string, data: string, from: number, to: number): void => {
+  // `at`: the token the node starts at. Its statement runs on to the end of the metadata.
+  const attach = (id: string, data: string, from: number, to: number, at: number): void => {
     const loc = span(from, to);
+    db.line = lineAt(at);
+    db.end = endAt(to);
     db.addVertex(id, undefined, undefined, undefined, undefined, undefined, undefined, data, loc);
     db.extendVertexMapping(id, loc);
   };
@@ -325,6 +358,8 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
         }
         break;
     }
+    db.line = lineAt(from);
+    db.end = nodeEnd(i);
     if (props !== undefined) db.addVertex(id, label, type, undefined, undefined, undefined, props);
     else if (type !== undefined) db.addVertex(id, label, type);
     else db.addVertex(id);
@@ -342,6 +377,7 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
   };
 
   const node = (): string[] => {
+    let at = i;
     const ids = [styledVertex()];
     pendingData = undefined;
     while (true) {
@@ -351,6 +387,7 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
       const to = dataTo;
       if (types[i] !== T.SPACE) {
         pendingData = data;
+        pendingAt = at;
         return ids;
       }
       do i++;
@@ -363,9 +400,11 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
       if (types[i] !== T.SPACE) fail("'SPACE'");
       do i++;
       while (types[i] === T.SPACE);
+      const nextAt = i;
       const next = styledVertex();
-      if (data !== undefined) attach(ids[ids.length - 1], data, from, to);
+      if (data !== undefined) attach(ids[ids.length - 1], data, from, to, at);
       ids.push(next);
+      at = nextAt;
     }
   };
 
@@ -395,21 +434,27 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
     return fail("'LINK', 'START_LINK'");
   };
 
+  // An edge runs from the line its start node is written on to the end of its end node.
   const vertexStatement = (): string[] => {
     const from = i;
+    let line = lineAt(i);
     let stmt = node();
-    if (pendingData !== undefined) attach(stmt[stmt.length - 1], pendingData, dataFrom, dataTo);
+    if (pendingData !== undefined) attach(stmt[stmt.length - 1], pendingData, dataFrom, dataTo, pendingAt);
     let nodes = stmt;
     while (true) {
       const t = types[i];
       if (t !== T.LINK && t !== T.START_LINK && t !== T.LINK_ID) return nodes;
       const info = link();
+      const to = lineAt(i);
       const next = node();
-      if (pendingData !== undefined) attach(next[next.length - 1], pendingData, dataFrom, dataTo);
+      if (pendingData !== undefined) attach(next[next.length - 1], pendingData, dataFrom, dataTo, pendingAt);
+      db.line = line;
+      db.end = endAt(i - 1);
       db.addLink(stmt, next, info);
       db.addEdgeMapping(stmt, next, info, span(from, i - 1));
       nodes = next.concat(nodes);
       stmt = next;
+      line = to;
     }
   };
 
@@ -574,6 +619,9 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
       case T.connector: {
         const frame = header(i++);
         const sep = i++;
+        // A connector is written from `connector` to the end of its title or metadata.
+        db.line = lineAt(frame.at);
+        db.end = endAt(sep - 1);
         const id = db.addConnector(frame.id!, frame.title);
         attachData(id, frame);
         db.addConnectorMapping(frame.id, frame.title, span(frame.at, frame.at), span(sep, sep));
@@ -630,6 +678,8 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
           collect = frame.collect;
           continue;
         }
+        db.line = lineAt(frame.at);
+        db.end = lineAt(at);
         const id = db.addSubGraph(frame.id, list, frame.title, 'flow');
         attachData(id, frame);
         db.addSubgraphMapping(frame.id, frame.title, span(frame.at, frame.at), span(at, at));
@@ -667,6 +717,9 @@ export function parseAgentflow(source: string, db: AgentflowDb, raw = false): vo
         list = [];
         collect = true;
       } else {
+        // A statement that names a node outside an edge (style) adds it from its line.
+        db.line = lineAt(i);
+        db.end = undefined;
         const item = statement();
         if (collect && (!Array.isArray(item) || item.length > 0)) list.push(item);
       }

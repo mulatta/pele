@@ -1,8 +1,11 @@
+import type { SourceInfo } from '../../types.js';
+
 // A set (one id) or an overlap of sets (two or more ids, sorted), with its relative area.
 export interface VennSubset {
   sets: string[];
   size: number;
   label: string | undefined;
+  source?: SourceInfo;
 }
 
 // A line of text shown inside the region of the given sets.
@@ -10,6 +13,7 @@ export interface VennText {
   sets: string[];
   id: string;
   label: string | undefined;
+  source?: SourceInfo;
 }
 
 // Targets are the sorted ids of a set or overlap, or the id of a text.

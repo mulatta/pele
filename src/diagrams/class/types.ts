@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { ClassMember } from './members.js';
 
 export type RelationEnd = number | 'none';
@@ -16,6 +17,7 @@ export interface ClassNode {
   linkTarget?: string;
   haveCallback?: boolean;
   tooltip?: string;
+  source?: SourceInfo;
 }
 
 export interface ClassRelation {
@@ -25,6 +27,7 @@ export interface ClassRelation {
   relationTitle2: string;
   title?: string;
   relation: { type1: RelationEnd; type2: RelationEnd; lineType: number };
+  source?: SourceInfo;
 }
 
 export interface ClassNote {
@@ -33,12 +36,14 @@ export interface ClassNote {
   text: string;
   index: number;
   parent?: string;
+  source?: SourceInfo;
 }
 
 export interface ClassInterface {
   id: string;
   label: string;
   classId: string;
+  source?: SourceInfo;
 }
 
 export interface NamespaceNode {
@@ -50,6 +55,7 @@ export interface NamespaceNode {
   parent?: string;
   // False for the ancestors created on the way to a dotted name such as `A.B.C`.
   explicit: boolean;
+  source?: SourceInfo;
 }
 
 export interface StyleClass {

@@ -1,3 +1,4 @@
+import type { Scene } from './scene/sink.js';
 import type { DiagramType, MermaidType } from './detect.js';
 import type { Config } from './preprocess.js';
 import type { TextMeasurer } from './text/measurer.js';
@@ -46,6 +47,21 @@ export interface RenderOptions {
   config?: Config;
   // The time gantt charts treat as now. Defaults to the current time.
   now?: number | Date;
+  // Adds where each element comes from to its `data-id` group (see SourceInfo), for a host that
+  // maps what is drawn back to the text. Parsing records it only when asked, so parse() takes it
+  // too: a model parsed without it has none to add. renderScene() asks for it when it parses.
+  sourceInfo?: boolean;
+}
+
+// Where a drawn element comes from in the text as written, front matter and comments included:
+// its first line (and last, for a block that spans several), the name the author gave it, and
+// for a connection the names of its two ends. Types that do not record it leave it out.
+export interface SourceInfo {
+  line?: number;
+  end?: number;
+  symbol?: string;
+  from?: string;
+  to?: string;
 }
 
 export interface LinkInfo {
@@ -59,6 +75,8 @@ export interface Rendered {
   width: number;
   height: number;
   links: LinkInfo[];
+  // Set instead of `svg` when the diagram was drawn with a scene sink.
+  scene?: Scene;
 }
 
 export interface RenderResult extends Rendered {

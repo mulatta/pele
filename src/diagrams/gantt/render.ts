@@ -1,10 +1,10 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { CRITICAL, ROUNDED, resolveStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
-import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
+import type { LinkInfo, RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { capWidth } from '../common/fit-width.js';
 import { linked } from '../../util/url.js';
 import { autoTicks, intervalTicks, timeFormat } from './axis.js';
@@ -70,6 +70,7 @@ interface Bar {
 }
 
 export function renderGantt(model: GanttDb, config: Config, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -94,6 +95,8 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
 
   const rowOf = new Map<GanttTask, number>();
   const rowSection: string[] = [];
+  // The section statement of each row's first task. A run of rows is labelled by its first row's.
+  const rowSource: (SourceInfo | undefined)[] = [];
   if (compact) {
     const groups = new Map<string, GanttTask[]>();
     for (const task of rowTasks) {
@@ -103,12 +106,16 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     }
     for (const [section, group] of groups) {
       const rows = packRows(group, rowSection.length, rowOf);
-      for (let i = 0; i < rows; i++) rowSection.push(section);
+      for (let i = 0; i < rows; i++) {
+        rowSection.push(section);
+        rowSource.push(group[0].sectionSource);
+      }
     }
   } else {
     for (const task of rowTasks) {
       rowOf.set(task, rowSection.length);
       rowSection.push(task.section);
+      rowSource.push(task.sectionSource);
     }
   }
   const rowCount = rowSection.length;
@@ -238,8 +245,8 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     while (line < vertEnds.length && cx - label.width / 2 < vertEnds[line] + 8) line++;
     vertEnds[line] = cx + label.width / 2;
     extent = Math.max(extent, vertEnds[line]);
-    vertLines += `<path class="pele-vert" data-id="${escText(task.id)}" d="M${num(vx)},${num(plotTop - gridLead)}V${num(plotBottom)}"/>`;
-    vertLabels += labelSvg(label, cx, vertTop + line * vertLine + vertLine / 2, ` class="pele-vert-label" data-id="${escText(task.id)}"`);
+    vertLines += `<path class="pele-vert" data-id="${escText(task.id)}"${srcAttrs(task.source)} d="M${num(vx)},${num(plotTop - gridLead)}V${num(plotBottom)}"/>`;
+    vertLabels += labelSvg(label, cx, vertTop + line * vertLine + vertLine / 2, ` class="pele-vert-label" data-id="${escText(task.id)}"${srcAttrs(task.source)}`);
   }
 
   const width = Math.ceil(Math.max(extent, pad + title.width) + pad);
@@ -261,7 +268,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
       }"/>`;
     }
     const label = sectionLabels.get(section)!;
-    sectionOut += labelSvg(label, pad + 8 + label.width / 2, y + h / 2, ` class="pele-section-label" data-id="${escText(section)}"`, options.icons);
+    sectionOut += labelSvg(label, pad + 8 + label.width / 2, y + h / 2, ` class="pele-section-label" data-id="${escText(section)}"${srcAttrs(rowSource[row])}`, options.icons);
     row = end;
   }
 
@@ -333,7 +340,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     let body = shape + labelSvg(bar.label, bar.labelX, cy, ` class="pele-label"${textFill}`);
     const url = model.links.get(task.id);
     if (url !== undefined) body = linked(body, url, task.id, links, options);
-    tasksOut += `<g class="${classes}" data-id="${escText(task.id)}">${body}</g>`;
+    tasksOut += `<g class="${classes}" data-id="${escText(task.id)}"${srcAttrs(task.source)}>${body}</g>`;
   }
 
   let today = '';

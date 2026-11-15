@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle } from '../../svg/builder.js';
 import { edgeLabelSvg, routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
@@ -160,6 +160,7 @@ export function renderRequirement(model: RequirementModel, _config: Config, opti
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(model: RequirementModel, _config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const graph = buildRequirementGraph(model);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
@@ -301,7 +302,7 @@ function draw(model: RequirementModel, _config: Config, options: RenderOptions, 
     }
     nodesOut += `<g class="pele-node ${view.node.requirement ? 'pele-requirement' : 'pele-element'}${classNames(
       view.node.cssClasses.replace(/^default\s?/, '')
-    )}" data-id="${escText(view.node.id)}" transform="translate(${num(cnodes[i].x + ox)},${num(cnodes[i].y + oy)})">${body}</g>`;
+    )}" data-id="${escText(view.node.id)}"${srcAttrs(view.node.written)} transform="translate(${num(cnodes[i].x + ox)},${num(cnodes[i].y + oy)})">${body}</g>`;
   }
 
   let edgesOut = '';
@@ -356,7 +357,7 @@ function draw(model: RequirementModel, _config: Config, options: RenderOptions, 
       path = routePath(route, undefined, startTrim, 0);
     }
     edgesOut +=
-      `<g class="pele-edge pele-relationship-${edge.contains ? 'contains' : 'arrow'}" data-id="${escText(edge.id)}">` +
+      `<g class="pele-edge pele-relationship-${edge.contains ? 'contains' : 'arrow'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
       `<path d="${path.d}"${edge.contains ? '' : ' stroke-dasharray="5 4"'}/>` +
       (edge.contains
         ? containsMarker(path.sx, path.sy, path.sdx, path.sdy)

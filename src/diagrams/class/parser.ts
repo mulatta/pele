@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { ClassDb } from './db.js';
 import { tokenize } from './lexer.js';
 import { T, TOKEN_NAMES } from './tokens.js';
@@ -26,10 +26,13 @@ interface Frame {
   id: string;
   classes: string[];
   notes: string[];
+  line: number | undefined;
+  name: string;
 }
 
 export function parseClassDiagram(src: string, db: ClassDb): void {
   const { types, texts, starts } = tokenize(src);
+  const lineAt = (k: number): number | undefined => sourceLine(src, starts[k]);
   let i = 0;
 
   const fail = (expected: string): never => {
@@ -86,6 +89,7 @@ export function parseClassDiagram(src: string, db: ClassDb): void {
   };
 
   const classStatement = (): string => {
+    const line = (db.line = lineAt(i));
     i++;
     const id = name(true);
     db.addClass(id);
@@ -119,10 +123,12 @@ export function parseClassDiagram(src: string, db: ClassDb): void {
         break;
       }
     }
+    if (line !== undefined) db.classLines(id, line, lineAt(i - 1));
     return id;
   };
 
   const noteStatement = (): string => {
+    db.line = lineAt(i);
     if (types[i++] === T.NOTE) return db.addNote(expect(T.STR));
     const id = name(true);
     return db.addNote(expect(T.STR), id);
@@ -132,12 +138,13 @@ export function parseClassDiagram(src: string, db: ClassDb): void {
   const namespaceStatement = (): void => {
     const open: Frame[] = [];
     while (true) {
+      const line = (db.line = lineAt(i));
       i++;
       const ns = name(false);
       const id = types[i] === T.SQS ? db.addNamespace(ns, classLabel()) : db.addNamespace(ns);
       expect(T.STRUCT_START);
       if (types[i] === T.NEWLINE) i++;
-      open.push({ id, classes: [], notes: [] });
+      open.push({ id, classes: [], notes: [], line, name: ns });
       let item = true;
       while (item) {
         const frame = open[open.length - 1];
@@ -157,6 +164,7 @@ export function parseClassDiagram(src: string, db: ClassDb): void {
           }
           expect(T.STRUCT_STOP);
           const done = open.pop()!;
+          if (done.line !== undefined) db.namespaceLines(done.id, done.name, done.line, lineAt(i - 1));
           db.addClassesToNamespace(done.id, done.classes, done.notes);
           db.popNamespace();
           if (open.length === 0) {
@@ -236,6 +244,7 @@ export function parseClassDiagram(src: string, db: ClassDb): void {
 
   const statement = (): void => {
     const t = types[i];
+    db.line = lineAt(i);
     switch (t) {
       case T.UNICODE_TEXT:
       case T.ALPHA:

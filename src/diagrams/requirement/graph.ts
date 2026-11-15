@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import { Relationships } from './db.js';
 import type { Requirement, RequirementElement, RequirementModel } from './types.js';
 
@@ -7,6 +8,7 @@ export interface GraphNode {
   element: RequirementElement | undefined;
   cssStyles: string[];
   cssClasses: string;
+  written?: SourceInfo;
 }
 
 export interface GraphEdge {
@@ -15,6 +17,7 @@ export interface GraphEdge {
   end: string | undefined;
   type: string;
   contains: boolean;
+  written?: SourceInfo;
 }
 
 export interface RequirementGraph {
@@ -33,6 +36,7 @@ export function buildRequirementGraph(model: RequirementModel): RequirementGraph
       element: undefined,
       cssStyles: requirement.cssStyles,
       cssClasses: requirement.classes.join(' '),
+      written: requirement.source,
     });
   }
   for (const element of model.elements.values()) {
@@ -42,6 +46,7 @@ export function buildRequirementGraph(model: RequirementModel): RequirementGraph
       element,
       cssStyles: element.cssStyles,
       cssClasses: element.classes.join(' '),
+      written: element.source,
     });
   }
   const has = (id: string): string | undefined => (model.requirements.has(id) || model.elements.has(id) ? id : undefined);
@@ -51,6 +56,7 @@ export function buildRequirementGraph(model: RequirementModel): RequirementGraph
     end: has(relation.dst),
     type: relation.type,
     contains: relation.type === Relationships.CONTAINS,
+    written: relation.source,
   }));
   return { nodes, edges, direction: model.direction };
 }

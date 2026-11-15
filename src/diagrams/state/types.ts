@@ -15,6 +15,9 @@ export interface StateStmt {
   classes?: string[];
   styles?: string[];
   textStyles?: string[];
+  // The lines of the text the statement is written on (end: a composite's closing brace).
+  line?: number;
+  end?: number;
 }
 
 export interface RelationStmt {
@@ -22,6 +25,7 @@ export interface RelationStmt {
   state1: StateStmt;
   state2: StateStmt;
   description?: string;
+  line?: number;
 }
 
 export interface ClassDefStmt {

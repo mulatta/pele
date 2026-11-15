@@ -24,6 +24,8 @@ export class ErDb implements ErModel {
   title: string | undefined;
   accTitle: string | undefined;
   accDescr: string | undefined;
+  // The line of the text the parser is at: the elements added next come from it.
+  line: number | undefined;
   private subgraphLookup = new Map<string, ErSubgraph>();
   private claimed = new Set<string>();
 
@@ -38,11 +40,19 @@ export class ErDb implements ErModel {
         cssClasses: 'default',
         cssStyles: [],
       };
+      if (this.line !== undefined) entity.source = { line: this.line, symbol: name };
       this.entities.set(name, entity);
     } else if (!entity.alias && alias) {
       entity.alias = alias;
     }
     return entity;
+  }
+
+  // A statement of its own defines an entity, over its lines when it has a block; the last is what is drawn.
+  entityLines(name: string, line: number | undefined, end: number | undefined): void {
+    if (line === undefined || end === undefined) return;
+    const entity = this.addEntity(name);
+    entity.source = end > line ? { line, end, symbol: name } : { line, symbol: name };
   }
 
   // The grammar builds the list back to front, so the last attribute written comes first.
@@ -59,7 +69,7 @@ export class ErDb implements ErModel {
   addRelationship(entA: string, roleA: string, entB: string, relSpec: RelSpec): void {
     const entityA = this.subgraphLookup.has(entA) ? entA : this.addEntity(entA).id;
     const entityB = this.subgraphLookup.has(entB) ? entB : this.addEntity(entB).id;
-    this.relationships.push({ entityA, roleA, entityB, relSpec });
+    this.relationships.push({ entityA, roleA, entityB, relSpec, source: this.line === undefined ? undefined : { line: this.line, from: entA, to: entB } });
   }
 
   setDirection(dir: string): void {
@@ -100,7 +110,8 @@ export class ErDb implements ErModel {
     }
   }
 
-  addSubGraph(idText: { text: string }, list: DocItem[], titleText: { text: string; type?: string }): string {
+  // `lines`: where the subgraph starts and where its `end` is.
+  addSubGraph(idText: { text: string }, list: DocItem[], titleText: { text: string; type?: string }, lines?: [start: number, end: number]): string {
     const id = idText.text.trim();
     const seen = new Set<string>();
     const nodes: string[] = [];
@@ -126,6 +137,7 @@ export class ErDb implements ErModel {
       dir,
       labelType: labelType(titleText.type),
     };
+    if (lines !== undefined) subgraph.source = { line: lines[0], end: lines[1], symbol: id };
     this.subgraphs.push(subgraph);
     this.subgraphLookup.set(id, subgraph);
     return id;

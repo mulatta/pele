@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { inkFill } from '../../svg/ink.js';
 import { svgDocument } from '../../svg/root.js';
 import { seriesInkFill } from '../../svg/palette.js';
@@ -44,6 +44,7 @@ function option(config: Config, key: string, fallback: number, min: number, max:
 }
 
 export function renderTreemap(model: TreemapModel, config: Config, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
@@ -81,7 +82,7 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     const y = top + b.y;
     const name = decodeEntities(node.name).trim();
     const value = showValues ? format(b.value) : '';
-    const group = `data-id="${escText(node.name)}">`;
+    const group = `data-id="${escText(node.name)}"${srcAttrs(node.source)}>`;
     // Include headerless ancestors in tooltips because their children cover them.
     const own = titlePart(node.name);
     const path = own === '' ? [] : [own];

@@ -1,11 +1,11 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
-import { casingsSvg, edgeCasing, edgeLabelSvg, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { casingsSvg, edgeCasing, edgeLabelSvg, marker, markerTrim, overFills, routePath, sceneMarker, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { endSide } from '../../svg/shapes.js';
 import { svgDocument } from '../../svg/root.js';
-import { withTitle } from '../../svg/title.js';
+import { titleLabel, withTitle } from '../../svg/title.js';
 import { classNames, resolveStyle, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -15,6 +15,7 @@ import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { StateDb } from './db.js';
 import type { StateEdge, StateNode } from './graph.js';
+import { L, M, activeSink, circleCmds, parseLook, parsePathData, polygonCmds, tokensToCmds } from '../../scene/sink.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;
@@ -30,6 +31,11 @@ const CORNER = 10;
 const BAR = 8;
 const SURFACE = ' fill="var(--_s)" stroke="var(--_b)"';
 const RULE = ' fill="none" stroke="var(--_b)"';
+// Paint layers of a state scene, bottom to top, as the SVG stacks its groups.
+const SCENE_ORDER = ['title', 'clusters', 'dividers', 'casings', 'edges', 'labels', 'nodes', 'notes'];
+// What the SVG puts on the groups that hold dividers and casings.
+const DIVIDER_ATTRS = ` stroke-dasharray="4 4"${RULE}`;
+const CASING_ATTRS = ' fill="none" stroke="var(--_bg)" stroke-width="5"';
 const MERMAID_CLASSES = /(?:^| )statediagram-(?:state|cluster-alt|cluster|note)(?= |$)/g;
 
 const enum K {
@@ -124,6 +130,7 @@ export function renderState(db: StateDb, config: Config, options: RenderOptions)
 
 // `turned` draws a diagram that runs across as one that runs down.
 function draw(db: StateDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const graph = db.graph;
   // State diagrams follow the flowchart curve.
   const curve = (config.flowchart as Config | undefined)?.curve;
@@ -431,6 +438,22 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
   const roots = order.slice();
   for (let q = 0; q < order.length; q++) for (const child of children[order[q]]) order.push(child);
 
+  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text.
+  const sink = activeSink();
+  sink?.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
+  // Where a title moves the drawing, as withTitle's translate does in the SVG.
+  let shiftX = 0;
+  let shiftY = 0;
+  let sceneSize = { width, height };
+  if (sink) {
+    sink.section('title');
+    const titled = withTitle(db.title, measurer, size, pad, width, height, '');
+    sceneSize = { width: titled.width, height: titled.height };
+    shiftX = (titled.width - width) / 2;
+    const room = titleLabel(db.title, measurer, size, 4000).height;
+    shiftY = room > 0 ? room + 12 : 0;
+  }
+
   let clusters = '';
   const fills: Fill[] = [];
   let dividers = '';
@@ -448,7 +471,16 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
       for (let k = 1; k < sorted.length; k++) if (hi(sorted[k - 1], x) > lo(sorted[k], x) + 0.5) apart = false;
       if (!apart) continue;
       for (let k = 1; k < sorted.length; k++) {
-        const at = num((hi(sorted[k - 1], x) + lo(sorted[k], x)) / 2 + pad);
+        const mid = (hi(sorted[k - 1], x) + lo(sorted[k], x)) / 2 + pad;
+        const at = num(mid);
+        if (sink) {
+          sink.into('dividers', DIVIDER_ATTRS, () => {
+            sink.begin(undefined, '', shiftX, shiftY);
+            sink.shape(x ? [M, mid, top, L, mid, bottom] : [M, left, mid, L, right, mid]);
+            sink.end();
+          });
+          continue;
+        }
         dividers += `<path class="pele-divider" d="M${x ? `${at},${num(top)}V${num(bottom)}` : `${num(left)},${at}H${num(right)}`}"/>`;
       }
       return;
@@ -456,6 +488,14 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
     // Regions that sit neither side by side nor in a stack each get an outline.
     for (const i of regions) {
       const c = cnodes[i];
+      if (sink) {
+        sink.into('dividers', DIVIDER_ATTRS, () => {
+          sink.begin(undefined, '', shiftX, shiftY);
+          sink.rect(c.x - c.w / 2 + pad, c.y - c.h / 2 + pad, c.w, c.h, ` rx="${CORNER}"`);
+          sink.end();
+        });
+        continue;
+      }
       dividers += rect(c.x - c.w / 2 + pad, c.y - c.h / 2 + pad, c.w, c.h, ` class="pele-divider" rx="${CORNER}"`);
     }
   };
@@ -473,13 +513,35 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
     const h = view.h;
     const ink = inkFill(style);
     const labelAttrs = ` class="pele-label"${ink}${style.text}`;
-    let body: string;
+    let body = '';
+    if (sink) {
+      // A composite is placed by its own coordinates, anything else by a translate.
+      const placed = view.kind === K.Composite;
+      sink.section(placed ? 'clusters' : view.kind === K.Note ? 'notes' : 'nodes');
+      sink.begin(
+        node.id,
+        CLASSES[view.kind] + classNames(node.cssClasses.replace(MERMAID_CLASSES, '')),
+        shiftX + (placed ? 0 : x),
+        shiftY + (placed ? 0 : y),
+        '',
+        node.written
+      );
+    }
 
     switch (view.kind) {
       case K.Composite: {
         const left = x - c.w / 2;
         const top = y - c.h / 2;
         if (paints(style.shape)) fills.push({ box: [left, top, left + c.w, top + c.h], shape: style.shape });
+        if (sink) {
+          sink.rect(left, top, c.w, c.h, ` rx="${CORNER}" fill="var(--_a)"${setsFill(style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${style.shape}`);
+          if (view.titleH > 0) {
+            sink.shape([M, left, top + view.titleH, L, left + c.w, top + view.titleH], parseLook(RULE + style.line));
+            labelSvg(view.label, titleX(c, view.label.width, crossings) + pad, top + view.titleH / 2, ` class="pele-cluster-label"${ink}${style.text}`, icons);
+          }
+          divide(children[i], left, top + view.titleH, left + c.w, top + c.h);
+          break;
+        }
         body = rect(left, top, c.w, c.h, ` rx="${CORNER}" fill="var(--_a)"${setsFill(style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${style.shape}`);
         if (view.titleH > 0) {
           body +=
@@ -496,16 +558,33 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
         break;
       }
       case K.Start:
+        if (sink) {
+          sink.shape(circleCmds(0, 0, 7), parseLook(` fill="var(--_l)"${style.shape}`));
+          break;
+        }
         body = `<circle r="7" fill="var(--_l)"${style.shape}/>`;
         break;
       case K.End:
+        if (sink) {
+          sink.shape(circleCmds(0, 0, 8.5), parseLook(` fill="var(--_bg)" stroke="var(--_l)"${style.line}`));
+          sink.shape(circleCmds(0, 0, 5), parseLook(` fill="var(--_l)"${style.shape}`));
+          break;
+        }
         body = `<circle r="8.5" fill="var(--_bg)" stroke="var(--_l)"${style.line}/><circle r="5" fill="var(--_l)"${style.shape}/>`;
         break;
       case K.Choice:
+        if (sink) {
+          sink.shape(polygonCmds([0, -h / 2, w / 2, 0, 0, h / 2, -w / 2, 0]), parseLook(SURFACE + style.shape));
+          break;
+        }
         body = `<polygon points="0,${num(-h / 2)} ${num(w / 2)},0 0,${num(h / 2)} ${num(-w / 2)},0"${SURFACE}${style.shape}/>`;
         break;
       case K.Fork:
       case K.Join:
+        if (sink) {
+          sink.rect(-w / 2, -h / 2, w, h, ` rx="2" fill="var(--_l)"${style.shape}`);
+          break;
+        }
         body = rect(-w / 2, -h / 2, w, h, ` rx="2" fill="var(--_l)"${style.shape}`);
         break;
       case K.Note: {
@@ -513,6 +592,12 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
         const b = num(h / 2);
         const fold = num(w / 2 - FOLD);
         const corner = num(FOLD - h / 2);
+        if (sink) {
+          sink.shape(polygonCmds([-w / 2, -h / 2, w / 2 - FOLD, -h / 2, w / 2, FOLD - h / 2, w / 2, h / 2, -w / 2, h / 2]), parseLook(' fill="var(--_bg)" stroke="var(--_b)"'));
+          sink.shape([M, w / 2 - FOLD, -h / 2, L, w / 2 - FOLD, FOLD - h / 2, L, w / 2, FOLD - h / 2], parseLook(RULE));
+          labelSvg(view.label, 0, 0, ` class="pele-label" font-size="${small}" fill="var(--_m)"`, icons);
+          break;
+        }
         body =
           `<path d="M-${r},-${b}H${fold}L${r},${corner}V${b}H-${r}Z" fill="var(--_bg)" stroke="var(--_b)"/>` +
           `<path d="M${fold},-${b}V${corner}H${r}"${RULE}/>` +
@@ -520,6 +605,22 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
         break;
       }
       default: {
+        if (sink) {
+          sink.rect(-w / 2, -h / 2, w, h, ` rx="${num(Math.min(CORNER, h / 2))}"${SURFACE}${style.shape}`);
+          if (view.kind === K.State) {
+            labelSvg(view.label, 0, 0, labelAttrs, icons);
+          } else {
+            let at = PAD_Y - h / 2 + view.label.height;
+            sink.shape([M, -w / 2, at + 6, L, w / 2, at + 6], parseLook(RULE + style.line));
+            labelSvg(view.label, 0, at - view.label.height / 2, labelAttrs, icons);
+            at += 14;
+            for (const line of view.lines) {
+              labelSvg(line, 0, at + line.height / 2, ` class="pele-state-description" font-size="${small}"${ink}${style.text}`, icons);
+              at += line.height;
+            }
+          }
+          break;
+        }
         body = rect(-w / 2, -h / 2, w, h, ` rx="${num(Math.min(CORNER, h / 2))}"${SURFACE}${style.shape}`);
         if (view.kind === K.State) {
           body += labelSvg(view.label, 0, 0, labelAttrs, icons);
@@ -542,7 +643,11 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
       if (tooltip) body = `<title>${esc(tooltip)}</title>` + body;
       body = linked(body, safeUrl(unquote(link.url)), node.id, links, options, ' target="_blank"');
     }
-    const open = `<g class="${CLASSES[view.kind]}${classNames(node.cssClasses.replace(MERMAID_CLASSES, ''))}" data-id="${escText(node.id)}"`;
+    if (sink) {
+      sink.end();
+      continue;
+    }
+    const open = `<g class="${CLASSES[view.kind]}${classNames(node.cssClasses.replace(MERMAID_CLASSES, ''))}" data-id="${escText(node.id)}"${srcAttrs(node.written)}`;
     if (view.kind === K.Composite) clusters += `${open}>${body}</g>`;
     else if (view.kind === K.Note) notesOut += `${open} transform="translate(${num(x)},${num(y)})">${body}</g>`;
     else nodesOut += `${open} transform="translate(${num(x)},${num(y)})">${body}</g>`;
@@ -651,10 +756,39 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
       path = routePath(route, typeof curve === 'string' ? curve : undefined, 0, markerTrim(endType), leaves, arrives);
     }
     const over = overFills(path.d, [path.ex, path.ey], fills, '', path.tokens);
+    if (sink) {
+      // The route's numbers as routePath kept them; only a self-loop has just its path data.
+      const cmds = path.tokens ? tokensToCmds(path.tokens) : parsePathData(path.d);
+      if (over === '') {
+        sink.into('casings', CASING_ATTRS, () => {
+          sink.begin(undefined, '', shiftX, shiftY);
+          sink.shape(cmds);
+          sceneMarker(sink, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)');
+          sink.end();
+        });
+      }
+      sink.into('edges', ' fill="none" stroke="var(--_l)" stroke-linecap="round"', () => {
+        const stroke = note ? over || 'var(--_b)' : over;
+        sink.begin(edge.id, note ? 'pele-edge pele-note-edge' : 'pele-edge pele-transition', shiftX, shiftY, `${stroke ? ` stroke="${stroke}"` : ''}${note ? ' stroke-dasharray="3 4"' : ''}`, edge.written);
+        sink.shape(cmds);
+        sceneMarker(sink, endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)');
+        sink.end();
+      });
+      if (label.width > 0) {
+        sink.into('labels', ` font-size="${small}"`, () => {
+          const w = label.width + 8;
+          sink.begin(edge.id, 'pele-edge-label', shiftX, shiftY);
+          sink.rect(ce.labelX + pad - w / 2, ce.labelY + pad - label.height / 2, w, label.height, ' rx="3" fill="var(--_bg)"');
+          labelSvg(label, ce.labelX + pad, ce.labelY + pad, '', icons);
+          sink.end();
+        });
+      }
+      continue;
+    }
     if (over === '') casings += edgeCasing(path, 'none', endType);
     const kind = note ? `pele-note-edge" stroke="${over || 'var(--_b)'}" stroke-dasharray="3 4` : over ? `pele-transition" stroke="${over}` : 'pele-transition';
     edgesOut +=
-      `<g class="pele-edge ${kind}" data-id="${escText(edge.id)}">` +
+      `<g class="pele-edge ${kind}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}>` +
       `<path d="${path.d}"/>` +
       marker(endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)') +
       '</g>';
@@ -664,6 +798,8 @@ function draw(db: StateDb, config: Config, options: RenderOptions, turned: boole
       labelsOut += edgeLabelSvg(edge.id, label, x, y, '', icons);
     }
   }
+
+  if (sink) return { svg: '', width: sceneSize.width, height: sceneSize.height, links, scene: sink.finish(SCENE_ORDER, sceneSize.width, sceneSize.height) };
 
   const titled = withTitle(
     db.title,

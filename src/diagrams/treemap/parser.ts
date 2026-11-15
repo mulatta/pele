@@ -1,3 +1,5 @@
+import { sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import {
   ACC_DESCR,
   ACC_TITLE,
@@ -68,6 +70,7 @@ export interface TreemapRowAst {
   $type: 'TreemapRow';
   indent?: number;
   item: SectionAst | LeafAst;
+  source?: SourceInfo;
 }
 
 export interface ClassDefAst {
@@ -85,9 +88,12 @@ export interface TreemapAst {
   TreemapRows: (TreemapRowAst | ClassDefAst)[];
 }
 
-export function parseTreemap(src: string): TreemapAst {
+// With `lines`, each node records where it is written (see sourceLine). The tests that compare the
+// tree with Langium's parse without.
+export function parseTreemap(src: string, lines = false): TreemapAst {
   const r = new Reader(tokenize(src, TREEMAP_TOKENS, 'treemap'), TREEMAP_TOKENS, 'treemap');
   const kinds = r.kinds;
+  const { starts, ends } = r.tokens;
   const ast: TreemapAst = { $type: 'Treemap', TreemapRows: [] };
 
   const classSelector = (): string | undefined => (r.accept(T.styleSeparator) ? r.expect(T.id) : undefined);
@@ -119,6 +125,7 @@ export function parseTreemap(src: string): TreemapAst {
       continue;
     }
 
+    const first = r.i;
     const name = r.expect(T.string).slice(1, -1);
     // A leaf is a name followed by a colon or comma, with or without whitespace before it.
     const after = kinds[r.i] === T.indentation ? r.i + 1 : r.i;
@@ -134,6 +141,13 @@ export function parseTreemap(src: string): TreemapAst {
     if (selector !== undefined) item.classSelector = selector;
     const row: TreemapRowAst = { $type: 'TreemapRow', item };
     if (indent !== undefined) row.indent = indent;
+    const line = lines ? sourceLine(src, starts[first]) : undefined;
+    if (line !== undefined) {
+      // A node is its own row, without the rows under it. Line breaks are hidden, so a name or a
+      // value may be on a later line. The name is free text, which need not tell nodes apart.
+      const end = sourceLine(src, ends[r.i - 1] - 1) ?? line;
+      row.source = end > line ? { line, end } : { line };
+    }
     ast.TreemapRows.push(row);
   }
   return ast;

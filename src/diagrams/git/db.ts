@@ -1,5 +1,6 @@
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
+import type { SourceInfo } from '../../types.js';
 import type { CommitTypeName, GitGraphAst, StatementAst } from './parser.js';
 
 export const commitType = { NORMAL: 0, REVERSE: 1, HIGHLIGHT: 2, MERGE: 3, CHERRY_PICK: 4 } as const;
@@ -16,6 +17,8 @@ export interface GitCommit {
   branch: string;
   customType?: number;
   customId?: boolean;
+  // The commit, merge or cherry-pick statement that makes it (see SourceInfo).
+  source?: SourceInfo;
 }
 
 export interface GitModel {
@@ -30,21 +33,26 @@ export interface GitModel {
   branches: Map<string, string | null>;
   // Branch names in drawing order: by `order`, then by creation.
   lanes: string[];
+  // Where each branch a statement makes is written. The main branch is made by none.
+  branchSources: Map<string, SourceInfo>;
   currentBranch: string;
   head: GitCommit | null;
   warnings: string[];
 }
 
+// Each call also says where its statement is written, when sources are recorded.
 export interface CommitDB {
   msg: string;
   id: string | undefined;
   type: number;
   tags?: string[];
+  source?: SourceInfo;
 }
 
 export interface BranchDB {
   name: string;
   order: number | undefined;
+  source?: SourceInfo;
 }
 
 export interface MergeDB {
@@ -52,6 +60,7 @@ export interface MergeDB {
   id: string;
   type?: number;
   tags?: string[];
+  source?: SourceInfo;
 }
 
 export interface CherryPickDB {
@@ -59,6 +68,7 @@ export interface CherryPickDB {
   targetId: string;
   parent: string | undefined;
   tags?: string[];
+  source?: SourceInfo;
 }
 
 // The calls Mermaid's gitGraphParser makes on its database, under the same names.
@@ -92,10 +102,11 @@ export function parseStatement(statement: StatementAst, db: GitDbParseProvider):
         msg: statement.message ?? '',
         type: statement.type !== undefined ? typeCode(statement.type) : commitType.NORMAL,
         tags: statement.tags ?? undefined,
+        source: statement.$source,
       });
       break;
     case 'Branch':
-      db.branch({ name: statement.name, order: statement.order ?? 0 });
+      db.branch({ name: statement.name, order: statement.order ?? 0, source: statement.$source });
       break;
     case 'Merge':
       db.merge({
@@ -103,6 +114,7 @@ export function parseStatement(statement: StatementAst, db: GitDbParseProvider):
         id: statement.id ?? '',
         type: statement.type !== undefined ? typeCode(statement.type) : undefined,
         tags: statement.tags ?? undefined,
+        source: statement.$source,
       });
       break;
     case 'Checkout':
@@ -114,6 +126,7 @@ export function parseStatement(statement: StatementAst, db: GitDbParseProvider):
         targetId: '',
         tags: statement.tags?.length === 0 ? undefined : statement.tags,
         parent: statement.parent,
+        source: statement.$source,
       });
       break;
   }
@@ -127,6 +140,7 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
   const commits = new Map<string, GitCommit>();
   const branches = new Map<string, string | null>([[mainName, null]]);
   const orders = new Map<string, number | undefined>([[mainName, mainOrder]]);
+  const branchSources = new Map<string, SourceInfo>();
   const warnings: string[] = [];
   let head: GitCommit | null = null;
   let current = mainName;
@@ -142,7 +156,9 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
     }
   };
 
-  const add = (commit: GitCommit): void => {
+  // `written`: where the statement that makes the commit is written.
+  const add = (commit: GitCommit, written: SourceInfo | undefined): void => {
+    if (written) commit.source = written;
     head = commit;
     commits.set(commit.id, commit);
     branches.set(current, commit.id);
@@ -162,7 +178,7 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
       direction = dir;
     },
 
-    commit({ msg, id, type, tags }) {
+    commit({ msg, id, type, tags, source }) {
       const commit: GitCommit = {
         id: id ? id : nextId(),
         message: msg,
@@ -173,10 +189,10 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
         branch: current,
       };
       if (commits.has(commit.id)) warnings.push(`Commit ID ${commit.id} already exists`);
-      add(commit);
+      add(commit, source);
     },
 
-    branch({ name, order }) {
+    branch({ name, order, source }) {
       if (branches.has(name)) {
         fail(
           `Trying to create an existing branch. (Help: Either use a new name if you want create a new branch or try using "checkout ${name}")`
@@ -184,10 +200,11 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
       }
       branches.set(name, head !== null ? head.id : null);
       orders.set(name, order);
+      if (source) branchSources.set(name, source);
       checkout(name);
     },
 
-    merge({ branch: other, id: customId, type, tags }) {
+    merge({ branch: other, id: customId, type, tags, source }) {
       const currentHead = branches.get(current);
       const otherHead = branches.get(other);
       const currentCommit = currentHead ? commits.get(currentHead) : undefined;
@@ -213,10 +230,10 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
         customType: type,
         customId: customId ? true : false,
         tags: tags ? [...tags] : [],
-      });
+      }, source);
     },
 
-    cherryPick({ id: sourceId, targetId, tags, parent }) {
+    cherryPick({ id: sourceId, targetId, tags, parent, source: written }) {
       const source = sourceId ? commits.get(sourceId) : undefined;
       if (source === undefined) fail('Incorrect usage of "cherryPick". Source commit id should exist and provided');
       if (parent && !source.parents.includes(parent)) {
@@ -243,7 +260,7 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
         tags: tags
           ? tags.filter(Boolean)
           : [`cherry-pick:${source.id}${source.type === commitType.MERGE ? `|parent:${parent}` : ''}`],
-      });
+      }, written);
     },
 
     checkout,
@@ -264,6 +281,7 @@ export function buildGit(ast: GitGraphAst, config: Config, title: string | undef
     commits,
     branches,
     lanes,
+    branchSources,
     currentBranch: current,
     head,
     warnings,

@@ -1,3 +1,4 @@
+import type { SourceInfo } from '../../types.js';
 import type { ErAttribute, ErModel } from './types.js';
 
 export interface ErGraphNode {
@@ -12,6 +13,7 @@ export interface ErGraphNode {
   cssClasses: string;
   dir: string | undefined;
   labelType: string;
+  written?: SourceInfo;
 }
 
 export interface ErGraphEdge {
@@ -22,6 +24,7 @@ export interface ErGraphEdge {
   arrowTypeStart: string;
   arrowTypeEnd: string;
   pattern: 'solid' | 'dashed';
+  written?: SourceInfo;
 }
 
 export interface ErGraph {
@@ -71,6 +74,7 @@ export function buildErGraph(model: ErModel): ErGraph {
       cssClasses: subgraph.classes.join(' '),
       dir: subgraph.dir,
       labelType: subgraph.labelType,
+      written: subgraph.source,
     });
   }
 
@@ -94,6 +98,7 @@ export function buildErGraph(model: ErModel): ErGraph {
       cssClasses: entity.cssClasses,
       dir: undefined,
       labelType: 'markdown',
+      written: entity.source,
     });
   }
 
@@ -106,6 +111,7 @@ export function buildErGraph(model: ErModel): ErGraph {
       arrowTypeStart: relationship.relSpec.cardB.toLowerCase(),
       arrowTypeEnd: relationship.relSpec.cardA.toLowerCase(),
       pattern: relationship.relSpec.relType === 'IDENTIFYING' ? 'solid' : 'dashed',
+      written: relationship.source,
     });
   });
 

@@ -1,4 +1,5 @@
 import { PeleError } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import type { Block, BlockClassDef, BlockModel, Statement } from './types.js';
 
 export interface BlockDbOptions {
@@ -107,6 +108,8 @@ export class BlockDb implements BlockModel {
   classes = new Map<string, BlockClassDef>();
   // Mermaid keeps the root in here too, which makes a block called `root` vanish. Here it stays out.
   byId = new Map<string, Block>();
+  // Where the parser found each statement written, when the host asked for sources.
+  readonly written = new Map<Block, SourceInfo>();
 
   typeStr2Type = typeStr2Type;
   edgeStrToEdgeData = edgeStrToEdgeData;
@@ -198,6 +201,8 @@ export class BlockDb implements BlockModel {
           f.parent.columns = block.columns ?? -1;
           continue;
         case 'edge': {
+          const source = this.written.get(block);
+          if (source !== undefined) block.source = source;
           const count = (this.edgeCount.get(block.id) ?? 0) + 1;
           this.edgeCount.set(block.id, count);
           block.id = count + '-' + block.id;
@@ -211,10 +216,15 @@ export class BlockDb implements BlockModel {
       if (!block.label) block.label = block.type === 'composite' ? '' : block.id;
       const known = this.byId.get(block.id);
       const fresh = known === undefined || this.pending.delete(block.id);
+      const source = this.written.get(block);
       if (!fresh) {
         if (block.type !== 'na') known.type = block.type;
         if (block.label !== block.id) known.label = block.label;
+        // A block comes from the last statement that gives it a label or a shape (that is what is
+        // drawn), else from the first that names it.
+        if (source !== undefined && (block.type !== 'na' || block.label !== block.id)) known.source = source;
       } else {
+        if (source !== undefined) block.source = source;
         if (known) {
           block.classes = known.classes;
           block.styles = known.styles;
