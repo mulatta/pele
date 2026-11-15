@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { ARROW, marker } from '../../svg/edges.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
@@ -134,6 +134,7 @@ export function renderIshikawa(model: IshikawaModel, _config: Config, options: R
 }
 
 function draw(model: IshikawaModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -207,7 +208,7 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
       minY = Math.min(minY, boxY - category.boxH / 2);
       maxY = Math.max(maxY, boxY + category.boxH / 2);
       groups +=
-        `<g class="pele-ishikawa-category" data-id="${escText(category.node.text)}">` +
+        `<g class="pele-ishikawa-category" data-id="${escText(category.node.text)}"${srcAttrs(category.node.source)}>` +
         `<path class="pele-ishikawa-bones" d="${d}" fill="none" stroke="var(--_l)"/>` +
         marker('arrow_point', ax, 0, SLANT / LENGTH, -sign / LENGTH, 'var(--_l)') +
         `<rect x="${num(endX - category.boxW / 2)}" y="${num(boxY - category.boxH / 2)}" width="${num(category.boxW)}" height="${num(
@@ -223,7 +224,7 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
       `<path class="pele-ishikawa-spine" d="M${num(tail)},0H${num(-(ARROW - 1))}" fill="none" stroke="var(--_l)"/>` +
       marker('arrow_point', 0, 0, 1, 0, 'var(--_l)') +
       groups +
-      `<g class="pele-ishikawa-head" data-id="${escText(root.text)}">` +
+      `<g class="pele-ishikawa-head" data-id="${escText(root.text)}"${srcAttrs(root.source)}>` +
       `<path d="M0,${num(-r)}H${num(headW - r)}A${num(r)},${num(r)} 0 0 1 ${num(headW - r)},${num(r)}H0Z" fill="var(--_s)" stroke="var(--_b)" stroke-linejoin="round"/>` +
       labelSvg(head, 12 + head.width / 2, 0, ' class="pele-label" font-weight="var(--_hw)"') +
       '</g>';
@@ -248,6 +249,7 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
 }
 
 function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -277,7 +279,7 @@ function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered 
     y += entry.h + 12;
     width = Math.max(width, entry.x - pad + entry.w);
     const framed = entry.depth < 2;
-    nodes += `<g class="pele-node ${entry.depth === 0 ? 'pele-ishikawa-head' : entry.depth === 1 ? 'pele-ishikawa-category' : 'pele-ishikawa-cause'}" data-id="${escText(entry.node.text)}">` +
+    nodes += `<g class="pele-node ${entry.depth === 0 ? 'pele-ishikawa-head' : entry.depth === 1 ? 'pele-ishikawa-category' : 'pele-ishikawa-cause'}" data-id="${escText(entry.node.text)}"${srcAttrs(entry.node.source)}>` +
       (framed ? `<rect x="${num(entry.x)}" y="${num(entry.y)}" width="${num(entry.w)}" height="${num(entry.h)}" rx="${entry.depth === 0 ? 12 : 4}" fill="var(--_s)" stroke="var(--_b)"/>` : '') +
       labelSvg(entry.label, entry.x + entry.w / 2, entry.y + entry.h / 2, ` class="pele-label"${entry.depth < 2 ? ' font-weight="var(--_hw)"' : ''}${entry.depth > 1 ? ` font-size="${small}"` : ''}`) + '</g>';
     if (entry.parent >= 0) {

@@ -1,4 +1,4 @@
-import { syntaxError } from '../../errors.js';
+import { sourceLine, syntaxError } from '../../errors.js';
 import type { IshikawaDb } from './db.js';
 import { T, TOKEN_NAMES, tokenize } from './lexer.js';
 
@@ -30,6 +30,7 @@ export function parseIshikawa(src: string, db: IshikawaDb): void {
       const text = type === T.TEXT ? i : i + 1;
       i = text + 1;
       if (types[i] !== T.SPACELINE && types[i] !== T.NL && types[i] !== T.EOF) fail(STOP);
+      db.line = sourceLine(src, starts[text]);
       db.addNode(type === T.TEXT ? 0 : ends[text - 1] - starts[text - 1], src.slice(starts[text], ends[text]).trim());
     } else if (type === T.SPACELINE || type === T.SPACELIST) {
       i++;
