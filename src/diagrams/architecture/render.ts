@@ -1,6 +1,6 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { edgeLabelSvg, marker, markerTrim } from '../../svg/edges.js';
 import { svgDocument } from '../../svg/root.js';
 import { ROUNDED } from '../../svg/theme.js';
@@ -212,6 +212,7 @@ export function renderArchitecture(model: ArchitectureModel, config: Config, opt
 }
 
 function draw(model: ArchitectureModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const iconSize = setting(config, 'iconSize', 48, 8, 512);
   const size = setting(config, 'fontSize', options.fontSize ?? 16, 4, 128);
   const groupPad = Math.min(setting(config, 'padding', 20, 0, 256), tight ? 12 : Infinity);
@@ -436,7 +437,7 @@ function draw(model: ArchitectureModel, config: Config, options: RenderOptions, 
     if (points.length < 4) continue;
     const id = escText(`${edge.lhsId}-${edge.rhsId}`);
     edgesOut +=
-      `<g class="pele-edge" data-id="${id}">` +
+      `<g class="pele-edge" data-id="${id}"${srcAttrs(edge.source)}>` +
       `<path d="${pathData(points, edge.lhsInto && !s.wire ? trimLength + s.gap : 0, edge.rhsInto && !e.wire ? trimLength + e.gap : 0)}"/>` +
       (edge.lhsInto ? marker('arrow_point', s.x + s.dx * s.gap, s.y + s.dy * s.gap, -s.dx, -s.dy, 'var(--_l)') : '') +
       (edge.rhsInto ? marker('arrow_point', e.x + e.dx * e.gap, e.y + e.dy * e.gap, -e.dx, -e.dy, 'var(--_l)') : '') +
@@ -517,7 +518,7 @@ function draw(model: ArchitectureModel, config: Config, options: RenderOptions, 
       head += labelSvg(label, textX + label.width / 2, cy, ' class="pele-cluster-label" fill="var(--_m)"', icons);
     }
     clusters +=
-      `<g class="pele-cluster" data-id="${escText(group.id)}">` +
+      `<g class="pele-cluster" data-id="${escText(group.id)}"${srcAttrs(group.source)}>` +
       `<rect x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(bottom(g) - y)}" fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}/>` +
       head +
       '</g>';
@@ -528,7 +529,7 @@ function draw(model: ArchitectureModel, config: Config, options: RenderOptions, 
   const textSize = Math.max(6, Math.round(size * 0.75));
   for (let i = 0; i < N; i++) {
     const node = nodes[i];
-    const at = `data-id="${escText(node.id)}" transform="translate(${num(centerX(i))},${num(Y[nodeRow[i]])})"`;
+    const at = `data-id="${escText(node.id)}"${srcAttrs(node.source)} transform="translate(${num(centerX(i))},${num(Y[nodeRow[i]])})"`;
     if (node.type === 'junction') {
       nodesOut += `<g class="pele-node pele-junction" ${at}><circle cy="${num(half)}" r="${DOT}" fill="var(--_l)"/></g>`;
       continue;
