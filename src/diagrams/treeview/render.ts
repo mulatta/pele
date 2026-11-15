@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num } from '../../svg/builder.js';
+import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
 import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED, classNames } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
@@ -51,6 +51,7 @@ export function renderTreeView(model: TreeViewModel, config: Config, options: Re
 }
 
 function draw(model: TreeViewModel, config: Config, options: RenderOptions, tight: boolean): Rendered {
+  const srcAttrs = sourceAttrsFor(options);
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -177,7 +178,7 @@ function draw(model: TreeViewModel, config: Config, options: RenderOptions, tigh
     }
     body += `<g class="pele-node pele-tree-${directory ? 'dir' : 'file'}${classNames(node.cssClass ?? '')}" data-id="${escText(
       node.name
-    )}">${inner}</g>`;
+    )}"${srcAttrs(node.source)}>${inner}</g>`;
   }
 
   const content =

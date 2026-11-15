@@ -1,4 +1,5 @@
-import { locate, PeleError } from '../../errors.js';
+import { locate, PeleError, sourceLine } from '../../errors.js';
+import type { SourceInfo } from '../../types.js';
 import { lineStart, preprocessBoxDrawing, remapErrorLines } from './boxDrawing.js';
 import { parseTreeView, type TreeViewAst } from './parser.js';
 
@@ -14,6 +15,7 @@ export interface TreeNode {
   cssClass?: string;
   description?: string;
   children: TreeNode[];
+  source?: SourceInfo;
 }
 
 export interface TreeViewModel {
@@ -32,10 +34,11 @@ export class TreeViewDb {
   root: TreeNode = { id: 0, level: -1, name: '/', nodeType: 'directory', children: [] };
   private stack: TreeNode[] = [this.root];
 
-  addNode(level: number, name: string, nodeType: NodeType, cssClass?: string, icon?: string, description?: string): void {
+  addNode(level: number, name: string, nodeType: NodeType, cssClass?: string, icon?: string, description?: string, source?: SourceInfo): void {
     const stack = this.stack;
     while (level <= stack[stack.length - 1].level) stack.pop();
     const node: TreeNode = { id: this.count++, level, name, nodeType, icon, cssClass, description, children: [] };
+    if (source) node.source = source;
     stack[stack.length - 1].children.push(node);
     stack.push(node);
   }
@@ -54,16 +57,48 @@ export function populate(ast: TreeViewAst, db: TreeViewDb): void {
       isDirectory ? 'directory' : 'file',
       node.classAnnotation || undefined,
       rawIcon !== undefined ? rawIcon || 'none' : undefined,
-      node.descAnnotation || undefined
+      node.descAnnotation || undefined,
+      node.source
     );
   }
 }
 
-// Reads the source to a syntax tree, accepting box-drawing input. Errors name lines of the original text.
-export function readTreeView(source: string): TreeViewAst {
+const lineStarts = (text: string): number[] => {
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  return starts;
+};
+
+// The line, from 1, that offset `at` is on.
+const lineOf = (starts: number[], at: number): number => {
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (starts[mid] <= at) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+};
+
+// Where an offset of `text`, which box drawing made of `source`, is written (see sourceLine).
+// Box drawing rewrites whole lines, so each line of `text` is a line of `source`.
+function writtenLine(source: string, text: string, lineMap: Map<number, number>): (at: number) => number | undefined {
+  if (text === source) return (at) => sourceLine(source, at);
+  const from = lineStarts(text);
+  const to = lineStarts(source);
+  return (at) => {
+    const line = lineMap.get(lineOf(from, at));
+    return line === undefined ? undefined : sourceLine(source, to[line - 1]);
+  };
+}
+
+// Reads the source to a syntax tree, accepting box-drawing input. Errors name lines of the original
+// text. With `lines`, each node records where it is written.
+export function readTreeView(source: string, lines = false): TreeViewAst {
   const { text, lineMap, columns } = preprocessBoxDrawing(source);
   try {
-    return parseTreeView(text);
+    return parseTreeView(text, lines ? writtenLine(source, text, lineMap) : undefined);
   } catch (error) {
     // The parser already located errors in unchanged text.
     if (!(error instanceof PeleError) || text === source) throw error;

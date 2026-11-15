@@ -4,6 +4,6 @@ import { renderTreeView } from './render.js';
 
 export const treeView: Diagram<TreeViewModel> = {
   type: 'treeView',
-  parse: (source, _config, title) => buildTreeView(readTreeView(source), title),
+  parse: (source, _config, title) => buildTreeView(readTreeView(source, true), title),
   render: renderTreeView,
 };
