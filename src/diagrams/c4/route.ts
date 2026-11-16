@@ -11,6 +11,8 @@ export interface Box {
 
 export interface Route {
   d: string;
+  // The same path as numbers, for an output that takes them: M, L, C and Q only.
+  tokens: number[];
   // Where the markers go: the tip, and the way it points.
   sx: number;
   sy: number;
@@ -270,11 +272,23 @@ export class Lanes {
   }
 }
 
-function path(points: number[], startTrim: number, endTrim: number): string {
+// What num() writes, as the number it writes.
+function written(v: number): number {
+  const n = Math.round(v * 100);
+  return n === 0 ? 0 : n / 100;
+}
+
+function path(points: number[], startTrim: number, endTrim: number): { d: string; tokens: number[] } {
   const n = points.length;
   const ux = Math.sign(points[2] - points[0]);
   const uy = Math.sign(points[3] - points[1]);
-  let d = `M${num(points[0] + ux * startTrim)},${num(points[1] + uy * startTrim)}`;
+  const x0 = points[0] + ux * startTrim;
+  const y0 = points[1] + uy * startTrim;
+  let d = `M${num(x0)},${num(y0)}`;
+  const tokens = [77, 2, written(x0), written(y0)];
+  // The text keeps H and V, which the tokens write as L.
+  let atX = written(x0);
+  let atY = written(y0);
   for (let i = 2; i < n - 2; i += 2) {
     const x = points[i];
     const y = points[i + 1];
@@ -287,11 +301,31 @@ function path(points: number[], startTrim: number, endTrim: number): string {
       Math.abs(x - points[i - 2] + y - points[i - 1]) / 2,
       Math.abs(points[i + 2] - x + points[i + 3] - y) / 2
     );
-    d += `${ix ? 'H' + num(x - ix * r) : 'V' + num(y - iy * r)}Q${num(x)},${num(y)} ${num(x + ox * r)},${num(y + oy * r)}`;
+    if (ix) {
+      atX = written(x - ix * r);
+      d += 'H' + num(x - ix * r);
+    } else {
+      atY = written(y - iy * r);
+      d += 'V' + num(y - iy * r);
+    }
+    const qx = x + ox * r;
+    const qy = y + oy * r;
+    d += `Q${num(x)},${num(y)} ${num(qx)},${num(qy)}`;
+    tokens.push(76, 2, atX, atY, 81, 4, written(x), written(y), written(qx), written(qy));
+    atX = written(qx);
+    atY = written(qy);
   }
   const lx = Math.sign(points[n - 2] - points[n - 4]);
   const ly = Math.sign(points[n - 1] - points[n - 3]);
-  return d + (lx ? 'H' + num(points[n - 2] - lx * endTrim) : 'V' + num(points[n - 1] - ly * endTrim));
+  if (lx) {
+    atX = written(points[n - 2] - lx * endTrim);
+    d += 'H' + num(points[n - 2] - lx * endTrim);
+  } else {
+    atY = written(points[n - 1] - ly * endTrim);
+    d += 'V' + num(points[n - 1] - ly * endTrim);
+  }
+  tokens.push(76, 2, atX, atY);
+  return { d, tokens };
 }
 
 function clearOf(points: number[], others: Box[], a: Box, b: Box): boolean {
@@ -306,7 +340,7 @@ function clearOf(points: number[], others: Box[], a: Box, b: Box): boolean {
 function bent(points: number[], along: number, startTrim: number, endTrim: number, label: Partial<Route>): Route {
   const n = points.length;
   return {
-    d: path(points, startTrim, endTrim),
+    ...path(points, startTrim, endTrim),
     sx: points[0],
     sy: points[1],
     sdx: -Math.sign(points[2] - points[0]),
@@ -421,6 +455,10 @@ export function route(
       d:
         `M${num(x + ux * startTrim)},${num(cy - spread - uy * startTrim)}C${num(x + LOOP)},${num(cy - spread * 2)} ` +
         `${num(x + LOOP)},${num(cy + spread * 2)} ${num(x + ux * endTrim)},${num(cy + spread + uy * endTrim)}`,
+      tokens: [
+        77, 2, written(x + ux * startTrim), written(cy - spread - uy * startTrim),
+        67, 6, written(x + LOOP), written(cy - spread * 2), written(x + LOOP), written(cy + spread * 2), written(x + ux * endTrim), written(cy + spread + uy * endTrim),
+      ],
       sx: x,
       sy: cy - spread,
       sdx: -ux,
@@ -545,6 +583,7 @@ export function route(
   if (upright || sy === ey) lanes.take([sx, sy, ex, ey]);
   return {
     d: `M${num(sx + dx * startTrim)},${num(sy + dy * startTrim)}L${num(ex - dx * endTrim)},${num(ey - dy * endTrim)}`,
+    tokens: [77, 2, written(sx + dx * startTrim), written(sy + dy * startTrim), 76, 2, written(ex - dx * endTrim), written(ey - dy * endTrim)],
     sx,
     sy,
     sdx: -dx,

@@ -3,7 +3,7 @@ import type { Out } from '../../draw/out.js';
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
 import { esc } from '../../svg/builder.js';
-import { ARROW, CASINGS_ATTRS, drawMarker, edgeCasing, markerTrim, overFills, type Fill } from '../../svg/edges.js';
+import { ARROW, CASINGS_ATTRS, drawCasing, drawMarker, markerTrim, overFills, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { drawShape } from '../../svg/shapes.js';
 import { resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
@@ -11,7 +11,7 @@ import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { linkUrl, relAttr, sanitizeUrl } from '../../util/url.js';
-import { leftLabelSvg } from '../common/literal-label.js';
+import { leftLabel } from '../common/literal-label.js';
 import type { C4Db } from './db.js';
 import { HEAD_LEFT, HEAD_TOP, layoutC4 } from './layout.js';
 import { HEAD, LABEL_PAD, LANE, Lanes, crosses, cylRy, queueRx, route, type Box } from './route.js';
@@ -154,15 +154,12 @@ function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight
     grow(Math.min(r.x0, r.x1), Math.min(r.y0, r.y1), Math.max(r.x0, r.x1), Math.max(r.y0, r.y1));
     if (startArrow && careful) taken.push(r.sx - ARROW, r.sy - ARROW, r.sx + ARROW, r.sy + ARROW);
     if (endArrow && careful) taken.push(r.ex - ARROW, r.ey - ARROW, r.ex + ARROW, r.ey + ARROW);
-    const over = overFills(r.d, [r.sx, r.sy, r.ex, r.ey], fills, style.line);
+    const over = overFills(r.d, [r.sx, r.sy, r.ex, r.ey], fills, style.line, r.tokens);
     const color = over || (style.stroke ? esc(style.stroke) : 'var(--_l)');
-    if (over === '') {
-      const casing = edgeCasing(r, startArrow ? 'arrow_point' : 'none', endArrow ? 'arrow_point' : 'none', style.line);
-      if (casing) out.into('casings', '', () => out.fragment(casing));
-    }
+    if (over === '') out.into('casings', '', () => drawCasing(out, r, startArrow ? 'arrow_point' : 'none', endArrow ? 'arrow_point' : 'none', style.line));
     out.section('edges');
     out.group({ cls: 'pele-edge', id: rel.from + '-' + rel.to, source: rel.source, attrs: (over ? ` stroke="${over}"` : '') + style.line });
-    out.path(r.d, '');
+    out.path(r.d, '', r.tokens);
     if (startArrow) drawMarker(out, 'arrow_point', r.sx, r.sy, r.sdx, r.sdy, color);
     if (endArrow) drawMarker(out, 'arrow_point', r.ex, r.ey, r.edx, r.edy, color);
     out.end();
@@ -251,17 +248,15 @@ function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight
       let y = group.y + HEAD_TOP;
       const color = inkFill(style) + style.text;
       const muted = inkFill(style, 'var(--_m)') + style.text;
-      let text = leftLabelSvg(group.labels[0], x, y, ` class="pele-cluster-label" font-weight="var(--_hw)"${color}`);
-      y += group.labels[0].height;
-      text += leftLabelSvg(group.labels[1], x, y, ` class="pele-c4-type" font-size="${small}"${muted}`);
-      y += group.labels[1].height;
-      text += leftLabelSvg(group.labels[2], x, y, ` class="pele-c4-descr" font-size="${small}"${muted}`);
       out.section('clusters');
       out.group({ cls: `pele-cluster pele-c4-${boundary.nodeType ? 'node' : 'boundary'}`, id: boundary.alias, source: boundary.source });
       out.rect(group.x, group.y, group.w, group.h, ` fill="none" stroke="var(--_b)"${boundary.nodeType ? '' : ' stroke-dasharray="6 4"'}${rounded(style.shape)}`);
       const linked = openLink(out, boundary.link, boundary.alias, links, options);
-      // Left-aligned lines are tspans of mixed styles, which no typed call covers.
-      out.fragment(text);
+      leftLabel(out, group.labels[0], x, y, ` class="pele-cluster-label" font-weight="var(--_hw)"${color}`);
+      y += group.labels[0].height;
+      leftLabel(out, group.labels[1], x, y, ` class="pele-c4-type" font-size="${small}"${muted}`);
+      y += group.labels[1].height;
+      leftLabel(out, group.labels[2], x, y, ` class="pele-c4-descr" font-size="${small}"${muted}`);
       if (linked) out.end();
       out.end();
     }

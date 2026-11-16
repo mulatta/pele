@@ -1,9 +1,9 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
-import { escText, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { escText, num } from '../../svg/builder.js';
 import { FONT_MONO, ROUNDED, classNames } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
-import { literalLabel, leftLabelSvg } from '../common/literal-label.js';
+import { literalLabel, leftLabel } from '../common/literal-label.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered } from '../../types.js';
@@ -18,22 +18,6 @@ const ELBOW = 4;
 const HIGHLIGHT_OVERHANG = 4;
 const HIGHLIGHT = new Paint(` fill="var(--_c)" fill-opacity="0.14"${ROUNDED}`);
 const TITLE = ' class="pele-title" font-weight="var(--_tw)"';
-
-// Draws what leftLabelSvg writes, a line at a time as numbers; a line with its own emphasis or an icon keeps the markup.
-export function leftLabel(out: Out, label: Label, x: number, top: number, attrs: string): void {
-  const shared = sharedStyle(label);
-  const plain = label.lines.every(spans => spans.length === 0 || (spans.length === 1 && spans[0].icon === undefined && !spanStyle(spans[0].style & ~shared)));
-  if (!plain) {
-    out.fragment(leftLabelSvg(label, x, top, attrs));
-    return;
-  }
-  const styled = textStyle(attrs, shared);
-  for (let i = 0; i < label.lines.length; i++) {
-    const spans = label.lines[i];
-    if (spans.length === 0 || spans[0].text === '') continue;
-    out.text(x, top + (i + 0.5) * label.lineHeight + label.size * 0.35, spans[0].text, styled, ' text-anchor="start" xml:space="preserve"');
-  }
-}
 
 function setting(config: Config, key: string, fallback: number, min: number, max: number): number {
   const value = (config.treeView as Config | undefined)?.[key];
@@ -176,7 +160,6 @@ function draw(out: Out, model: TreeViewModel, config: Config, options: RenderOpt
       const name = row.icon.startsWith(BUILTIN_PACK + ':') ? row.icon.slice(BUILTIN_PACK.length + 1) : '';
       const glyph = GLYPHS.get(name) ?? GLYPHS.get(directory ? 'folder' : 'file')!;
       const drawn = options.icons?.(row.icon) ?? `<path d="${glyph}" stroke="var(--_m)" stroke-width="1.5"/>`;
-      // An icon is a nested <svg>, which no typed call covers.
       out.fragment(
         `<svg class="pele-icon" data-icon="${escText(row.icon)}" x="${num(inset + row.x)}" y="${num(
           cy - iconSize / 2
