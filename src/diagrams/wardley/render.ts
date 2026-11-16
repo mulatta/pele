@@ -39,8 +39,25 @@ function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
 }
 
-// Writes a label with its lines starting at x and its first baseline at y.
-function startLabel(label: Label, x: number, y: number, attrs: string): string {
+// Draws a label with its lines starting at x and its first baseline at y. The SVG is one <text>
+// with a tspan per line, which no typed call writes; a scene gets a text per line.
+function startLabel(out: Out, label: Label, x: number, y: number, attrs: string): void {
+  out.both(
+    () => startMarkup(label, x, y, attrs),
+    () => {
+      const shared = sharedStyle(label);
+      const look = textStyle(attrs, shared);
+      let baseline = y;
+      for (const line of label.lines) {
+        const runs = line.filter((span) => span.icon === undefined).map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) }));
+        if (runs.length > 0) out.spans(x, baseline, runs, look);
+        baseline += label.lineHeight;
+      }
+    }
+  );
+}
+
+function startMarkup(label: Label, x: number, y: number, attrs: string): string {
   const shared = sharedStyle(label);
   let body = '';
   let baseline = y;
@@ -92,10 +109,9 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
     grow(cx - label.width / 2, cy - label.height / 2, cx + label.width / 2, cy + label.height / 2);
     out.label(label, cx, cy, attrs, options.icons);
   };
-  // Lines of mixed spans are written as tspans, which a typed call does not cover.
   const starting = (label: Label, x: number, y: number, attrs: string): void => {
     grow(x, y - label.size, x + label.width, y - label.size + label.height + 4);
-    out.fragment(startLabel(label, x, y, attrs));
+    startLabel(out, label, x, y, attrs);
   };
   const text = (raw: string, fontSize: number, maxWidth = tight ? Math.max(64, Math.min(120, plotW / 2)) : 4000, style = 0): Label => layoutLabel(raw, false, measurer, fontSize, maxWidth, style);
   const projectX = (value: number): number => (value / 100) * plotW;
@@ -145,8 +161,16 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
   const axisAttrs = ` class="pele-wardley-axis-label" font-size="${small}" font-weight="var(--_hw)"`;
   out.section('axes');
   centered(xTitle, plotW / 2, stageBottom + 6 + xTitle.height / 2, axisAttrs);
-  // A rotation, which a typed label does not write.
-  out.fragment(labelSvg(yTitle, -16, plotH / 2, `${axisAttrs} transform="rotate(-90 -16 ${num(plotH / 2)})"`));
+  // The rotation is an attribute of the text itself, which no typed call writes.
+  const turn = ` transform="rotate(-90 -16 ${num(plotH / 2)})"`;
+  // A scene hides what a rotation holds, so it draws only the group.
+  out.both(
+    () => labelSvg(yTitle, -16, plotH / 2, axisAttrs + turn),
+    () => {
+      out.group({ attrs: turn });
+      out.end();
+    }
+  );
   grow(-16 - yTitle.height / 2, 0, 0, 0);
   const legendTop = stageBottom + 6 + xTitle.height + 10;
 
@@ -373,7 +397,7 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
     out.rect(bx, by, width, height, ` fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}`);
     let y = by + 7;
     for (const line of lines) {
-      out.fragment(startLabel(line, bx + 10, y + line.lineHeight / 2 + small * 0.35, ` font-size="${small}"`));
+      startLabel(out, line, bx + 10, y + line.lineHeight / 2 + small * 0.35, ` font-size="${small}"`);
       y += line.height;
     }
     out.end();
