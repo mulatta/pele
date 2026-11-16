@@ -3,7 +3,7 @@ import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, labelSvg, num, sharedStyle, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, edgeInk, fillUnder, hollowOn, routePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, edgeInk, fillUnder, routePath, type Fill } from '../../svg/edges.js';
 import { ON_DARK, ON_LIGHT, ink, inkFill, paints } from '../../svg/ink.js';
 import { ROUNDED, classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -15,8 +15,8 @@ import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { ErDb } from './db.js';
 import { parseGenericTypes } from '../common/generics.js';
 import { buildErGraph, type ErGraphEdge, type ErGraphNode } from './graph.js';
-import { MARKER_LENGTH, erMarker } from './markers.js';
-import type { Out } from '../../draw/out.js';
+import { MARKER_LENGTH, drawErMarker } from './markers.js';
+import { Paint, type Out, type Pen, type Run } from '../../draw/out.js';
 
 const NODE_SEP = 48;
 const EDGE_SEP = 20;
@@ -37,6 +37,9 @@ const NO_LOOPS: Loop[] = [];
 const PORT_GAP = 18;
 const PORT_MARGIN = 14;
 const BOX_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
+// What most entities' divider and outline look like, read once.
+const DIVIDER = new Paint(' stroke="var(--_b)"');
+const OUTLINE = new Paint(` fill="none" stroke="var(--_b)"${ROUNDED}`);
 
 function numberOption(config: Config, key: string, fallback: number): number {
   const value = (config.er as Config | undefined)?.[key];
@@ -88,37 +91,84 @@ function textLeft(out: Out, label: Label, x: number, y: number, attrs: string, i
   const shared = sharedStyle(label);
   const shift = label.size * 0.35;
   const top = y - shift - label.lineHeight / 2;
-  let body = '';
-  let extra = '';
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const middle = top + lineMiddle(label, i);
-    if (hasMath(line)) {
-      extra += labelSvg(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
-      continue;
-    }
-    y = middle + shift;
-    let hasIcon = false;
-    for (const span of line) if (span.icon !== undefined) hasIcon = true;
-    let sx = x;
-    let placed = false;
-    for (const span of line) {
-      if (span.icon !== undefined) {
-        const side = label.size * 1.1;
-        extra += `<svg class="pele-icon" data-icon="${escText(span.icon)}" x="${num(sx)}" y="${num(
-          y - label.size * 0.35 - side / 2
-        )}" width="${num(side)}" height="${num(side)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-          icons?.(span.icon) ?? ''
-        }</svg>`;
-      } else if (span.text !== '') {
-        const pos = hasIcon || !placed ? ` x="${num(sx)}" y="${num(y)}"` : '';
-        body += `<tspan${pos}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
-        placed = true;
+  // Runs that set no position of their own continue the one before; icons and math sit after the text.
+  out.both(
+    () => {
+      let body = '';
+      let extra = '';
+      let ty = y;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const middle = top + lineMiddle(label, i);
+        if (hasMath(line)) {
+          extra += labelSvg(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
+          continue;
+        }
+        ty = middle + shift;
+        let hasIcon = false;
+        for (const span of line) if (span.icon !== undefined) hasIcon = true;
+        let sx = x;
+        let placed = false;
+        for (const span of line) {
+          if (span.icon !== undefined) {
+            const side = label.size * 1.1;
+            extra += `<svg class="pele-icon" data-icon="${escText(span.icon)}" x="${num(sx)}" y="${num(
+              ty - label.size * 0.35 - side / 2
+            )}" width="${num(side)}" height="${num(side)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
+              icons?.(span.icon) ?? ''
+            }</svg>`;
+          } else if (span.text !== '') {
+            const pos = hasIcon || !placed ? ` x="${num(sx)}" y="${num(ty)}"` : '';
+            body += `<tspan${pos}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
+            placed = true;
+          }
+          sx += span.width;
+        }
       }
-      sx += span.width;
+      return `<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>${extra}`;
+    },
+    () => {
+      const style = textStyle(attrs, shared);
+      let runs: Run[] = [];
+      let rx = 0;
+      let ry = 0;
+      const flush = (): void => {
+        if (runs.length > 0) out.spans(rx, ry, runs, style);
+        runs = [];
+      };
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (hasMath(line)) continue;
+        const ty = top + lineMiddle(label, i) + shift;
+        let hasIcon = false;
+        for (const span of line) if (span.icon !== undefined) hasIcon = true;
+        let sx = x;
+        let placed = false;
+        for (const span of line) {
+          if (span.icon === undefined && span.text !== '') {
+            if (hasIcon || !placed) {
+              flush();
+              rx = sx;
+              ry = ty;
+            }
+            runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
+            placed = true;
+          }
+          sx += span.width;
+        }
+      }
+      flush();
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const middle = top + lineMiddle(label, i);
+        if (hasMath(line)) {
+          out.label(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
+          continue;
+        }
+        for (const span of line) if (span.icon !== undefined) out.opaque('', 'icon');
+      }
     }
-  }
-  out.fragment(`<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>${extra}`);
+  );
 }
 
 // Mermaid reads `~` pairs as angle brackets. They are written as entities so the label parser
@@ -354,7 +404,6 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
     const text = view.style.text;
     const color = inkFill(view.style);
     const muted = color || ' fill="var(--_m)"';
-    const shape = `x="${num(x0)}" y="${num(y0)}" width="${num(w)}" height="${num(h)}"`;
     out.section('nodes');
     out.group({ cls: `pele-node pele-entity${classes}`, id: node.label, source: node.written, x: c.x, y: c.y });
     const baselines: number[] = [];
@@ -363,36 +412,53 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
     } else {
       const rowLine = Math.round(view.rowSize * 1.5);
       const lineColor = view.style.stroke ? esc(view.style.stroke) : 'var(--_b)';
-      let stripes = '';
+      // y, height and whether it is the last row, for each shaded row.
+      const stripeAt: number[] = [];
       let y = y0 + view.headH;
       for (let r = 0; r < view.rows.length; r++) {
         const row = view.rows[r];
         if (r % 2 === 0) {
-          const span = `x="${num(x0)}" width="${num(w)}"`;
-          if (r === view.rows.length - 1) {
-            // The last row follows the box's rounded bottom corners: a rounded rect, squared off on top.
-            stripes +=
-              `<rect ${span} y="${num(y)}" height="${num(row.h)}"${ROUNDED}/>` +
-              `<rect ${span} y="${num(y)}" height="${num(row.h / 2)}"/>`;
-          } else {
-            stripes += `<rect ${span} y="${num(y)}" height="${num(row.h)}"/>`;
-          }
+          stripeAt.push(y, row.h, r === view.rows.length - 1 ? 1 : 0);
         }
         baselines.push(y + ROW_PAD / 2 + rowLine / 2 + view.rowSize * 0.35);
         y += row.h;
       }
-      const dividerY = num(y0 + view.headH);
       // Keep row shading light on light fills and dark on dark fills to preserve text contrast.
       const tone = ink(view.style.shape);
       const shade = tone === ON_LIGHT ? ON_DARK : tone === ON_DARK ? ON_LIGHT : 'var(--_bg)';
-      out.fragment(
-        `<rect ${shape}${rounded(BOX_ATTRS + view.style.shape)}/>` +
-          // Over a fill the diagram chose, the shading is a tint of that fill. The opacity is on the
-          // group because the two parts of the last row overlap.
-          `<g class="pele-er-stripes" fill="${shade}"${view.style.shape.includes('fill:') ? ' opacity="0.6"' : ''}>${stripes}</g>` +
-          `<path class="pele-er-divider" d="M${num(x0)},${dividerY}H${num(x0 + w)}" stroke="${lineColor}"/>` +
-          `<rect ${shape} fill="none" stroke="var(--_b)"${rounded(view.style.line)}/>`
+      out.rect(x0, y0, w, h, rounded(BOX_ATTRS + view.style.shape));
+      // Over a fill the diagram chose, the shading is a tint of that fill. The opacity is on the
+      // group because the two parts of the last row overlap.
+      const stripeAttrs = ` fill="${shade}"${view.style.shape.includes('fill:') ? ' opacity="0.6"' : ''}`;
+      // The SVG writes each stripe's width before its y, which no typed rect does.
+      out.both(
+        () => {
+          const span = `x="${num(x0)}" width="${num(w)}"`;
+          let stripes = '';
+          for (let k = 0; k < stripeAt.length; k += 3) {
+            const at = num(stripeAt[k]);
+            const hh = stripeAt[k + 1];
+            // The last row follows the box's rounded bottom corners: a rounded rect, squared off on top.
+            stripes +=
+              stripeAt[k + 2] === 1
+                ? `<rect ${span} y="${at}" height="${num(hh)}"${ROUNDED}/><rect ${span} y="${at}" height="${num(hh / 2)}"/>`
+                : `<rect ${span} y="${at}" height="${num(hh)}"/>`;
+          }
+          return `<g class="pele-er-stripes"${stripeAttrs}>${stripes}</g>`;
+        },
+        () => {
+          out.group({ cls: 'pele-er-stripes', attrs: stripeAttrs });
+          for (let k = 0; k < stripeAt.length; k += 3) {
+            if (stripeAt[k + 2] === 1) {
+              out.rect(x0, stripeAt[k], w, stripeAt[k + 1], ROUNDED);
+              out.rect(x0, stripeAt[k], w, stripeAt[k + 1] / 2, '');
+            } else out.rect(x0, stripeAt[k], w, stripeAt[k + 1], '');
+          }
+          out.end();
+        }
       );
+      out.path(out.pen().M(x0, y0 + view.headH).H(x0 + w), view.style.stroke ? ` stroke="${lineColor}"` : DIVIDER, undefined, { cls: 'pele-er-divider' });
+      out.rect(x0, y0, w, h, view.style.line ? ` fill="none" stroke="var(--_b)"${rounded(view.style.line)}` : OUTLINE);
     }
     const nameAttrs = ` class="pele-label"${color}${text}`;
     const nameY = view.rows.length > 0 ? y0 + view.headH / 2 : 0;
@@ -440,8 +506,10 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
     const edge = drawn[i];
     const label = edgeLabels[i];
     let d: string;
-    let start: string;
-    let end: string;
+    // Where each end's marker sits and which way it points: x, y, dx, dy for the start, then the end.
+    let ends: number[];
+    // A self-loop's path, drawn from numbers.
+    let curve: Pen | undefined;
     // The route as routePath kept its numbers, for a scene to take instead of path data.
     let tokens: number[] | undefined;
     const loop = loopOf[i];
@@ -453,21 +521,21 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
       if (view.below) {
         const x = c.x + loop.at;
         const y = c.y + view.h / 2;
-        const turn = num(y + MARKER_LENGTH);
-        const out = num(y + MARKER_LENGTH + LOOP);
-        d = `M${num(x - spread)},${num(y)}V${turn}C${num(x - spread)},${out} ${num(x + spread)},${out} ${num(x + spread)},${turn}V${num(y)}`;
-        start = erMarker(edge.arrowTypeStart, x - spread, y, 0, -1);
-        end = erMarker(edge.arrowTypeEnd, x + spread, y, 0, -1);
+        const turn = y + MARKER_LENGTH;
+        const bulge = y + MARKER_LENGTH + LOOP;
+        d = `M${num(x - spread)},${num(y)}V${num(turn)}C${num(x - spread)},${num(bulge)} ${num(x + spread)},${num(bulge)} ${num(x + spread)},${num(turn)}V${num(y)}`;
+        curve = out.pen().M(x - spread, y).V(turn).C(x - spread, bulge, x + spread, bulge, x + spread, turn).V(y);
+        ends = [x - spread, y, 0, -1, x + spread, y, 0, -1];
         ce.labelX = x;
         ce.labelY = y + far + label.height / 2;
       } else {
         const x = c.x + view.w / 2;
         const y = c.y + loop.at;
-        const turn = num(x + MARKER_LENGTH);
-        const out = num(x + MARKER_LENGTH + LOOP);
-        d = `M${num(x)},${num(y - spread)}H${turn}C${out},${num(y - spread)} ${out},${num(y + spread)} ${turn},${num(y + spread)}H${num(x)}`;
-        start = erMarker(edge.arrowTypeStart, x, y - spread, -1, 0);
-        end = erMarker(edge.arrowTypeEnd, x, y + spread, -1, 0);
+        const turn = x + MARKER_LENGTH;
+        const bulge = x + MARKER_LENGTH + LOOP;
+        d = `M${num(x)},${num(y - spread)}H${num(turn)}C${num(bulge)},${num(y - spread)} ${num(bulge)},${num(y + spread)} ${num(turn)},${num(y + spread)}H${num(x)}`;
+        curve = out.pen().M(x, y - spread).H(turn).C(bulge, y - spread, bulge, y + spread, turn, y + spread).H(x);
+        ends = [x, y - spread, -1, 0, x, y + spread, -1, 0];
         ce.labelX = x + far + label.width / 2;
         ce.labelY = y;
       }
@@ -488,28 +556,26 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
         const t = path.tokens ?? [];
         tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
       }
-      start = erMarker(edge.arrowTypeStart, path.sx, path.sy, path.sdx, path.sdy);
-      end = erMarker(edge.arrowTypeEnd, path.ex, path.ey, path.edx, path.edy);
+      ends = [path.sx, path.sy, path.sdx, path.sdy, path.ex, path.ey, path.edx, path.edy];
     }
     const under = fillUnder(d, [], fills);
     const over = under ? edgeInk(under) : under;
     if (over === '') {
       // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
-      const markers = (start + end).replace(/ class="pele-marker"/g, '');
       out.into('casings', '', () => {
-        out.path(d, '', tokens);
-        out.fragment(markers);
+        out.path(curve ?? d, '', tokens);
+        drawErMarker(out, edge.arrowTypeStart, ends[0], ends[1], ends[2], ends[3], 'var(--_bg)', false);
+        drawErMarker(out, edge.arrowTypeEnd, ends[4], ends[5], ends[6], ends[7], 'var(--_bg)', false);
       });
     }
-    if (under && over) {
-      start = hollowOn(start, under);
-      end = hollowOn(end, under);
-    }
+    // Rings and the parent diamond take the fill's color where the edge runs over one.
+    const hollow = (under && over && /[";]fill:([^;"]*)/.exec(under.shape)?.[1].trim()) || 'var(--_bg)';
     const dashed = edge.pattern === 'dashed';
     out.section('edges');
     out.group({ cls: `pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}`, id: edge.id, source: edge.written, attrs: over ? ` stroke="${over}"` : '' });
-    out.path(d, dashed ? ' stroke-dasharray="4 3"' : '', tokens);
-    out.fragment(start + end);
+    out.path(curve ?? d, dashed ? ' stroke-dasharray="4 3"' : '', tokens);
+    drawErMarker(out, edge.arrowTypeStart, ends[0], ends[1], ends[2], ends[3], hollow);
+    drawErMarker(out, edge.arrowTypeEnd, ends[4], ends[5], ends[6], ends[7], hollow);
     out.end();
     if (label.width > 0) {
       const x = ce.labelX;
