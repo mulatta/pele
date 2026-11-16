@@ -5,6 +5,7 @@ import { renderIshikawa } from './render.js';
 
 export const ishikawa: Diagram<IshikawaDb> = {
   type: 'ishikawa',
+  scene: true,
   parse(source, _config, title) {
     const db = new IshikawaDb();
     db.title = title;

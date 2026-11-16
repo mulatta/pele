@@ -5,6 +5,7 @@ import { renderJourney } from './render.js';
 
 export const journey: Diagram<JourneyModel> = {
   type: 'journey',
+  scene: true,
   parse(source, _config, title) {
     const db = new JourneyDb();
     db.title = title;

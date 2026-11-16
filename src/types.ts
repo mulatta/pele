@@ -98,6 +98,9 @@ export interface Diagram<Model> {
   keepComments?: boolean;
   // Enables $$...$$ in labels.
   math?: boolean;
+  // Draws through `out` alone, so renderScene() can draw it. A renderer that writes its SVG
+  // itself leaves this unset, and hosts draw it from its SVG.
+  scene?: boolean;
   parse(source: string, config: Config, title: string | undefined, lineOffset: number, limits: ParseLimits): Model;
   // Draws into `out`, which makes SVG for render() and a scene for renderScene(). The SVG goes in
   // `svg`; for a scene, `svg` is empty.

@@ -5,6 +5,7 @@ import { renderArchitecture } from './render.js';
 
 export const architecture: Diagram<ArchitectureDb> = {
   type: 'architecture',
+  scene: true,
   parse(source, _config, title) {
     const db = new ArchitectureDb();
     if (title) db.title = title;

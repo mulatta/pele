@@ -208,11 +208,11 @@ export function render(source: string | DiagramModel, options: RenderOptions = {
   });
 }
 
-// Whether renderScene() can draw this text: every registered type draws through an output.
+// Whether renderScene() can draw this text: its type is registered as drawing a scene.
 export function sceneSupported(source: string | DiagramModel): boolean {
   try {
     const type = typeof source === 'string' ? detectType(source) : parsedFrom(source, {}).type;
-    return type !== null && diagrams.has(type);
+    return type !== null && diagrams.get(type)?.scene === true;
   } catch {
     return false;
   }
@@ -232,6 +232,7 @@ export interface SceneResult {
 export function renderScene(source: string | DiagramModel, options: RenderOptions = {}): SceneResult {
   return guarded(() => {
     const { type, mermaidType, diagram, model, config } = parsedFrom(source, { ...options, sourceInfo: true });
+    if (diagram.scene !== true) throw new PeleError(`${type} is not registered as drawing a scene.`, 'unsupported-diagram', { type, mermaidType });
     const section = config[diagram.section ?? type];
     const fixed = typeof section === 'object' && section !== null && !Array.isArray(section) && section.useMaxWidth === false;
     const responsive = options.responsive ?? !fixed;

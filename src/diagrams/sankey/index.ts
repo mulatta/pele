@@ -5,6 +5,7 @@ import { renderSankey } from './render.js';
 
 export const sankey: Diagram<SankeyDb> = {
   type: 'sankey',
+  scene: true,
   parse(source, _config, title) {
     const db = new SankeyDb();
     if (title) db.title = title;

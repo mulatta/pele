@@ -5,6 +5,7 @@ import { renderPacket } from './render.js';
 
 export const packet: Diagram<PacketModel> = {
   type: 'packet',
+  scene: true,
   parse: (source, config, title) => buildPacket(parsePacket(source, true), config, title),
   render: renderPacket,
 };

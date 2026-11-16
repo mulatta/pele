@@ -32,6 +32,22 @@ describe('core without the full entry point', () => {
     expect(core.supports(PIE)).toBe(false);
   });
 
+  it('draws a scene only for types registered as drawing one', async () => {
+    const core = await import('../src/core.js');
+    core.register((await import('../src/entries/flowchart.js')).default);
+    expect(core.sceneSupported(FLOW)).toBe(true);
+    // A renderer that writes its SVG itself and never draws into the output.
+    const own: Diagram<null> = {
+      type: 'pie',
+      parse: () => null,
+      render: () => ({ svg: '<svg/>', width: 1, height: 1, links: [] }),
+    };
+    core.register(own);
+    expect(core.render(PIE).svg).toBe('<svg/>');
+    expect(core.sceneSupported(PIE)).toBe(false);
+    expect(() => core.renderScene(PIE)).toThrow(expect.objectContaining({ code: 'unsupported-diagram', type: 'pie' }));
+  });
+
   it('loads a type the first time it is needed', async () => {
     const lazy = await import('../src/lazy.js');
     expect(lazy.supports(PIE)).toBe(false);

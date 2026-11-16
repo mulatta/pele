@@ -6,6 +6,7 @@ import { renderGantt } from './render.js';
 
 export const gantt: Diagram<GanttDb> = {
   type: 'gantt',
+  scene: true,
   parse(source, config, title) {
     const db = new GanttDb();
     if (title) db.title = title;

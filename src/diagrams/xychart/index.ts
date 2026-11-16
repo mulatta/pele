@@ -5,6 +5,7 @@ import { renderXyChart } from './render.js';
 
 export const xychart: Diagram<XyChartDb> = {
   type: 'xychart',
+  scene: true,
   section: 'xyChart',
   parse(source, _config, title) {
     const db = new XyChartDb();

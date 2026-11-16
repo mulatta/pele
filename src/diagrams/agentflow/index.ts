@@ -6,6 +6,7 @@ import { agentGraph, renderAgentflow } from './render.js';
 
 export const agentflow: Diagram<AgentflowDb> = {
   type: 'agentflow',
+  scene: true,
   keepComments: true,
   parse(source, config, title, lineOffset, limits) {
     // Mermaid reads this setting from the flowchart section for agentflow too.

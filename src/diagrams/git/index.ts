@@ -5,6 +5,7 @@ import { renderGit } from './render.js';
 
 export const gitGraph: Diagram<GitModel> = {
   type: 'gitGraph',
+  scene: true,
   parse: (source, config, title) => buildGit(parseGit(source), config, title),
   render: renderGit,
 };

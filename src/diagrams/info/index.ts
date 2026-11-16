@@ -5,6 +5,7 @@ import { renderInfo } from './render.js';
 
 export const info: Diagram<InfoModel> = {
   type: 'info',
+  scene: true,
   parse: (source, _config, title) => buildInfo(parseInfo(source), title),
   render: renderInfo,
 };

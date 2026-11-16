@@ -5,6 +5,7 @@ import { renderC4 } from './render.js';
 
 export const c4: Diagram<C4Db> = {
   type: 'c4',
+  scene: true,
   parse(source, _config, title) {
     const db = new C4Db();
     if (title) db.title = title;

@@ -5,6 +5,7 @@ import { renderTimeline } from './render.js';
 
 export const timeline: Diagram<TimelineModel> = {
   type: 'timeline',
+  scene: true,
   parse(source, _config, title) {
     const db = new TimelineDb();
     db.title = title;

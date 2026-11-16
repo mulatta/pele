@@ -5,6 +5,7 @@ import { renderState } from './render.js';
 
 export const state: Diagram<StateDb> = {
   type: 'state',
+  scene: true,
   math: true,
   parse(source, _config, title) {
     const db = new StateDb();

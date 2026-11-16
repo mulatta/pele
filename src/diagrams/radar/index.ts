@@ -5,6 +5,7 @@ import { renderRadar } from './render.js';
 
 export const radar: Diagram<RadarModel> = {
   type: 'radar',
+  scene: true,
   parse: (source, _config, title) => buildRadar(parseRadar(source, true), title),
   render: renderRadar,
 };
