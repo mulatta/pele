@@ -13,7 +13,8 @@
 import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
-import type { SourceInfo } from '../types.js';
+import { iconSvg } from '../diagrams/common/icon.js';
+import type { IconResolver, SourceInfo } from '../types.js';
 import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
 export const SCENE_VERSION = 2;
@@ -511,7 +512,7 @@ function cmdsBox(cmds: Path): Box {
 type Op =
   | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look; source: SourceInfo | undefined }
   | { op: 'end' }
-  | { op: 'shape'; cmds: Path; look: Look }
+  | { op: 'shape'; cmds: Path; look: Look; scale?: number }
   | { op: 'text'; x: number; y: number; anchor: string | undefined; spans: SceneSpan[]; look: Look }
   | { op: 'skip'; what: string };
 
@@ -693,8 +694,11 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
       case 'desc':
         break;
       case 'svg':
+        if (/\bpele-icon\b/.test(a.class ?? '')) iconOps(el, look, ops);
+        else ops.push({ op: 'skip', what: /\bpele-math\b/.test(a.class ?? '') ? 'math' : el.tag });
+        break;
       case 'foreignObject':
-        ops.push({ op: 'skip', what: /\bpele-math\b/.test(a.class ?? '') ? 'math' : /\bpele-icon\b/.test(a.class ?? '') ? 'icon' : el.tag });
+        ops.push({ op: 'skip', what: el.tag });
         break;
       default:
         ops.push({ op: 'skip', what: el.tag });
@@ -702,6 +706,45 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
     if (cmds) ops.push({ op: 'shape', cmds, look: own });
     if (framed) ops.push({ op: 'end' });
   }
+}
+
+// An icon's viewport: its viewBox fitted to its box and centred, as preserveAspectRatio's default
+// places it. What it holds is scaled and moved into place, line widths with it.
+function iconOps(el: Element, look: Look, ops: Op[]): void {
+  const a = el.a;
+  const w = len(a.width, 0);
+  const h = len(a.height, 0);
+  const vb = a.viewBox === undefined ? [0, 0, w, h] : numbers(a.viewBox);
+  if (!(w > 0 && h > 0 && vb[2] > 0 && vb[3] > 0)) return;
+  const k = Math.min(w / vb[2], h / vb[3]);
+  const inner: Op[] = [];
+  fragmentOps(el.children, inner);
+  ops.push({ op: 'begin', id: undefined, kind: 'svg', dx: len(a.x, 0) + (w - vb[2] * k) / 2 - vb[0] * k, dy: len(a.y, 0) + (h - vb[3] * k) / 2 - vb[1] * k, look, source: undefined });
+  for (const op of inner) {
+    if (op.op === 'shape') ops.push({ op: 'shape', cmds: scaled(op.cmds, k), look: op.look, scale: k * (op.scale ?? 1) });
+    else if (op.op === 'begin') ops.push({ ...op, dx: op.dx * k, dy: op.dy * k });
+    // A scene's text has no scale; an icon's lettering is left out.
+    else if (op.op === 'text') ops.push({ op: 'skip', what: 'text' });
+    else ops.push(op);
+  }
+  ops.push({ op: 'end' });
+}
+
+// A copy of the path scaled about the origin, arc radii with it.
+function scaled(cmds: Path, k: number): Path {
+  const o = cmds.slice();
+  for (let i = 0; i < o.length; ) {
+    const op = o[i];
+    const end = i + 1 + ARGC[op];
+    if (op === A) {
+      o[i + 1] *= k;
+      o[i + 2] *= k;
+      o[i + 6] *= k;
+      o[i + 7] *= k;
+    } else for (let j = i + 1; j < end; j++) o[j] *= k;
+    i = end;
+  }
+  return o;
 }
 
 // Reads a fragment the way the SVG it is part of would be read.
@@ -867,7 +910,8 @@ export class SceneOut implements Out {
   // Adds geometry in the current group's coordinates, painted by `look` over the inherited one.
   // Geometry made already moved by the group's offset is `placed`, with its `box` when known: a
   // copy and a pass over it cost an interpreter as much as making it.
-  shape(cmds: Path, own: Look = NO_LOOK, placed = false, known?: Box): void {
+  // Inside a scaled viewport (an icon), line widths are scaled with the geometry.
+  shape(cmds: Path, own: Look = NO_LOOK, placed = false, known?: Box, scale = 1): void {
     const f = this.top;
     if (!cmds.length || f.hidden) return;
     const ink = inkOf(merge(f.look, own));
@@ -877,9 +921,10 @@ export class SceneOut implements Out {
       (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item });
     }
     if (ink.stroke !== null) {
-      const p = ink.width / 2;
+      const width = ink.width * scale;
+      const p = width / 2;
       (this.current.shapes ??= []).push({
-        kind: 'stroke', paint: ink.stroke, opacity: ink.strokeOpacity, width: ink.width, dash: ink.dash === null ? null : ink.dash.slice(),
+        kind: 'stroke', paint: ink.stroke, opacity: ink.strokeOpacity, width, dash: ink.dash === null ? null : ink.dash.map((d) => d * scale),
         cmds, box: { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p }, item: f.item,
       });
     }
@@ -920,8 +965,10 @@ export class SceneOut implements Out {
     this.put(x, y, list, textBase(look), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
   }
 
-  opaque(_svg: string, what: string): void {
-    this.skip(what);
+  // An icon is drawn from its markup; what has none to draw from (math) is left out.
+  opaque(svg: string, what: string): void {
+    if (what === 'icon' && svg) this.fragment(svg);
+    else this.skip(what);
   }
 
   both(_svg: () => string, scene: () => void): void {
@@ -959,7 +1006,7 @@ export class SceneOut implements Out {
           this.end();
           break;
         case 'shape':
-          this.shape(op.cmds, op.look);
+          this.shape(op.cmds, op.look, false, undefined, op.scale);
           break;
         case 'text': {
           const look = merge(this.top.look, op.look);
@@ -974,7 +1021,7 @@ export class SceneOut implements Out {
   }
 
   // A measured label centered on (cx, cy), placed as labelSvg places it.
-  label(label: Label, cx: number, cy: number, attrs: Attrs = ''): void {
+  label(label: Label, cx: number, cy: number, attrs: Attrs = '', icons?: IconResolver): void {
     const lines = label.lines;
     if (lines.length === 0) return;
     const f = this.top;
@@ -1000,7 +1047,7 @@ export class SceneOut implements Out {
         let x = cx - label.widths[i] / 2;
         for (const s of line) {
           if (s.math) this.skip('math');
-          else if (s.icon !== undefined) this.skip('icon');
+          else if (s.icon !== undefined) this.fragment(iconSvg(s.icon, x, top + h / 2 - (label.size * 1.1) / 2, label.size * 1.1, icons));
           else if (s.text !== '') this.put(x, y, [span(s)], base, 'start');
           x += s.width;
         }

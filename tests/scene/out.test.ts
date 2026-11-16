@@ -93,7 +93,7 @@ describe('drawing outputs', () => {
       out.circle(null, 6, 2, ' fill="var(--_c)"');
       out.rect(null, null, 8, 5, ' fill="var(--_s)"');
       out.spans(0, 9, [{ text: 'a & ' }, { text: 'b', attrs: ' font-weight="var(--_w)"' }, { text: ' c', attrs: ' fill="var(--_m)"' }], ' font-size="12"', ' text-anchor="middle"');
-      out.opaque('<svg class="pele-icon" data-icon="x" x="0" y="0" width="4" height="4"></svg>', 'icon');
+      out.opaque('<svg class="pele-icon" data-icon="x" x="2" y="1" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--_m)" stroke-width="2"><path d="M4 4h16v16H4z"/><circle cx="12" cy="12" r="4" fill="var(--_c)" stroke-dasharray="2 1"/></svg>', 'icon');
       out.both(() => '<circle r="1.5" fill="var(--_l)"/>', () => out.circle(null, null, 1.5, ' fill="var(--_l)"'));
       out.end();
     });
@@ -102,7 +102,14 @@ describe('drawing outputs', () => {
     expect(svg).toContain('<text font-size="12" x="0" y="9" text-anchor="middle">a &amp; <tspan font-weight="var(--_w)">b</tspan><tspan fill="var(--_m)"> c</tspan></text>');
     expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
     expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700 }, { text: ' c', paint: 'var(--_m)' }]);
-    expect(scene.skipped).toEqual({ icon: 1 });
+    // The icon's 24-unit viewBox is drawn at half size in its 12-unit box, line widths too.
+    const icon = scene.shapes.filter((s) => s.paint === 'var(--_m)');
+    expect(icon.map((s) => [s.kind, s.width, s.cmds.slice(0, 3)])).toEqual([
+      ['stroke', 1, [0, 8, 5]],
+      ['stroke', 1, [0, 10, 9]],
+    ]);
+    expect(scene.shapes.find((s) => s.kind === 'stroke' && s.dash)?.dash).toEqual([1, 0.5]);
+    expect(scene.skipped).toEqual({});
   });
 
   it('place, order and keep what the SVG does', () => {

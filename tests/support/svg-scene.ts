@@ -370,13 +370,60 @@ export function svgToScene(svg: string): Scene {
         case 'desc':
           break;
         case 'svg':
+          if (/\bpele-icon\b/.test(c.attrs.class ?? '')) icon(c, look, tx, ty);
+          else skip(/\bpele-math\b/.test(c.attrs.class ?? '') ? 'math' : c.tag);
+          break;
         case 'foreignObject':
-          skip(/\bpele-math\b/.test(c.attrs.class ?? '') ? 'math' : /\bpele-icon\b/.test(c.attrs.class ?? '') ? 'icon' : c.tag);
+          skip(c.tag);
           break;
         default:
           skip(c.tag);
       }
       if (id !== undefined) items.pop();
+    }
+  };
+  // A nested viewport: its viewBox fitted to its box, centred (preserveAspectRatio's default).
+  // What it holds is read on its own and then scaled and moved into place, line widths too.
+  const icon = (el: Node, look: Look, dx: number, dy: number) => {
+    const w = len(el.attrs.width, 0);
+    const h = len(el.attrs.height, 0);
+    const vb = el.attrs.viewBox ? numbers(el.attrs.viewBox) : [0, 0, w, h];
+    if (!(w > 0 && h > 0 && vb[2] > 0 && vb[3] > 0)) return;
+    const k = Math.min(w / vb[2], h / vb[3]);
+    const ox = len(el.attrs.x, 0) + dx + (w - vb[2] * k) / 2 - vb[0] * k;
+    const oy = len(el.attrs.y, 0) + dy + (h - vb[3] * k) / 2 - vb[1] * k;
+    const from = scene.shapes.length;
+    const texts = scene.texts.length;
+    items.push(-1);
+    walk(el, look, 0, 0);
+    items.pop();
+    for (let n = scene.texts.length - texts; n > 0; n--) skip('text');
+    scene.texts.length = texts;
+    for (const x of scene.shapes.slice(from)) {
+      const c = x.cmds.slice();
+      for (let i = 0; i < c.length; ) {
+        const op = c[i];
+        const end = i + 1 + ARGC[op];
+        if (op === A) {
+          c[i + 1] *= k;
+          c[i + 2] *= k;
+        }
+        for (let j = op === A ? i + 6 : i + 1; j + 1 < end; j += 2) {
+          c[j] = c[j] * k + ox;
+          c[j + 1] = c[j + 1] * k + oy;
+        }
+        i = end;
+      }
+      x.cmds = c;
+      x.item = items[items.length - 1];
+      const box = cmdsBox(c);
+      if (x.kind === 'stroke') {
+        x.width = x.width! * k;
+        if (x.dash) x.dash = x.dash.map((d) => d * k);
+        const p = x.width / 2;
+        x.box = { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p };
+      } else x.box = box;
+      touch(box);
     }
   };
   const font = root.attrs.style?.match(/font:\s*(\d+(?:\.\d+)?)px/);

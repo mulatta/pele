@@ -7,6 +7,7 @@ import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { turnToFit } from '../common/fit-width.js';
 import { fitLabel, plainLabel } from '../common/fit.js';
+import { iconSvg } from '../common/icon.js';
 import { journeyActors, type JourneyModel } from './db.js';
 
 const PAD_X = 10;
@@ -66,7 +67,7 @@ function inheritedLabel(out: Out, label: Label, cx: number, cy: number, attrs: s
           let x = cx - label.widths[i] / 2;
           for (const span of line) {
             if (span.math) out.opaque('', 'math');
-            else if (span.icon !== undefined) out.opaque('', 'icon');
+            else if (span.icon !== undefined) out.opaque(iconSvg(span.icon, x, y - shift - (label.size * 1.1) / 2, label.size * 1.1, undefined), 'icon');
             else if (span.text !== '') out.spans(x, y, [{ text: span.text, attrs: spanStyle(span.style & ~shared) }], look, ' text-anchor="start"');
             x += span.width;
           }

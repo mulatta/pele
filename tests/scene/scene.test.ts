@@ -15,6 +15,8 @@ const corpora = readdirSync('tests/corpus')
 // interface, for the types it drew then.
 const baseline = JSON.parse(readFileSync('tests/scene/baseline.json', 'utf8')) as Record<string, unknown>;
 
+const icons = (name: string) => `<path d="M4 4h16v16H4z" stroke="var(--_m)"/><circle cx="12" cy="12" r="${(name.length % 5) + 1}" fill="currentColor"/>`;
+
 // What a call gave, or the message it threw.
 const attempt = <T>(f: () => T): { value: T } | { error: string } => {
   try {
@@ -28,8 +30,8 @@ describe('scene output', () => {
   it.each(corpora)('draws what the SVG shows for $file', ({ file, sources }) => {
     for (const src of sources) {
       if (!sceneSupported(src)) continue;
-      // Narrow, a diagram is drawn more than once to fit.
-      for (const extra of [{}, { maxWidth: 300 }]) {
+      // Narrow, a diagram is drawn more than once to fit; icons are drawn from what a host gives.
+      for (const extra of [{}, { maxWidth: 300 }, { icons }]) {
         const at = `${file} ${JSON.stringify(extra)}: ${JSON.stringify(src).slice(0, 120)}`;
         const svg = attempt(() => render(src, { ...options, ...extra, sourceInfo: true }).svg);
         const scene = attempt(() => renderScene(src, { ...options, ...extra }).scene);

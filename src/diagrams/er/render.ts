@@ -10,6 +10,7 @@ import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../t
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
 import { internalLink, relAttr } from '../../util/url.js';
+import { iconSvg } from '../common/icon.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { ErDb } from './db.js';
@@ -165,7 +166,13 @@ function textLeft(out: Out, label: Label, x: number, y: number, attrs: string, i
           out.label(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
           continue;
         }
-        for (const span of line) if (span.icon !== undefined) out.opaque('', 'icon');
+        const ty = middle + shift;
+        const side = label.size * 1.1;
+        let sx = x;
+        for (const span of line) {
+          if (span.icon !== undefined) out.opaque(iconSvg(span.icon, sx, ty - label.size * 0.35 - side / 2, side, icons), 'icon');
+          sx += span.width;
+        }
       }
     }
   );
