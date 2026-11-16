@@ -303,7 +303,7 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
         else drawShape(out, shape, w[i], h[i], ' fill="var(--_s)" stroke="var(--_b)"', ' stroke="var(--_b)"');
       }
       else if (pill) out.rect(-w[i] / 2, -h[i] / 2, w[i], h[i], ` rx="${num(h[i] / 2)}"${tint}`);
-      if (withIcon) out.fragment(iconSvg(node.icon!, -shift - label.width / 2, dy[i] - glyph / 2, glyph, icons));
+      if (withIcon) out.opaque(iconSvg(node.icon!, -shift - label.width / 2, dy[i] - glyph / 2, glyph, icons), 'icon');
       if (down && !shape) leftLabel(out, label, shift - label.width / 2, dy[i], icons);
       else out.label(label, shift, dy[i], LABEL, icons);
       out.end();
