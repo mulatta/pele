@@ -178,7 +178,7 @@ export class SvgOut implements Out {
       (g.id === undefined ? '' : ' data-id="' + escText(g.id) + '"') +
       (g.source === undefined || !this.sources ? '' : sourceAttrs(g.source)) +
       (g.attrs ?? '') +
-      (g.x === undefined ? '>' : ' transform="translate(' + num(g.x) + ',' + num(g.y ?? 0) + ')">');
+      (g.x === undefined && g.y === undefined ? '>' : ' transform="translate(' + num(g.x ?? 0) + ',' + num(g.y ?? 0) + ')">');
     this.open.push('</g>');
   }
 

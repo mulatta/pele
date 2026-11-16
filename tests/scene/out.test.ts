@@ -39,7 +39,7 @@ describe('drawing outputs', () => {
         out.shift(100, 50);
         out.fragment('<circle r="4" fill="var(--_c)"/>');
         out.end();
-        out.raw('<image href="x.png" width="4" height="4"/>');
+        out.raw('<title>whole</title>');
       }
     );
     expect(svg).toContain('<g class="pele-edges" fill="none" stroke="var(--_l)"><g class="pele-edge" data-id="e1">');
@@ -101,8 +101,41 @@ describe('drawing outputs', () => {
     expect(svg).toContain('<circle r="3" fill="var(--_c)"/><circle cy="6" r="2" fill="var(--_c)"/><rect width="8" height="5" fill="var(--_s)"/>');
     expect(svg).toContain('<text font-size="12" x="0" y="9" text-anchor="middle">a &amp; <tspan font-weight="var(--_w)">b</tspan><tspan fill="var(--_m)"> c</tspan></text>');
     expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
-    expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700 }, { text: ' c' }]);
+    expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700 }, { text: ' c', paint: 'var(--_m)' }]);
     expect(scene.skipped).toEqual({ icon: 1 });
+  });
+
+  it('place, order and keep what the SVG does', () => {
+    const cases: [string, (out: Out) => void][] = [
+      ['a group moved down only', (out) => {
+        out.group({ y: 30 });
+        out.rect(0, 0, 10, 10, ' fill="red"');
+        out.end();
+      }],
+      ['a section drawn within another', (out) => {
+        out.section('outer');
+        out.rect(0, 0, 1, 1, ' fill="red"');
+        out.section('other');
+        out.rect(0, 0, 1, 1, ' fill="green"');
+        out.section('inner', '', false, 'outer');
+        out.rect(0, 0, 1, 1, ' fill="blue"');
+      }],
+      ['a pen drawn on after it is drawn', (out) => {
+        const pen = out.pen().M(0, 0).L(10, 0);
+        out.path(pen, ' stroke="black"');
+        pen.L(10, 10);
+        out.path(pen, ' stroke="red"');
+      }],
+      ['a source placeholder in an id', (out) => {
+        out.group({ id: 'A\uFB02\u00B0amp\u00B6\u00DFB' });
+        out.rect(0, 0, 10, 10, ' fill="red"');
+        out.end();
+      }],
+    ];
+    for (const [name, draw] of cases) {
+      const { svg, scene } = both(draw);
+      expect(sceneDifference(scene, svgToScene(svg)), name).toBeNull();
+    }
   });
 
   it('keep each attempt apart and take the one adopted', () => {

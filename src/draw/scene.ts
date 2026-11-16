@@ -106,11 +106,13 @@ interface Look {
   'font-size'?: string;
   'font-weight'?: string;
   'font-style'?: string;
+  'font-family'?: string;
   'text-anchor'?: string;
   rx?: string;
+  ry?: string;
 }
 
-const KEYS = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'rx']);
+const KEYS = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx', 'ry']);
 const RE_ATTR = /([\w:-]+)\s*=\s*"([^"]*)"/g;
 
 const lookCache = new Map<string, Look>();
@@ -160,6 +162,9 @@ const lookAt = (a: Attrs): Look =>
 
 class ScenePen implements Pen {
   cmds: Path = [];
+  // What was drawn already: a pen drawn on after it is drawn writes to a new list, so a drawn path
+  // never changes and is not copied.
+  private drawn: Path | null = null;
   private x = 0;
   private y = 0;
   // Where the subpath started, for Z, and the last control points, for S and T.
@@ -169,6 +174,13 @@ class ScenePen implements Pen {
   private cy = 0;
   private qx: number | null = null;
   private qy = 0;
+  // Everything drawn with the pen so far.
+  take(): Path {
+    const all = this.drawn === null ? this.cmds : this.drawn.concat(this.cmds);
+    this.drawn = all;
+    this.cmds = [];
+    return all;
+  }
   // The commands set the current point themselves: a helper call per command costs an interpreter
   // as much as the command.
   M(x: number, y: number): this {
@@ -597,7 +609,8 @@ function spanOf(text: string, a: Record<string, string>): SceneSpan {
   const span: SceneSpan = { text };
   if (a['font-weight'] !== undefined && weight(a['font-weight'], 400) >= 600) span.weight = 700;
   if (a['font-style'] === 'italic') span.italic = true;
-  if (a['font-family'] === 'var(--_fm)') span.mono = true;
+  if (a['font-family'] === MONO) span.mono = true;
+  if (a.fill !== undefined && a.fill !== 'none') span.paint = a.fill;
   return span;
 }
 
@@ -749,6 +762,8 @@ export class SceneOut implements Out {
   // The finished scene, once done() has been called.
   scene: Scene | null = null;
   private sections = new Map<string, Section>();
+  // The sections in the order they are painted.
+  private order: Section[] = [];
   private current!: Section;
   private currentName = '';
   private frames: Frame[] = [];
@@ -774,6 +789,12 @@ export class SceneOut implements Out {
       const f = this.framing;
       s = { look: null, attrs, outer, framed: f !== null, dx: f ? f.x : 0, dy: f ? f.y : 0, shapes: null, texts: null, items: null, base: [] };
       this.sections.set(name, s);
+      if (outer) {
+        // Painted after its outer section and those made within it before, as the SVG writes it in that group.
+        let i = this.order.indexOf(outer) + 1;
+        while (i < this.order.length && this.order[i].outer === outer) i++;
+        this.order.splice(i, 0, s);
+      } else this.order.push(s);
     }
     this.current = s;
     this.frames = s.base;
@@ -818,11 +839,12 @@ export class SceneOut implements Out {
     }
     let item = f.item;
     if (id !== undefined) {
-      const it: SceneItem = { id, kind, box: null };
+      const it: SceneItem = { id: decodeEntities(id), kind, box: null };
       if (source !== undefined) {
         if (source.line !== undefined) it.line = source.line;
         if (source.end !== undefined) it.end = source.end;
-        if (source.symbol !== undefined) it.symbol = decodeEntities(source.symbol);
+        // The symbol is most often the id, read once.
+        if (source.symbol !== undefined) it.symbol = source.symbol === id ? it.id : decodeEntities(source.symbol);
         if (source.from !== undefined) it.from = decodeEntities(source.from);
         if (source.to !== undefined) it.to = decodeEntities(source.to);
       }
@@ -884,8 +906,7 @@ export class SceneOut implements Out {
 
   rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs = '', item?: Item): void {
     const look = lookAt(attrs);
-    const rx = len(look.rx, 0);
-    if (w > 0 && h > 0) this.part(roundRect(x ?? 0, y ?? 0, w, h, rx, rx), look, item, 'rect');
+    if (w > 0 && h > 0) this.part(roundRect(x ?? 0, y ?? 0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect');
     else if (item?.id !== undefined) this.part([], look, item, 'rect');
   }
 
@@ -966,6 +987,7 @@ export class SceneOut implements Out {
       weight: weight(look['font-weight'], 400),
       italic: look['font-style'] === 'italic',
       paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+      mono: look['font-family'] === MONO,
     };
     const lh = label.lineHeight;
     const shiftY = label.size * 0.35;
@@ -997,9 +1019,11 @@ export class SceneOut implements Out {
     }
   }
 
-  private put(x: number, y: number, spans: SceneSpan[], base: { size: number; weight: number; italic: boolean; paint: string }, anchor: 'start' | 'middle' | 'end'): void {
+  private put(x: number, y: number, spans: SceneSpan[], base: TextBase, anchor: 'start' | 'middle' | 'end'): void {
     const f = this.top;
     if (f.hidden || !spans.some((s) => s.text.trim())) return;
+    // A scene text has no family of its own, so its runs carry a monospace text's.
+    if (base.mono) spans = spans.map((s) => (s.mono === undefined ? { ...s, mono: true } : s));
     const t: SceneText = { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
     (this.current.texts ??= []).push(t);
     const w = spans.reduce((n, s) => n + s.text.length, 0) * base.size * 0.55;
@@ -1007,9 +1031,8 @@ export class SceneOut implements Out {
     this.touch({ x0, y0: t.y - base.size, x1: x0 + w, y1: t.y + base.size * 0.25 });
   }
 
-  // The scene, with sections painted in the order they were made.
+  // The scene, section by section in the order they are painted.
   private finish(width: number, height: number): Scene {
-    const names = this.sections.keys();
     const shapes: SceneShape[] = [];
     const texts: SceneText[] = [];
     // Items in the order the SVG writes them, section by section, as a host reading it would
@@ -1017,8 +1040,7 @@ export class SceneOut implements Out {
     const items: SceneItem[] = [];
     const at = new Array<number>(this.items.length);
     const f = this.framing;
-    for (const n of names) {
-      const s = this.sections.get(n)!;
+    for (const s of this.order) {
       if (!s.shapes && !s.texts && !s.items) continue;
       // A frame moved after the section was drawn moves what it holds.
       if (s.framed && f && (f.x !== s.dx || f.y !== s.dy)) this.move(s, f.x - s.dx, f.y - s.dy);
@@ -1103,7 +1125,7 @@ export class SceneOut implements Out {
   }
 
   path(d: string | Pen, attrs: Attrs = '', tokens?: number[], item?: Item): void {
-    this.part(typeof d !== 'string' ? (d as ScenePen).cmds : tokens ? tokensToCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
+    this.part(typeof d !== 'string' ? (d as ScenePen).take() : tokens ? tokensToCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
   }
 
   raw(): void {}
@@ -1114,11 +1136,22 @@ export class SceneOut implements Out {
   }
 }
 
-function textBase(look: Look, size: number): { size: number; weight: number; italic: boolean; paint: string } {
+interface TextBase {
+  size: number;
+  weight: number;
+  italic: boolean;
+  paint: string;
+  mono: boolean;
+}
+
+const MONO = 'var(--_fm)';
+
+function textBase(look: Look, size: number): TextBase {
   return {
     size,
     weight: weight(look['font-weight'], 400),
     italic: look['font-style'] === 'italic',
     paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+    mono: look['font-family'] === MONO,
   };
 }

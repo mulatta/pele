@@ -2,7 +2,139 @@
 // renderer draws directly against the SVG it writes. Follows what the scene output keeps: groups
 // moved by translate(), inherited presentation attributes, `data-id` items, outlines and text.
 // Anything else (another transform, images, icons, math) is counted in `skipped` and not drawn.
-import { M, L, parsePathData, shift, type Box, type Path, type Scene, type SceneSpan } from '../../src/draw/scene.js';
+// Path geometry is computed here, not imported from the scene output, so a fault there shows.
+import type { Box, Path, Scene, SceneItem, SceneSpan, SceneText } from '../../src/draw/scene.js';
+
+const [M, L, C, Q, A, Z] = [0, 1, 2, 3, 4, 5];
+const ARGC = [2, 2, 6, 4, 7, 0];
+
+// Path data -> absolute commands (M, L, C, Q, A, Z), as SVG reads it.
+function pathData(d: string): Path {
+  const out: Path = [];
+  let x = 0;
+  let y = 0;
+  let sx = 0;
+  let sy = 0;
+  let px: number | null = null;
+  let py = 0;
+  let last = '';
+  const tokens = d.match(/[MLHVCSQTAZ]|[-+]?(?:\d*\.\d+|\d+\.?)(?:e[-+]?\d+)?/gi) ?? [];
+  let i = 0;
+  const num = () => Number(tokens[i++]);
+  const flag = () => {
+    // Arc flags may be packed with what follows: "011" is three numbers.
+    const t = tokens[i];
+    if (t.length > 1 && /^[01]/.test(t)) {
+      tokens[i] = t.slice(1);
+      return Number(t[0]);
+    }
+    i++;
+    return Number(t);
+  };
+  let cmd = '';
+  while (i < tokens.length) {
+    if (/^[a-z]$/i.test(tokens[i])) cmd = tokens[i++];
+    else if (cmd === '') break;
+    const rel = cmd === cmd.toLowerCase();
+    const ox = rel ? x : 0;
+    const oy = rel ? y : 0;
+    const c = cmd.toUpperCase();
+    if (c === 'Z') {
+      out.push(Z);
+      x = sx;
+      y = sy;
+      last = 'Z';
+      px = null;
+      continue;
+    }
+    if (i >= tokens.length) break;
+    switch (c) {
+      case 'M':
+        x = num() + ox;
+        y = num() + oy;
+        sx = x;
+        sy = y;
+        out.push(M, x, y);
+        cmd = rel ? 'l' : 'L';
+        px = null;
+        break;
+      case 'L':
+        x = num() + ox;
+        y = num() + oy;
+        out.push(L, x, y);
+        px = null;
+        break;
+      case 'H':
+        x = num() + ox;
+        out.push(L, x, y);
+        px = null;
+        break;
+      case 'V':
+        y = num() + oy;
+        out.push(L, x, y);
+        px = null;
+        break;
+      case 'C':
+      case 'S': {
+        const smooth = c === 'S';
+        const x1 = smooth ? (last === 'C' && px !== null ? 2 * x - px : x) : num() + ox;
+        const y1 = smooth ? (last === 'C' && px !== null ? 2 * y - py : y) : num() + oy;
+        const x2 = num() + ox;
+        const y2 = num() + oy;
+        x = num() + ox;
+        y = num() + oy;
+        out.push(C, x1, y1, x2, y2, x, y);
+        px = x2;
+        py = y2;
+        last = 'C';
+        continue;
+      }
+      case 'Q':
+      case 'T': {
+        const smooth = c === 'T';
+        const x1 = smooth ? (last === 'Q' && px !== null ? 2 * x - px : x) : num() + ox;
+        const y1 = smooth ? (last === 'Q' && px !== null ? 2 * y - py : y) : num() + oy;
+        x = num() + ox;
+        y = num() + oy;
+        out.push(Q, x1, y1, x, y);
+        px = x1;
+        py = y1;
+        last = 'Q';
+        continue;
+      }
+      case 'A': {
+        const rx = Math.abs(num());
+        const ry = Math.abs(num());
+        const rot = num();
+        const large = flag();
+        const sweep = flag();
+        x = num() + ox;
+        y = num() + oy;
+        out.push(A, rx, ry, rot, large ? 1 : 0, sweep ? 1 : 0, x, y);
+        px = null;
+        break;
+      }
+      default:
+        i++;
+    }
+    last = c;
+  }
+  return out;
+}
+
+function moved(cmds: Path, dx: number, dy: number): Path {
+  const o = cmds.slice();
+  for (let i = 0; i < o.length; ) {
+    const op = o[i];
+    const end = i + 1 + ARGC[op];
+    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
+      o[k] += dx;
+      o[k + 1] += dy;
+    }
+    i = end;
+  }
+  return o;
+}
 
 interface Node {
   tag: string;
@@ -37,7 +169,7 @@ function parseXml(src: string): Node {
   return root.children.find((c): c is Node => typeof c !== 'string' && c.tag === 'svg') ?? root;
 }
 
-const INHERITED = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'rx'];
+const INHERITED = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx'];
 type Look = Record<string, string>;
 
 function own(el: Node): Look {
@@ -65,7 +197,7 @@ function cmdsBox(cmds: Path): Box {
   for (let i = 0; i < cmds.length; ) {
     const op = cmds[i];
     const end = i + 1 + argc[op];
-    for (let k = op === 4 ? i + 6 : i + 1; k + 1 < end; k += 2) {
+    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
       b.x0 = Math.min(b.x0, cmds[k]);
       b.y0 = Math.min(b.y0, cmds[k + 1]);
       b.x1 = Math.max(b.x1, cmds[k]);
@@ -76,13 +208,13 @@ function cmdsBox(cmds: Path): Box {
   return b;
 }
 
-const ellipse = (cx: number, cy: number, rx: number, ry: number): Path => parsePathData(`M${cx - rx} ${cy}A${rx} ${ry} 0 0 1 ${cx + rx} ${cy}A${rx} ${ry} 0 0 1 ${cx - rx} ${cy}Z`);
+const ellipse = (cx: number, cy: number, rx: number, ry: number): Path => pathData(`M${cx - rx} ${cy}A${rx} ${ry} 0 0 1 ${cx + rx} ${cy}A${rx} ${ry} 0 0 1 ${cx - rx} ${cy}Z`);
 
 function roundRect(x: number, y: number, w: number, h: number, rx: number, ry: number): Path {
   rx = Math.min(rx, w / 2);
   ry = Math.min(ry, h / 2);
-  if (!(rx > 0 && ry > 0)) return [M, x, y, L, x + w, y, L, x + w, y + h, L, x, y + h, 5];
-  return parsePathData(
+  if (!(rx > 0 && ry > 0)) return [M, x, y, L, x + w, y, L, x + w, y + h, L, x, y + h, Z];
+  return pathData(
     `M${x + rx} ${y}L${x + w - rx} ${y}A${rx} ${ry} 0 0 1 ${x + w} ${y + ry}L${x + w} ${y + h - ry}A${rx} ${ry} 0 0 1 ${x + w - rx} ${y + h}` +
       `L${x + rx} ${y + h}A${rx} ${ry} 0 0 1 ${x} ${y + h - ry}L${x} ${y + ry}A${rx} ${ry} 0 0 1 ${x + rx} ${y}Z`
   );
@@ -92,7 +224,7 @@ function points(list: number[], close: boolean): Path {
   if (list.length < 4) return [];
   const cmds: Path = [M, list[0], list[1]];
   for (let i = 2; i + 1 < list.length; i += 2) cmds.push(L, list[i], list[i + 1]);
-  if (close) cmds.push(5);
+  if (close) cmds.push(Z);
   return cmds;
 }
 
@@ -140,6 +272,16 @@ export function svgToScene(svg: string): Scene {
     let y = len(el.attrs.y, 0) + dy;
     let anchor = (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end';
     let spans: SceneSpan[] = [];
+    // A run's style as the text it is in gives it, and its own over that.
+    const run = (t: string, a: Look): SceneSpan => {
+      const span: SceneSpan = { text: t };
+      const w = a['font-weight'];
+      if (w !== undefined && weight(w, 400) >= 600) span.weight = 700;
+      if (a['font-style'] === 'italic') span.italic = true;
+      if ((a['font-family'] ?? look['font-family']) === 'var(--_fm)') span.mono = true;
+      if (a.fill !== undefined && a.fill !== 'none') span.paint = a.fill;
+      return span;
+    };
     const flush = () => {
       if (spans.some((s) => s.text.trim())) {
         scene.texts.push({ x, y, ...base, anchor, spans, item: items[items.length - 1] });
@@ -151,7 +293,7 @@ export function svgToScene(svg: string): Scene {
     };
     for (const c of el.children) {
       if (typeof c === 'string') {
-        if (c) spans.push({ text: c });
+        if (c) spans.push(run(c, {}));
         continue;
       }
       if (c.tag !== 'tspan') continue;
@@ -162,7 +304,7 @@ export function svgToScene(svg: string): Scene {
         if (c.attrs.y !== undefined) y = len(c.attrs.y, 0) + dy;
         anchor = (c.attrs['text-anchor'] ?? look['text-anchor'] ?? 'start') as typeof anchor;
       }
-      spans.push({ text: c.children.filter((t): t is string => typeof t === 'string').join('') });
+      spans.push(run(c.children.filter((t): t is string => typeof t === 'string').join(''), own(c)));
     }
     flush();
   };
@@ -185,7 +327,13 @@ export function svgToScene(svg: string): Scene {
       }
       const id = c.attrs['data-id'];
       if (id !== undefined) {
-        scene.items.push({ id, kind: c.attrs.class ?? c.tag, box: null });
+        const it: SceneItem = { id, kind: c.attrs.class ?? c.tag, box: null };
+        if (c.attrs['data-line'] !== undefined) it.line = Number(c.attrs['data-line']);
+        if (c.attrs['data-end'] !== undefined) it.end = Number(c.attrs['data-end']);
+        if (c.attrs['data-symbol'] !== undefined) it.symbol = c.attrs['data-symbol'];
+        if (c.attrs['data-from'] !== undefined) it.from = c.attrs['data-from'];
+        if (c.attrs['data-to'] !== undefined) it.to = c.attrs['data-to'];
+        scene.items.push(it);
         items.push(scene.items.length - 1);
       }
       switch (c.tag) {
@@ -210,10 +358,10 @@ export function svgToScene(svg: string): Scene {
           break;
         case 'polygon':
         case 'polyline':
-          shape(shift(points(numbers(a.points ?? ''), c.tag === 'polygon'), tx, ty), c.tag === 'polyline' && a.fill === undefined ? { ...look, fill: 'none' } : look);
+          shape(moved(points(numbers(a.points ?? ''), c.tag === 'polygon'), tx, ty), c.tag === 'polyline' && a.fill === undefined ? { ...look, fill: 'none' } : look);
           break;
         case 'path':
-          if (a.d) shape(shift(parsePathData(a.d), tx, ty), look);
+          if (a.d) shape(moved(pathData(a.d), tx, ty), look);
           break;
         case 'text':
           text(c, look, tx, ty);
@@ -239,31 +387,52 @@ export function svgToScene(svg: string): Scene {
 // What two scenes must share: size, text (content, anchor, position), items (id, kind, order, box)
 // and the order of shapes by kind and paint. Positions are compared to the SVG's two decimals.
 export function sceneDifference(actual: Scene, expected: Scene): string | null {
-  const near = (a: number, b: number) => Math.abs(a - b) < 0.0151;
-  const nearBox = (a: Box | null, b: Box | null) => (a === null || b === null ? a === b : near(a.x0, b.x0) && near(a.y0, b.y0) && near(a.x1, b.x1) && near(a.y1, b.y1));
   if (actual.w !== expected.w || actual.h !== expected.h) return `size ${actual.w}x${actual.h}, expected ${expected.w}x${expected.h}`;
-  const texts = (s: Scene) => s.texts.map((t) => `${t.spans.map((p) => p.text).join('')} ${t.anchor}`);
-  const at = texts(actual);
-  const et = texts(expected);
-  for (let i = 0; i < Math.max(at.length, et.length); i++) {
-    if (at[i] !== et[i]) return `text ${i}: ${JSON.stringify(at[i])}, expected ${JSON.stringify(et[i])}`;
-    const a = actual.texts[i];
-    const e = expected.texts[i];
-    if (!near(a.x, e.x) || !near(a.y, e.y)) return `text ${i} ${JSON.stringify(at[i])} at ${a.x},${a.y}, expected ${e.x},${e.y}`;
+  const name = (s: Scene, k: 'texts' | 'items' | 'shapes', i: number) => {
+    const t = s.texts[i];
+    if (k === 'texts') return t ? JSON.stringify(t.spans.map((p) => p.text).join('')) : 'none';
+    if (k === 'items') return s.items[i]?.id ?? 'none';
+    return `${s.shapes[i]?.kind ?? 'none'} ${s.shapes[i]?.paint ?? ''}`;
+  };
+  for (const k of ['items', 'texts', 'shapes'] as const) {
+    const a = k === 'texts' ? actual.texts.map(seen) : actual[k];
+    const e = k === 'texts' ? expected.texts.map(seen) : expected[k];
+    for (let i = 0; i < Math.max(a.length, e.length); i++) {
+      const d = valueDifference(a[i], e[i], '');
+      if (d) return `${k.slice(0, -1)} ${i} (${name(actual, k, i)}, expected ${name(expected, k, i)})${d}${a.length !== e.length ? ` (${a.length} ${k}, expected ${e.length})` : ''}`;
+    }
   }
-  for (let i = 0; i < Math.max(actual.items.length, expected.items.length); i++) {
-    const a = actual.items[i];
-    const e = expected.items[i];
-    if (a?.id !== e?.id || a?.kind !== e?.kind) return `item ${i}: ${a?.id} ${a?.kind}, expected ${e?.id} ${e?.kind}`;
-    if (!nearBox(a.box, e.box)) return `item ${i} ${a.id} box ${JSON.stringify(a.box)}, expected ${JSON.stringify(e.box)}`;
+  return valueDifference(actual.skipped, expected.skipped, ' skipped');
+}
+
+// A text as it shows: a style set on the text or on its run looks the same.
+function seen(t: SceneText) {
+  const { weight, italic, paint, spans, ...rest } = t;
+  return {
+    ...rest,
+    spans: spans.map((s) => ({ text: s.text, weight: s.weight ?? weight, italic: s.italic ?? italic, mono: s.mono ?? false, paint: s.paint ?? paint })),
+  };
+}
+
+// Numbers compared to the SVG's two decimals: a value read from the SVG it writes is to the hundredth.
+function valueDifference(actual: unknown, expected: unknown, at: string): string | null {
+  if (typeof actual === 'number' && typeof expected === 'number') return Math.abs(actual - expected) < 0.0151 ? null : `${at}: ${actual}, expected ${expected}`;
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    if (actual.length !== expected.length) return `${at}: ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`;
+    for (let i = 0; i < actual.length; i++) {
+      const d = valueDifference(actual[i], expected[i], `${at}[${i}]`);
+      if (d) return d;
+    }
+    return null;
   }
-  const shapes = (s: Scene) => s.shapes.map((x) => `${x.kind}|${x.paint}`);
-  const as = shapes(actual);
-  const es = shapes(expected);
-  for (let i = 0; i < Math.max(as.length, es.length); i++) {
-    if (as[i] !== es[i]) return `shape ${i}: ${as[i]}, expected ${es[i]} (${as.length} shapes, expected ${es.length})`;
+  if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
+    for (const key of new Set([...Object.keys(actual), ...Object.keys(expected)])) {
+      const d = valueDifference((actual as Record<string, unknown>)[key], (expected as Record<string, unknown>)[key], `${at}.${key}`);
+      if (d) return d;
+    }
+    return null;
   }
-  return null;
+  return actual === expected ? null : `${at}: ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`;
 }
 
 // What sceneDifference compares, rounded to the SVG's two decimals, to keep as a baseline.
@@ -280,22 +449,6 @@ export function sceneSignature(scene: Scene): unknown {
 
 // Where two signatures part, numbers compared to the SVG's two decimals: a shape read from the
 // SVG it writes is placed to the hundredth.
-export function signatureDifference(actual: unknown, expected: unknown, at = ''): string | null {
-  if (typeof actual === 'number' && typeof expected === 'number') return Math.abs(actual - expected) < 0.0151 ? null : `${at}: ${actual}, expected ${expected}`;
-  if (Array.isArray(actual) && Array.isArray(expected)) {
-    if (actual.length !== expected.length) return `${at}: ${actual.length} entries, expected ${expected.length}`;
-    for (let i = 0; i < actual.length; i++) {
-      const d = signatureDifference(actual[i], expected[i], `${at}[${i}]`);
-      if (d) return d;
-    }
-    return null;
-  }
-  if (actual && expected && typeof actual === 'object' && typeof expected === 'object') {
-    for (const key of new Set([...Object.keys(actual), ...Object.keys(expected)])) {
-      const d = signatureDifference((actual as Record<string, unknown>)[key], (expected as Record<string, unknown>)[key], `${at}.${key}`);
-      if (d) return d;
-    }
-    return null;
-  }
-  return actual === expected ? null : `${at}: ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`;
+export function signatureDifference(actual: unknown, expected: unknown): string | null {
+  return valueDifference(actual, expected, '');
 }

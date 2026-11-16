@@ -32,7 +32,8 @@ export class Paint {
 // class="{cls}" data-id="{id}" and the source attributes.
 export type Item = Pick<Group, 'cls' | 'id' | 'source'>;
 
-// Attributes as text, or as a Paint made once.
+// Attributes as text, or as a Paint made once. They paint; a transform goes on a group, where the
+// scene reads it.
 export type Attrs = string | Paint;
 
 // Path data. SVG gets `M1,2L3,4C1,2 3,4 5,6`, each command as its letter and its numbers
@@ -128,7 +129,7 @@ export interface Out {
   path(d: string | Pen, attrs: Attrs, tokens?: number[], item?: Item): void;
   // A measured label centered on (cx, cy).
   label(label: Label, cx: number, cy: number, attrs: Attrs, icons?: IconResolver): void;
-  // Markup only the SVG has (an image, an icon), which a scene leaves out.
+  // Markup that shows nothing, such as a title; what a scene cannot draw goes through opaque.
   raw(svg: string): void;
   // Ends the drawing. Returns the SVG document, or '' for a scene.
   done(type: string, width: number, height: number, fontSize: number, options: RenderOptions, acc: Accessible): string;
