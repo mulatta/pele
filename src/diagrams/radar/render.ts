@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
+import type { Out, Pen } from '../../draw/out.js';
 import { escText, num, sourceAttrsFor } from '../../svg/builder.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -43,6 +43,20 @@ export function closedRoundCurve(points: Point[], tension: number): string {
       ` ${num(p2.x - (p3.x - p1.x) * tension)},${num(p2.y - (p3.y - p1.y) * tension)} ${num(p2.x)},${num(p2.y)}`;
   }
   return d + ' Z';
+}
+
+// The same curve as closedRoundCurve, as numbers for a scene.
+function roundCurvePen(pen: Pen, points: Point[], tension: number): Pen {
+  const n = points.length;
+  pen.M(points[0].x, points[0].y);
+  for (let i = 0; i < n; i++) {
+    const p0 = points[(i - 1 + n) % n];
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    const p3 = points[(i + 2) % n];
+    pen.C(p1.x + (p2.x - p0.x) * tension, p1.y + (p2.y - p0.y) * tension, p2.x - (p3.x - p1.x) * tension, p2.y - (p3.y - p1.y) * tension, p2.x, p2.y);
+  }
+  return pen.Z();
 }
 
 function flat(points: Point[]): number[] {
@@ -153,8 +167,7 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
     out.group({ cls: 'pele-graticule', attrs: ' fill="none" stroke="var(--_a)"' });
     for (let i = 0; i < ticks; i++) {
       const r = Math.min(radius, (radius * (i + 1)) / ticks);
-      // The circle has no center attributes, which a typed circle would write.
-      if (graticule === 'circle') out.fragment(`<circle r="${num(r)}"/>`);
+      if (graticule === 'circle') out.circle(null, null, r, '');
       else out.polygon(flat(unit.map((u) => ({ x: u.x * r, y: u.y * r }))), '');
     }
     out.end();
@@ -166,11 +179,18 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
       const curve = curves[index];
       const color = seriesColor(index);
       const attrs = ` class="pele-curve" data-id="${escText(curve.name)}"${srcAttrs(curve.source)} fill="${color}" stroke="${color}"`;
-      // The fill comes before the geometry, which typed shapes do not write.
-      out.fragment(
-        graticule === 'circle'
-          ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
-          : `<polygon${attrs} points="${polygonText(points)}"/>`
+      // The SVG puts the fill before the geometry, which the typed shapes do not.
+      const item = { cls: 'pele-curve', id: curve.name, source: curve.source };
+      const paint = ` fill="${color}" stroke="${color}"`;
+      out.both(
+        () =>
+          graticule === 'circle'
+            ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
+            : `<polygon${attrs} points="${polygonText(points)}"/>`,
+        () => {
+          if (graticule === 'circle') out.path(roundCurvePen(out.pen(), points, tension), paint, undefined, item);
+          else out.polygon(flat(points), paint, item);
+        }
       );
     }
     out.end();
