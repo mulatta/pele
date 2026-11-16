@@ -78,8 +78,7 @@ describe('drawing outputs', () => {
     const [fill, stroke, dot] = scene.shapes;
     expect(fill.box).toMatchObject({ x0: 20, y0: 30, x1: 24, y1: 40 });
     expect(stroke.width).toBe(2);
-    expect(dot.box.x0).toBeCloseTo(20, 9);
-    expect(dot.box.y1).toBeCloseTo(32, 9);
+    for (const [k, v] of Object.entries({ x0: 18, y0: 28, x1: 22, y1: 32 })) expect(dot.box[k as keyof typeof dot.box]).toBeCloseTo(v, 9);
     expect(scene.skipped).toEqual({ transform: 1 });
   });
 

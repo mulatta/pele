@@ -525,9 +525,15 @@ function shift(cmds: Path, dx: number, dy: number): Path {
 
 function cmdsBox(cmds: Path): Box {
   const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  // The current point, which an arc starts from, and where the subpath began, for Z.
+  let px = 0;
+  let py = 0;
+  let sx = 0;
+  let sy = 0;
   for (let i = 0; i < cmds.length; ) {
     const op = cmds[i];
     const end = i + 1 + ARGC[op];
+    if (op === A) arcBox(b, px, py, cmds, i);
     for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
       const x = cmds[k];
       const y = cmds[k + 1];
@@ -536,9 +542,70 @@ function cmdsBox(cmds: Path): Box {
       if (x > b.x1) b.x1 = x;
       if (y > b.y1) b.y1 = y;
     }
+    if (op === Z) {
+      px = sx;
+      py = sy;
+    } else {
+      px = cmds[end - 2];
+      py = cmds[end - 1];
+      if (op === M) {
+        sx = px;
+        sy = py;
+      }
+    }
     i = end;
   }
   return b;
+}
+
+// Grows b by where an arc from (x1, y1) bulges out: its centre found as SVG's implementation
+// notes do, then each of the ellipse's four extremes the arc passes.
+function arcBox(b: Box, x1: number, y1: number, cmds: Path, i: number): void {
+  let rx = Math.abs(cmds[i + 1]);
+  let ry = Math.abs(cmds[i + 2]);
+  const phi = (cmds[i + 3] * Math.PI) / 180;
+  const x2 = cmds[i + 6];
+  const y2 = cmds[i + 7];
+  if (rx === 0 || ry === 0 || (x1 === x2 && y1 === y2)) return;
+  const cos = Math.cos(phi);
+  const sin = Math.sin(phi);
+  const hx = (x1 - x2) / 2;
+  const hy = (y1 - y2) / 2;
+  const xp = cos * hx + sin * hy;
+  const yp = -sin * hx + cos * hy;
+  const grow = (xp * xp) / (rx * rx) + (yp * yp) / (ry * ry);
+  if (grow > 1) {
+    rx *= Math.sqrt(grow);
+    ry *= Math.sqrt(grow);
+  }
+  const num = rx * rx * ry * ry - rx * rx * yp * yp - ry * ry * xp * xp;
+  let k = Math.sqrt(Math.max(0, num / (rx * rx * yp * yp + ry * ry * xp * xp)));
+  if (cmds[i + 4] === cmds[i + 5]) k = -k;
+  const cxp = (k * rx * yp) / ry;
+  const cyp = (-k * ry * xp) / rx;
+  const cx = cos * cxp - sin * cyp + (x1 + x2) / 2;
+  const cy = sin * cxp + cos * cyp + (y1 + y2) / 2;
+  const angle = (ux: number, uy: number) => Math.atan2(uy, ux);
+  const t1 = angle((xp - cxp) / rx, (yp - cyp) / ry);
+  let dt = angle((-xp - cxp) / rx, (-yp - cyp) / ry) - t1;
+  if (cmds[i + 5] && dt < 0) dt += 2 * Math.PI;
+  else if (!cmds[i + 5] && dt > 0) dt -= 2 * Math.PI;
+  // Where x and where y are at their extremes on the ellipse, and the half turns from there.
+  const tx = Math.atan2(-ry * sin, rx * cos);
+  const ty = Math.atan2(ry * cos, rx * sin);
+  for (const base of [tx, ty]) {
+    for (const t of [base, base + Math.PI]) {
+      let d = (t - t1) % (2 * Math.PI);
+      if (dt > 0 ? d < 0 : d > 0) d += dt > 0 ? 2 * Math.PI : -2 * Math.PI;
+      if (dt > 0 ? d > dt : d < dt) continue;
+      const x = cx + rx * Math.cos(t) * cos - ry * Math.sin(t) * sin;
+      const y = cy + rx * Math.cos(t) * sin + ry * Math.sin(t) * cos;
+      if (x < b.x0) b.x0 = x;
+      if (y < b.y0) b.y0 = y;
+      if (x > b.x1) b.x1 = x;
+      if (y > b.y1) b.y1 = y;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- fragments
@@ -548,7 +615,7 @@ function cmdsBox(cmds: Path): Box {
 type Op =
   | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look; source: SourceInfo | undefined; turn?: Matrix }
   | { op: 'end' }
-  | { op: 'shape'; cmds: Path; look: Look; scale?: number }
+  | { op: 'shape'; cmds: Path; look: Look; scale?: number; box?: Box }
   | { op: 'text'; x: number; y: number; anchor: string | undefined; spans: SceneSpan[]; look: Look }
   | { op: 'skip'; what: string };
 
@@ -1093,7 +1160,11 @@ export class SceneOut implements Out {
   circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
     const f = this.top;
     if (f.m) this.part(r > 0 ? ellipse(cx ?? 0, cy ?? 0, r, r) : [], lookAt(attrs), item, 'circle');
-    else this.part(r > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, r, r) : [], lookAt(attrs), item, 'circle', true);
+    else {
+      const x = (cx ?? 0) + f.dx;
+      const y = (cy ?? 0) + f.dy;
+      this.part(r > 0 ? ellipse(x, y, r, r) : [], lookAt(attrs), item, 'circle', true, { x0: x - r, y0: y - r, x1: x + r, y1: y + r });
+    }
   }
 
   spans(x: number, y: number, runs: Run[], attrs: Attrs, after = ''): void {
@@ -1120,7 +1191,11 @@ export class SceneOut implements Out {
   ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
     const f = this.top;
     if (f.m) this.part(rx > 0 && ry > 0 ? ellipse(cx ?? 0, cy ?? 0, rx, ry) : [], lookAt(attrs), item, 'ellipse');
-    else this.part(rx > 0 && ry > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, rx, ry) : [], lookAt(attrs), item, 'ellipse', true);
+    else {
+      const x = (cx ?? 0) + f.dx;
+      const y = (cy ?? 0) + f.dy;
+      this.part(rx > 0 && ry > 0 ? ellipse(x, y, rx, ry) : [], lookAt(attrs), item, 'ellipse', true, { x0: x - rx, y0: y - ry, x1: x + rx, y1: y + ry });
+    }
   }
 
   line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
@@ -1149,9 +1224,16 @@ export class SceneOut implements Out {
         case 'end':
           this.end();
           break;
-        case 'shape':
-          this.shape(op.cmds, op.look, false, undefined, op.scale);
+        case 'shape': {
+          // A fragment's bounds are found once and moved with it where nothing turns it.
+          const f = this.top;
+          if (f.m || f.hidden) this.shape(op.cmds, op.look, false, undefined, op.scale);
+          else {
+            const b = (op.box ??= cmdsBox(op.cmds));
+            this.shape(shift(op.cmds, f.dx, f.dy), op.look, true, { x0: b.x0 + f.dx, y0: b.y0 + f.dy, x1: b.x1 + f.dx, y1: b.y1 + f.dy }, op.scale);
+          }
           break;
+        }
         case 'text': {
           const look = merge(this.top.look, op.look);
           const anchor = op.anchor ?? look['text-anchor'] ?? 'start';

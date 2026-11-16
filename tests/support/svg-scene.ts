@@ -178,21 +178,57 @@ const weight = (v: string | undefined, fallback: number): number =>
   v === undefined ? fallback : v === 'bold' || /^var\(--_(w|tw|hw)\)$/.test(v) ? 700 : v === 'normal' ? 400 : len(v, fallback);
 const numbers = (s: string): number[] => (s.match(/[-+]?(?:\d*\.\d+|\d+\.?)(?:e[-+]?\d+)?/gi) ?? []).map(Number);
 
+// The path's bounds. An arc is followed along its ellipse in fine steps, close enough at the
+// sizes diagrams use to the hundredths a scene is compared to.
 function cmdsBox(cmds: Path): Box {
   const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-  const argc = [2, 2, 6, 4, 7, 0];
+  const add = (x: number, y: number) => {
+    b.x0 = Math.min(b.x0, x);
+    b.y0 = Math.min(b.y0, y);
+    b.x1 = Math.max(b.x1, x);
+    b.y1 = Math.max(b.y1, y);
+  };
+  let [cur, start] = [[0, 0], [0, 0]];
   for (let i = 0; i < cmds.length; ) {
     const op = cmds[i];
-    const end = i + 1 + argc[op];
-    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
-      b.x0 = Math.min(b.x0, cmds[k]);
-      b.y0 = Math.min(b.y0, cmds[k + 1]);
-      b.x1 = Math.max(b.x1, cmds[k]);
-      b.y1 = Math.max(b.y1, cmds[k + 1]);
+    const end = i + 1 + ARGC[op];
+    if (op === A) for (const [x, y] of arcPoints(cur[0], cur[1], cmds.slice(i + 1, end))) add(x, y);
+    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) add(cmds[k], cmds[k + 1]);
+    if (op === Z) cur = start;
+    else {
+      cur = [cmds[end - 2], cmds[end - 1]];
+      if (op === M) start = cur;
     }
     i = end;
   }
   return b;
+}
+
+// Points along an arc from (x1, y1), from its centre form (SVG 1.1, F.6.5 and F.6.6).
+function arcPoints(x1: number, y1: number, [rx0, ry0, rot, large, sweep, x2, y2]: number[]): number[][] {
+  let [rx, ry] = [Math.abs(rx0), Math.abs(ry0)];
+  if (!rx || !ry || (x1 === x2 && y1 === y2)) return [];
+  const phi = (rot * Math.PI) / 180;
+  const [c, s] = [Math.cos(phi), Math.sin(phi)];
+  const x = (c * (x1 - x2)) / 2 + (s * (y1 - y2)) / 2;
+  const y = (-s * (x1 - x2)) / 2 + (c * (y1 - y2)) / 2;
+  const lambda = (x * x) / (rx * rx) + (y * y) / (ry * ry);
+  if (lambda > 1) [rx, ry] = [rx * Math.sqrt(lambda), ry * Math.sqrt(lambda)];
+  const sq = Math.max(0, (rx * rx * ry * ry - rx * rx * y * y - ry * ry * x * x) / (rx * rx * y * y + ry * ry * x * x));
+  const f = (large === sweep ? -1 : 1) * Math.sqrt(sq);
+  const [ccx, ccy] = [(f * rx * y) / ry, (-f * ry * x) / rx];
+  const [cx, cy] = [c * ccx - s * ccy + (x1 + x2) / 2, s * ccx + c * ccy + (y1 + y2) / 2];
+  const from = Math.atan2((y - ccy) / ry, (x - ccx) / rx);
+  let span = Math.atan2((-y - ccy) / ry, (-x - ccx) / rx) - from;
+  if (sweep && span < 0) span += 2 * Math.PI;
+  if (!sweep && span > 0) span -= 2 * Math.PI;
+  const steps = 2048;
+  const out: number[][] = [];
+  for (let n = 0; n <= steps; n++) {
+    const t = from + (span * n) / steps;
+    out.push([cx + rx * Math.cos(t) * c - ry * Math.sin(t) * s, cy + rx * Math.cos(t) * s + ry * Math.sin(t) * c]);
+  }
+  return out;
 }
 
 const ellipse = (cx: number, cy: number, rx: number, ry: number): Path => pathData(`M${cx - rx} ${cy}A${rx} ${ry} 0 0 1 ${cx + rx} ${cy}A${rx} ${ry} 0 0 1 ${cx - rx} ${cy}Z`);
