@@ -28,7 +28,9 @@ import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 //      carry an outline and may have no fill; fills may name a gradient; arcs bound their
 //      boxes; items have a role.
 //   4  `vars` defines the theme variables paints name, palette colors included.
-export const SCENE_VERSION = 4;
+//   5  runs may be underlined, or sub- or superscript (`scale`, `shift`); lengths in em are read
+//      by the font size; every xychart bar is an item, one of no height too.
+export const SCENE_VERSION = 5;
 
 // A path is one flat array of numbers: an op code, then that op's arguments, command after
 // command. One array per shape keeps a diagram's heap (and every walk over it) to a few objects
@@ -88,6 +90,11 @@ export interface SceneSpan {
   italic?: boolean;
   mono?: boolean;
   paint?: string;
+  underline?: boolean;
+  // A sub- or superscript: its size as a share of its text's, and how far its baseline is moved,
+  // in its text's size (down positive, as y runs).
+  scale?: number;
+  shift?: number;
 }
 
 // A line of text: runs placed one after another from (x, y), y being the baseline.
@@ -203,12 +210,24 @@ function parseLook(attrs: string): Look {
   return look;
 }
 
-const len = (v: string | undefined, fallback: number): number => {
+// A length, with em and ex by the font size `em` and rem by the root's 16, as in CSS.
+const len = (v: string | undefined, fallback: number, em = 16): number => {
   if (v === undefined) return fallback;
   if (v === 'var(--_r)') return 4; // --pele-radius
   const n = parseFloat(v);
-  return Number.isFinite(n) ? n : fallback;
+  if (!Number.isFinite(n)) return fallback;
+  // Most lengths are plain numbers: only one ending in m or x has a unit to read.
+  const last = v.charCodeAt(v.length - 1);
+  if (last === 109) return v.endsWith('rem') ? n * 16 : v.endsWith('em') ? n * em : n;
+  if (last === 120 && v.endsWith('ex')) return (n * em) / 2;
+  return n;
 };
+
+// What a host draws a sub- or superscript run with: CSS's `smaller` and a baseline moved about a
+// fifth of the text's size down, or a third up.
+const SCRIPT_SCALE = 1 / 1.2;
+const SUB_SHIFT = 0.2;
+const SUPER_SHIFT = -0.33;
 
 const weight = (v: string | undefined, fallback: number): number => {
   if (v === undefined) return fallback;
@@ -384,7 +403,7 @@ function inkOf(look: Look): Ink {
   // `url(#id) fallback`: the fallback paints where the gradient is not drawn.
   const url = fill === undefined ? null : /^url\(#([^)]+)\)\s*(.*)$/.exec(fill);
   if (url) fill = url[2] || 'none';
-  const width = len(look['stroke-width'], 1);
+  const width = len(look['stroke-width'], 1, len(look['font-size'], 16));
   const dashed = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : null;
   ink = {
     fill: fill && fill !== 'none' && fill !== 'transparent' ? fill : null,
@@ -815,6 +834,12 @@ function spanOf(text: string, a: Record<string, string>): SceneSpan {
   if (a['font-style'] === 'italic') span.italic = true;
   if (a['font-family'] === MONO) span.mono = true;
   if (a.fill !== undefined && a.fill !== 'none') span.paint = a.fill;
+  if (a['text-decoration'] === 'underline') span.underline = true;
+  const shift = a['baseline-shift'];
+  if (shift === 'sub' || shift === 'super') {
+    if (a['font-size'] === 'smaller') span.scale = SCRIPT_SCALE;
+    span.shift = shift === 'sub' ? SUB_SHIFT : SUPER_SHIFT;
+  }
   return span;
 }
 
@@ -1213,7 +1238,21 @@ export class SceneOut implements Out {
       const x0 = (x ?? 0) + f.dx;
       const y0 = (y ?? 0) + f.dy;
       this.part(roundRect(x0, y0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect', true, { x0, y0, x1: x0 + w, y1: y0 + h });
-    } else if (item?.id !== undefined) this.part([], look, item, 'rect');
+    } else if (item?.id !== undefined) {
+      // A part of no size (a bar of nothing) is still where it would be drawn.
+      this.open(item.id, item.cls ?? 'rect', 0, 0, null, item.source);
+      if (w >= 0 && h >= 0 && !f.hidden) {
+        const x0 = x ?? 0;
+        const y0 = y ?? 0;
+        const m = f.m;
+        if (m) {
+          const xs = [x0, x0 + w].flatMap((px) => [y0, y0 + h].map((py) => m[0] * px + m[2] * py + m[4]));
+          const ys = [x0, x0 + w].flatMap((px) => [y0, y0 + h].map((py) => m[1] * px + m[3] * py + m[5]));
+          this.touch({ x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+        } else this.touch({ x0: x0 + f.dx, y0: y0 + f.dy, x1: x0 + f.dx + w, y1: y0 + f.dy + h });
+      }
+      this.end();
+    }
   }
 
   circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
@@ -1327,6 +1366,12 @@ export class SceneOut implements Out {
       if (s.style & Style.Bold) out.weight = 700;
       if (s.style & Style.Italic) out.italic = true;
       if (s.style & Style.Mono) out.mono = true;
+      if (s.style & Style.Underline) out.underline = true;
+      // A subscript inside a superscript is a subscript.
+      if (s.style & (Style.Sub | Style.Sup)) {
+        out.scale = SCRIPT_SCALE;
+        out.shift = s.style & Style.Sub ? SUB_SHIFT : SUPER_SHIFT;
+      }
       return out;
     };
     for (let i = 0; i < lines.length; i++) {

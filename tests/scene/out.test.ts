@@ -171,6 +171,39 @@ describe('drawing outputs', () => {
     expect(out.scene!.shapes.map((s) => s.paint)).toEqual(['var(--_fg)', 'var(--_m)']);
   });
 
+  // A run marks what a host draws differently: underlined, or set smaller above or below the line,
+  // by the text's size, so a turned or scaled text keeps it.
+  it('keep underlines and sub- and superscripts in runs', () => {
+    const out = new SceneOut();
+    out.spans(0, 10, [
+      { text: 'H' },
+      { text: '2', attrs: ' baseline-shift="sub" font-size="smaller"' },
+      { text: 'O ' },
+      { text: 'x', attrs: ' text-decoration="underline"' },
+      { text: 'n', attrs: ' baseline-shift="super" font-size="smaller" text-decoration="underline"' },
+    ], '');
+    out.done(10, 10);
+    expect(out.scene!.texts[0].spans).toEqual([
+      { text: 'H' },
+      { text: '2', scale: 1 / 1.2, shift: 0.2 },
+      { text: 'O ' },
+      { text: 'x', underline: true },
+      { text: 'n', underline: true, scale: 1 / 1.2, shift: -0.33 },
+    ]);
+  });
+
+  // Lengths in em are of the font size where they are used, as in CSS.
+  it('read line widths in em by the font size', () => {
+    const out = new SceneOut();
+    out.line(0, 0, 1, 0, ' stroke="red" stroke-width="1em"');
+    out.group({ attrs: ' font-size="10"' });
+    out.line(0, 0, 1, 0, ' stroke="red" stroke-width="0.5em"');
+    out.line(0, 0, 1, 0, ' stroke="red" style="stroke-width:2rem"');
+    out.end();
+    out.done(10, 10);
+    expect(out.scene!.shapes.map((s) => s.width)).toEqual([16, 5, 32]);
+  });
+
   it('keep each attempt apart and take the one adopted', () => {
     const out = new SceneOut();
     const attempts = [100, 200].map((w) => {

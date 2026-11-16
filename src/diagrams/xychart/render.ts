@@ -304,7 +304,8 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
         const by = horizontal ? py(c, 0) + offset : py(c, to);
         const bw = horizontal ? (to - from) * plotWidth : thickness - gap;
         const bh = horizontal ? thickness - gap : (to - from) * plotHeight;
-        out.rect(bx, by, bw, bh, '');
+        const category = x.type === 'band' ? x.categories[i] : String(plot.data[i][0]);
+        out.rect(bx, by, bw, bh, '', { cls: 'pele-bar', id: `${plot.title || `series ${index + 1}`}: ${category}`, source: plot.source });
         if (!showValues) continue;
         const label = String(value);
         const w = measurer.width(label, tiny, 0);

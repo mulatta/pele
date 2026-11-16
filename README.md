@@ -13,10 +13,10 @@ const { scene, width, height, links } = renderScene(`flowchart LR
   A[Mermaid text] --> B[Scene]`);
 ```
 
-A scene (`SCENE_VERSION` 4) holds:
+A scene (`SCENE_VERSION` 5) holds:
 
 - `shapes`: fills and strokes in painting order, each a path of numbers (`M L C Q A Z` op codes, see `src/draw/scene.ts`), its paint, opacity, outline width and dashes, and bounds.
-- `texts`: lines of text with their position, size, weight, anchor, paint and runs.
+- `texts`: lines of text with their position, size, weight, anchor, paint and runs. A run may be bold, italic, monospace, underlined, or a sub- or superscript (`scale` of the text's size, baseline `shift` in the text's size).
 - `items`: the parts a host can point at (nodes, edges, labels), with their class, role, bounds and where the source wrote them.
 - `vars`: what the CSS variables paints name stand for, such as `--_s: var(--pele-surface,#f3f3f3)`, and the series colors a diagram's `themeVariables` set (`--pele-series-1: red`).
 

@@ -99,6 +99,7 @@ describe('flowchart rendering', () => {
   it('keeps the text of <u> spans', () => {
     const scene = sceneOf('flowchart LR\n  A["a <u>underlined</u> word"]\n  B["<u>all of it</u>"]');
     expect(lines(scene)).toEqual(['a underlined word', 'all of it']);
+    expect(textsOf(scene, itemById(scene, 'A', 'pele-node')!)[0].spans).toEqual([{ text: 'a ' }, { text: 'underlined', underline: true }, { text: ' word' }]);
     expect(lines(sceneOf('kanban\n  todo[Todo]\n    t1[<u>card</u>]'))).toContain('card');
   });
 
@@ -110,7 +111,7 @@ describe('flowchart rendering', () => {
       ['kbd', { mono: true }],
       ['samp', { mono: true }],
       ['tt', { mono: true }],
-      ['ins', {}],
+      ['ins', { underline: true }],
     ];
     for (const [tag, style] of styles) {
       expect(spansOf(`flowchart LR\n  A["plain <${tag}>tagged</${tag}> plain"]`), tag).toEqual([{ text: 'plain ' }, { text: 'tagged', ...style }, { text: ' plain' }]);
@@ -525,15 +526,16 @@ describe('public api', () => {
 
   it('keeps the runs of <sub> and <sup> in labels apart', () => {
     const scene = sceneOf('flowchart LR\n  A["H<sub>2</sub>O"] --> B["x<sup>2</sup>"]');
-    expect(textsOf(scene, itemById(scene, 'A', 'pele-node')!)[0].spans.map((span) => span.text)).toEqual(['H', '2', 'O']);
-    expect(textsOf(scene, itemById(scene, 'B', 'pele-node')!)[0].spans.map((span) => span.text)).toEqual(['x', '2']);
+    // Set smaller, below or above the line, by the text's size.
+    expect(textsOf(scene, itemById(scene, 'A', 'pele-node')!)[0].spans).toEqual([{ text: 'H' }, { text: '2', scale: 1 / 1.2, shift: 0.2 }, { text: 'O' }]);
+    expect(textsOf(scene, itemById(scene, 'B', 'pele-node')!)[0].spans).toEqual([{ text: 'x' }, { text: '2', scale: 1 / 1.2, shift: -0.33 }]);
     expect(textOf(scene)).not.toContain('<su');
   });
 
   it('nesting sub/sup inside other emphasis keeps the emphasis on each run', () => {
     expect(spansOf('flowchart LR\n  A["<b>H<sub>2</sub>O</b>"]')).toEqual([
       { text: 'H', weight: 700 },
-      { text: '2', weight: 700 },
+      { text: '2', weight: 700, scale: 1 / 1.2, shift: 0.2 },
       { text: 'O', weight: 700 },
     ]);
   });

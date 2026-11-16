@@ -84,7 +84,8 @@ describe('XY chart rendering', () => {
     expect(axisSegments(scene).length).toBeGreaterThan(0);
     const [barSeries] = items(scene, 'pele-bars');
     expect(barSeries.id).toBe('2024');
-    const barShapes = shapesOf(scene, barSeries);
+    // Each bar is an item of its own, in its series.
+    const barShapes = items(scene, 'pele-bar').filter((b) => b.id.startsWith('2024: ')).flatMap((b) => shapesOf(scene, b));
     expect(barShapes.every((s) => s.paint.startsWith(`${SERIES}1`))).toBe(true);
     expect(barShapes.filter(isRect).length).toBe(3);
     const [lineSeries] = items(scene, 'pele-line');
@@ -236,8 +237,10 @@ describe('XY chart rendering', () => {
     expect(labels(scene).sort()).toEqual(['1', '12', '2', '25', '30', '7']);
     // They are written past the end of the bars in the text color, whichever way Mermaid's setting is.
     expect(scene.texts.filter((t) => t.size === 12).every((t) => t.paint === 'var(--_fg)')).toBe(true);
+    // The setting's own line moves where the bars are written.
+    const unplaced = (s: Scene) => ({ ...s, items: s.items.map(({ line: _line, ...rest }) => rest) });
     for (const outside of ['true', 'false']) {
-      expect(draw(configured(`    showDataLabel: true\n    showDataLabelOutsideBar: ${outside}`, chart)).scene).toEqual(scene);
+      expect(unplaced(draw(configured(`    showDataLabel: true\n    showDataLabelOutsideBar: ${outside}`, chart)).scene)).toEqual(unplaced(scene));
     }
   });
 
@@ -288,4 +291,17 @@ describe('XY chart rendering', () => {
   it('gives the same output for the same input', () => {
     expect(draw(CHART).scene).toEqual(draw(CHART).scene);
   });
+
+  // A bar is a part a host can point at, even one of nothing: it is still where its value is.
+  it('makes every bar an item, a bar of nothing too', () => {
+    const { scene } = draw('xychart\n  x-axis [a, b, c]\n  bar "Sales" [0, 2, 3]\n  bar [1, 0, 1]');
+    const bars = items(scene, 'pele-bar');
+    expect(bars.map((b) => b.id)).toEqual(['Sales: a', 'Sales: b', 'Sales: c', 'series 2: a', 'series 2: b', 'series 2: c']);
+    const zero = bars[0].box!;
+    expect(zero.y0).toBe(zero.y1);
+    expect(zero.x1).toBeGreaterThan(zero.x0);
+    expect(shapesOf(scene, bars[0])).toEqual([]);
+    expect(shapesOf(scene, bars[1])).toHaveLength(1);
+  });
+
 });
