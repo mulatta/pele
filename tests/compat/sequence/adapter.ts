@@ -3,7 +3,7 @@ import { SeqDb } from '../../../src/diagrams/sequence/db.js';
 import { sequence } from '../../../src/diagrams/sequence/index.js';
 import { parseSequence } from '../../../src/diagrams/sequence/parser.js';
 import { numberMessages, renderSequence } from '../../../src/diagrams/sequence/render.js';
-import { SvgOut } from '../../../src/draw/svg.js';
+import { SceneOut, sceneRoot } from '../../../src/draw/scene.js';
 import type { SeqActor, SeqMessage } from '../../../src/diagrams/sequence/types.js';
 import { encodeEntities, preprocess, type Config } from '../../../src/preprocess.js';
 import { metricsMeasurer } from '../../../src/text/measurer.js';
@@ -108,7 +108,7 @@ const renderer = {
   draw(_text: string, _id: string, _version: string, diagram: { db: SequenceDB }): void {
     const db = diagram.db;
     const options = { measurer: metricsMeasurer };
-    renderSequence(db, config, options, new SvgOut(options));
+    renderSequence(db, config, options, new SceneOut(sceneRoot(16), Infinity));
     const numbering = numberMessages(db.messages, false);
     db.messages.forEach((message, i) => {
       (message as SeqMessage & { msgModel?: object }).msgModel = Number.isNaN(numbering.index[i])

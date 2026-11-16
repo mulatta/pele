@@ -1,6 +1,5 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out, type Pen } from '../../draw/out.js';
-import { esc, num } from '../../svg/builder.js';
 import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { FONT_MONO, ROUNDED, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
@@ -73,20 +72,10 @@ function hardWrap(text: string, columns: number): string[] {
   return out;
 }
 
-// Each row is a tspan with its own position, which only the SVG writes; a scene gets one text per row.
+// One text per row.
 function drawLines(out: Out, rows: string[], x: number, y: number, step: number, attrs: string): void {
-  out.both(
-    () => {
-      let body = '';
-      for (let i = 0; i < rows.length; i++) {
-        if (rows[i] !== '') body += `<tspan x="${num(x)}" y="${num(y + i * step)}">${esc(rows[i])}</tspan>`;
-      }
-      return body === '' ? '' : `<text${attrs} xml:space="preserve">${body}</text>`;
-    },
-    () => {
-      for (let i = 0; i < rows.length; i++) if (rows[i] !== '') out.text(x, y + i * step, rows[i], attrs, ' xml:space="preserve"');
-    }
-  );
+  for (let i = 0; i < rows.length; i++) if (rows[i] !== '') out.text(x, y + i * step, rows[i], attrs, ' xml:space="preserve"');
+
 }
 
 export function renderEventModel(model: EventModelingModel, _config: Config, options: RenderOptions, out: Out): Rendered {
@@ -264,8 +253,8 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
   out.section('main');
   out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('eventmodeling', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],
@@ -398,5 +387,6 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(bottom + pad);
   out.section('main');
   out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
-  return { svg: out.done('eventmodeling', totalWidth, height, size, options, model), width: totalWidth, height, links: [] };
+  out.done(totalWidth, height);
+  return { width: totalWidth, height, links: [] };
 }

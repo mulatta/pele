@@ -1,12 +1,12 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { CRITICAL, ROUNDED, resolveStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
 import type { LinkInfo, RenderOptions, Rendered, SourceInfo } from '../../types.js';
 import { capWidth } from '../common/fit-width.js';
-import { linkUrl, relAttr } from '../../util/url.js';
+import { linkUrl } from '../../util/url.js';
 import { autoTicks, intervalTicks, timeFormat } from './axis.js';
 import { add, addDays } from './dates.js';
 import { clock, type GanttDb } from './db.js';
@@ -70,18 +70,13 @@ interface Bar {
 }
 
 export function renderGantt(model: GanttDb, config: Config, options: RenderOptions, out: Out): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   // A label that is an item itself, which a typed label is not: a scene gets it as a group.
-  const itemLabel = (o: Out, label: Label, cx: number, cy: number, cls: string, id: string, source: SourceInfo | undefined, icons?: RenderOptions['icons']): void =>
-    o.both(
-      () => labelSvg(label, cx, cy, ` class="${cls}" data-id="${escText(id)}"${srcAttrs(source)}`, icons),
-      () => {
-        // An empty data-id makes no item.
-        o.group(id === '' ? {} : { cls, id, source });
-        o.label(label, cx, cy, '', icons);
-        o.end();
-      }
-    );
+  const itemLabel = (o: Out, label: Label, cx: number, cy: number, cls: string, id: string, source: SourceInfo | undefined, icons?: RenderOptions['icons']): void => {
+    // An empty data-id makes no item.
+    o.group(id === '' ? {} : { cls, id, source });
+    o.label(label, cx, cy, '', icons);
+    o.end();
+  };
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -147,7 +142,8 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     const width = Math.ceil(Math.max(title.width, 1) + 2 * pad);
     const height = Math.ceil(Math.max(title.height, 1) + 2 * pad);
     out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-    return { svg: out.done('gantt', width, height, size, options, model), width, height, links: [] };
+    out.done(width, height);
+    return { width, height, links: [] };
   }
 
   const sectionLabels = new Map<string, Label>();
@@ -360,7 +356,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     const href = url === undefined ? undefined : linkUrl(url, options);
     if (href !== undefined) {
       links.push({ id: task.id, href, internal: false });
-      out.link(` href="${esc(href)}"${relAttr(options)}`);
+      out.link();
     }
     shape?.();
     out.label(bar.label, bar.labelX, cy, ` class="pele-label"${textFill}`);
@@ -395,5 +391,6 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     itemLabel(out, label, cx, cy, 'pele-vert-label', task.id, task.source);
   }
 
-  return { svg: out.done('gantt', width, height, size, options, model), width, height, links };
+  out.done(width, height);
+  return { width, height, links };
 }

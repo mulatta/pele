@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, items, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -101,9 +93,11 @@ describe('inert quadrant chart output', () => {
     const src =
       'quadrantChart\n  __proto__:::__proto__: [0.5, 0.5]\n  constructor:::constructor: [0.1, 0.1]\n  toString:::toString: [0.2, 0.2]\n' +
       '  classDef constructor radius: 3\n  classDef hasOwnProperty color: #f00';
-    const { svg } = render(src, options);
-    expect(svg.match(/<circle/g)?.length).toBe(3);
-    expect(svg.match(/ r="3"/g)?.length).toBe(1);
+    const points = items(draw(src).scene, 'pele-point');
+    expect(points.map((p) => p.id).sort()).toEqual(['__proto__', 'constructor', 'toString']);
+    // A radius of 3 makes a point 6 wide; the others have the default radius.
+    const widths = points.map((p) => (p.box ? p.box.x1 - p.box.x0 : 0));
+    expect(widths.filter((w) => w === 6)).toHaveLength(1);
     expect(({} as Record<string, unknown>).color).toBeUndefined();
     expect(({} as Record<string, unknown>).radius).toBeUndefined();
   });

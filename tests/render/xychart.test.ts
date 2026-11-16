@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { tickStep, tickValue, ticksBetween } from '../../src/diagrams/xychart/ticks.js';
-import { PeleError, parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
-import { elements, type XmlElement } from '../support/xml.js';
-
-const options = { measurer: metricsMeasurer };
+import { PeleError, parse, supports } from '../../src/index.js';
+import type { Scene, SceneShape } from '../../src/draw/scene.js';
+import { draw, hasClass, items, lineOf, lines, shapesOf } from '../support/scene.js';
 
 const CHART = `xychart
   title "Sales Revenue"
@@ -15,13 +13,37 @@ const CHART = `xychart
 
 const configured = (body: string, chart: string): string => `---\nconfig:\n  xyChart:\n${body}\n---\n${chart}`;
 
-function tags(svg: string, name: string): XmlElement[] {
-  return elements(svg).filter((el) => el.name === name);
-}
+// Where a source put a part moves with the lines the configuration takes; the drawing does not.
+const drawn = (src: string): string => JSON.stringify(draw(src).scene, (key, value) => (['line', 'end', 'from', 'to', 'symbol'].includes(key) ? undefined : value));
 
-function texts(svg: string): string[] {
-  return [...svg.matchAll(/<text[^>]*>(?:<tspan[^>]*>)?([^<]*)/g)].map((m) => m[1]);
+const SERIES = 'var(--pele-series-';
+// A path is op codes, each followed by its arguments: M, L, C, Q, A, Z.
+const ARGS = [2, 2, 6, 4, 7, 0];
+function opsOf(s: SceneShape): number[] {
+  const ops: number[] = [];
+  for (let i = 0; i < s.cmds.length; i += 1 + ARGS[s.cmds[i]]) ops.push(s.cmds[i]);
+  return ops;
 }
+const isRect = (s: SceneShape): boolean => s.kind === 'fill' && !opsOf(s).includes(4) && opsOf(s).at(-1) === 5;
+const isDot = (s: SceneShape): boolean => s.kind === 'fill' && opsOf(s).includes(4);
+const inLegend = (scene: Scene, s: SceneShape): boolean => s.item >= 0 && hasClass(scene.items[s.item], 'pele-legend-item');
+
+// Series are items only when they have a title, so the marks are told apart by their shape.
+const bars = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => isRect(s) && s.paint.startsWith(SERIES) && !inLegend(scene, s));
+const dots = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => isDot(s) && !inLegend(scene, s));
+const width = (s: SceneShape): number => s.box.x1 - s.box.x0;
+const height = (s: SceneShape): number => s.box.y1 - s.box.y0;
+const centre = (s: SceneShape): number => (s.box.x0 + s.box.x1) / 2;
+
+// The axis is the one stroke in the axis colour; its lines are segments of M, L pairs.
+function axisSegments(scene: Scene): number[][] {
+  const axis = scene.shapes.find((s) => s.kind === 'stroke' && s.paint === 'var(--_b)');
+  const out: number[][] = [];
+  for (let i = 0; axis && i < axis.cmds.length; i += 6) out.push([axis.cmds[i + 1], axis.cmds[i + 2], axis.cmds[i + 4], axis.cmds[i + 5]]);
+  return out;
+}
+const longer = (segments: number[][], horizontal: boolean): number =>
+  segments.filter(([x1, y1, x2, y2]) => (horizontal ? y1 === y2 && Math.abs(x2 - x1) > 100 : x1 === x2 && Math.abs(y2 - y1) > 100)).length;
 
 function ticks(lo: number, hi: number, count: number): number[] {
   return ticksBetween(lo, hi, tickStep(hi - lo, count));
@@ -54,39 +76,41 @@ describe('tick selection', () => {
 
 describe('XY chart rendering', () => {
   it('draws the title, axes, grid, a bar series, a line series and a legend', () => {
-    const { svg, type, width, height } = render(CHART, options);
+    const { scene, type, width, height } = draw(CHART);
     expect(type).toBe('xychart');
     expect(supports('xychart-beta\nline [1]')).toBe(true);
     expect([width, height]).toEqual([700, 500]);
-    expect(svg).toContain('class="pele pele-xychart"');
-    expect(svg).toContain('class="pele-grid"');
-    expect(svg).toContain('class="pele-axis"');
-    const bars = /<g class="pele-series pele-bars" data-id="2024" fill="([^"]+)">(.*?)<\/g>/.exec(svg)!;
-    expect(bars[1]).toContain('--pele-series-1');
-    expect(bars[2].match(/<rect/g)?.length).toBe(3);
-    const line = /<g class="pele-series pele-line" data-id="2025" fill="([^"]+)">(.*?)<\/g>/.exec(svg)!;
-    expect(line[1]).toContain('--pele-series-2');
-    expect(line[2]).toMatch(/<path d="M[\d.]+,[\d.]+L[\d.]+,[\d.]+L[\d.]+,[\d.]+" fill="none"/);
-    expect(line[2].match(/<circle/g)?.length).toBe(3);
+    expect(scene.shapes.some((s) => s.kind === 'stroke' && s.paint === 'var(--_a)')).toBe(true);
+    expect(axisSegments(scene).length).toBeGreaterThan(0);
+    const [barSeries] = items(scene, 'pele-bars');
+    expect(barSeries.id).toBe('2024');
+    const barShapes = shapesOf(scene, barSeries);
+    expect(barShapes.every((s) => s.paint.startsWith(`${SERIES}1`))).toBe(true);
+    expect(barShapes.filter(isRect).length).toBe(3);
+    const [lineSeries] = items(scene, 'pele-line');
+    expect(lineSeries.id).toBe('2025');
+    const lineShapes = shapesOf(scene, lineSeries);
+    expect(lineShapes.every((s) => s.paint.startsWith(`${SERIES}2`))).toBe(true);
+    const path = lineShapes.find((s) => s.kind === 'stroke')!;
+    expect(opsOf(path)).toEqual([0, 1, 1]);
+    expect(lineShapes.filter(isDot).length).toBe(3);
     for (const text of ['Sales Revenue', 'Month', 'Revenue (in $)', 'jan', 'feb', 'mar', '4000', '7000', '10000', '2024', '2025']) {
-      expect(texts(svg)).toContain(text);
+      expect(lines(scene)).toContain(text);
     }
-    expect(svg.match(/class="pele-legend-item"/g)?.length).toBe(2);
+    expect(items(scene, 'pele-legend-item').length).toBe(2);
   });
 
   it('draws lines over bars, and colors each series by its place in the source', () => {
-    const { svg } = render('xychart\n line [1, 2]\n bar [2, 1]\n line [3, 3]\n bar [1, 1]', options);
-    expect([...svg.matchAll(/class="pele-series pele-(\w+)" fill="var\(--pele-series-(\d)/g)].map((m) => m[1] + m[2])).toEqual([
-      'bars2',
-      'bars4',
-      'line1',
-      'line3',
-    ]);
+    const { scene } = draw('xychart\n line [1, 2]\n bar [2, 1]\n line [3, 3]\n bar [1, 1]');
+    const marks = scene.shapes
+      .filter((s) => s.paint.startsWith(SERIES) && (isRect(s) || s.kind === 'stroke'))
+      .map((s) => (isRect(s) ? 'bars' : 'line') + /series-(\d)/.exec(s.paint)![1]);
+    expect([...new Set(marks)]).toEqual(['bars2', 'bars4', 'line1', 'line3']);
   });
 
   it('scales bars to the range and sets them side by side', () => {
-    const { svg } = render('xychart\n x-axis [a, b]\n y-axis 0 --> 100\n bar [50, 100]\n bar [25, 75]', options);
-    const rects = tags(svg, 'rect').map((r) => ['x', 'y', 'width', 'height'].map((k) => Number(r.attrs.get(k))));
+    const { scene } = draw('xychart\n x-axis [a, b]\n y-axis 0 --> 100\n bar [50, 100]\n bar [25, 75]');
+    const rects = bars(scene).map((s) => [s.box.x0, s.box.y0, width(s), height(s)]);
     expect(rects).toHaveLength(4);
     const [a1, b1, a2, b2] = rects;
     expect(b1[3]).toBeCloseTo(a1[3] * 2, 1);
@@ -98,62 +122,62 @@ describe('XY chart rendering', () => {
   });
 
   it('stands bars on zero when the range comes from the data', () => {
-    const heights = (src: string): number[] => tags(render(src, options).svg, 'rect').map((r) => Number(r.attrs.get('height')));
+    const heights = (src: string): number[] => bars(draw(src).scene).map(height);
     const [low, high] = heights('xychart\n bar [5000, 10000]');
     expect(high).toBeCloseTo(low * 2, 1);
     // Mermaid starts the axis at the smallest value, which leaves that bar with no height.
     expect(low).toBeGreaterThan(100);
-    const mixed = tags(render('xychart\n bar [4, -4]', options).svg, 'rect').map((r) => Number(r.attrs.get('y')));
+    const mixed = bars(draw('xychart\n bar [4, -4]').scene).map((s) => s.box.y0);
     expect(mixed[1]).toBeGreaterThan(mixed[0]);
   });
 
   it('keeps an explicit range as written and cuts what falls outside it', () => {
-    const { svg } = render('xychart\n x-axis [a, b, c]\n y-axis 10 --> 20\n bar [5, 15, 40]\n line [0, 15, 30]', options);
-    expect(texts(svg)).toContain('10');
-    expect(texts(svg)).toContain('20');
-    expect(texts(svg)).not.toContain('0');
-    expect(texts(svg)).not.toContain('40');
-    const [under, inside, over] = tags(svg, 'rect').map((r) => Number(r.attrs.get('height')));
-    expect(under).toBe(0);
-    expect(over).toBeCloseTo(inside * 2, 1);
-    const top = Number(tags(svg, 'rect')[2].attrs.get('y'));
-    const ys = [.../[ML][\d.]+,([\d.]+)/g[Symbol.matchAll](/class="pele-series pele-line"[^>]*><path d="([^"]+)"/.exec(svg)![1])].map((m) => +m[1]);
-    for (const y of ys) expect(y).toBeGreaterThanOrEqual(top);
-    expect(tags(svg, 'circle')).toHaveLength(1);
+    const { scene } = draw('xychart\n x-axis [a, b, c]\n y-axis 10 --> 20\n bar [5, 15, 40]\n line [0, 15, 30]');
+    expect(lines(scene)).toContain('10');
+    expect(lines(scene)).toContain('20');
+    expect(lines(scene)).not.toContain('0');
+    expect(lines(scene)).not.toContain('40');
+    // The bar below the range has no height left to draw.
+    const [inside, over] = bars(scene);
+    expect(bars(scene)).toHaveLength(2);
+    expect(height(over)).toBeCloseTo(height(inside) * 2, 1);
+    const top = over.box.y0;
+    const path = scene.shapes.find((s) => s.kind === 'stroke' && s.paint.startsWith(SERIES))!;
+    for (let i = 2; i < path.cmds.length; i += 3) expect(path.cmds[i]).toBeGreaterThanOrEqual(Math.floor(top));
+    expect(dots(scene)).toHaveLength(1);
   });
 
   it('spreads values over a numeric x axis', () => {
-    const { svg } = render('xychart\n x-axis "t" 0 --> 10\n line [1, 2, 3]', options);
-    const xs = tags(svg, 'circle').map((c) => Number(c.attrs.get('cx')));
+    const { scene } = draw('xychart\n x-axis "t" 0 --> 10\n line [1, 2, 3]');
+    const xs = dots(scene).map(centre);
     expect(xs[1] - xs[0]).toBeCloseTo(xs[2] - xs[1], 1);
-    for (const tick of ['0', '5', '10']) expect(texts(svg)).toContain(tick);
-    const auto = render('xychart\n line [5, 6, 7, 8]', options).svg;
-    for (const tick of ['1', '2', '3', '4']) expect(texts(auto)).toContain(tick);
+    for (const tick of ['0', '5', '10']) expect(lines(scene)).toContain(tick);
+    const auto = draw('xychart\n line [5, 6, 7, 8]').scene;
+    for (const tick of ['1', '2', '3', '4']) expect(lines(auto)).toContain(tick);
   });
 
   it('falls back to the data range when written y bounds clamp to the same value', () => {
     const big = (e: number): string => '1' + '0'.repeat(e);
     for (const range of [`${big(301)} --> ${big(302)}`, `-${big(302)} --> -${big(301)}`]) {
-      expect(render(`xychart\n x-axis [a, b]\n y-axis ${range}\n bar [3, 4]`, options).svg, range).not.toContain('NaN');
+      expect(JSON.stringify(draw(`xychart\n x-axis [a, b]\n y-axis ${range}\n bar [3, 4]`).scene), range).not.toContain('NaN');
     }
   });
 
   it('leaves out values beyond the categories and categories without a value', () => {
-    expect(tags(render('xychart\n x-axis [a, b]\n bar [1, 2, 3, 4]', options).svg, 'rect')).toHaveLength(2);
-    const short = render('xychart\n x-axis [a, b, c, d]\n bar [1, 2]\n line [1, 2]', options).svg;
-    expect(tags(short, 'rect')).toHaveLength(2);
-    expect(tags(short, 'circle')).toHaveLength(2);
-    expect(short).not.toContain('NaN');
-    const late = render('xychart\n line [1, 2, 3, 4, 5, 6]\n x-axis [a, b]', options);
-    const xs = tags(late.svg, 'circle').map((c) => Number(c.attrs.get('cx')));
+    expect(bars(draw('xychart\n x-axis [a, b]\n bar [1, 2, 3, 4]').scene)).toHaveLength(2);
+    const short = draw('xychart\n x-axis [a, b, c, d]\n bar [1, 2]\n line [1, 2]').scene;
+    expect(bars(short)).toHaveLength(2);
+    expect(dots(short)).toHaveLength(2);
+    expect(JSON.stringify(short)).not.toContain('NaN');
+    const late = draw('xychart\n line [1, 2, 3, 4, 5, 6]\n x-axis [a, b]');
+    const xs = dots(late.scene).map(centre);
     expect(xs).toHaveLength(2);
     expect(Math.max(...xs)).toBeLessThan(late.width);
   });
 
   it('turns the chart on its side for the horizontal orientation', () => {
     const src = 'x-axis [a, b]\n y-axis 0 --> 10\n bar [5, 10]';
-    const boxes = (chart: string): number[][] =>
-      tags(render(chart, options).svg, 'rect').map((r) => ['x', 'y', 'width', 'height'].map((k) => Number(r.attrs.get(k))));
+    const boxes = (chart: string): number[][] => bars(draw(chart).scene).map((s) => [s.box.x0, s.box.y0, width(s), height(s)]);
     const [a, b] = boxes('xychart\n ' + src);
     expect(b[3]).toBeCloseTo(a[3] * 2, 1);
     expect(b[2]).toBe(a[2]);
@@ -163,82 +187,81 @@ describe('XY chart rendering', () => {
     expect(d[3]).toBe(c[3]);
     expect(d[0]).toBe(c[0]);
     expect(d[1]).toBeGreaterThan(c[1]);
-    const fromConfig = render(configured('    chartOrientation: horizontal', 'xychart\n ' + src), options).svg;
-    expect(fromConfig).toBe(render('xychart horizontal\n ' + src, options).svg);
-    const overridden = render(configured('    chartOrientation: horizontal', 'xychart vertical\n ' + src), options).svg;
-    expect(overridden).toBe(render('xychart\n ' + src, options).svg);
+    expect(drawn(configured('    chartOrientation: horizontal', 'xychart\n ' + src))).toBe(drawn('xychart horizontal\n ' + src));
+    expect(drawn(configured('    chartOrientation: horizontal', 'xychart vertical\n ' + src))).toBe(drawn('xychart\n ' + src));
   });
 
   it('labels the points of a line', () => {
-    const { svg } = render('xychart\n x-axis [Q1, Q2, Q3]\n line [25 "Launch", 45, 72 "Target"]\n bar [1 "ignored", 2, 3]', options);
-    const labels = /<g class="pele-point-labels"[^>]*>(.*?)<\/g>/.exec(svg)![1];
-    expect(texts(labels)).toEqual(['Launch', 'Target']);
-    expect(svg).not.toContain('ignored');
+    const { scene } = draw('xychart\n x-axis [Q1, Q2, Q3]\n line [25 "Launch", 45, 72 "Target"]\n bar [1 "ignored", 2, 3]');
+    // Point labels are the only text set at 12.
+    expect(scene.texts.filter((t) => t.size === 12).map((t) => t.spans[0].text)).toEqual(['Launch', 'Target']);
+    expect(lines(scene)).not.toContain('ignored');
   });
 
   it('honours the size and the show settings', () => {
-    const plain = render(CHART, options).svg;
-    const sized = render(configured('    width: 900\n    height: 400', CHART), options);
+    const plain = draw(CHART).scene;
+    const sized = draw(configured('    width: 900\n    height: 400', CHART));
     expect([sized.width, sized.height]).toEqual([900, 400]);
-    expect(render(configured('    showTitle: false', CHART), options).svg).not.toContain('Sales Revenue');
-    expect(render(configured('    showLegend: false', CHART), options).svg).not.toContain('pele-legend');
-    const noX = render(configured('    xAxis:\n      showLabel: false\n      showTitle: false', CHART), options).svg;
-    expect(texts(noX)).not.toContain('jan');
-    expect(texts(noX)).not.toContain('Month');
-    expect(texts(noX)).toContain('7000');
-    const noY = render(configured('    yAxis:\n      showLabel: false\n      showTitle: false', CHART), options).svg;
-    expect(texts(noY)).not.toContain('7000');
-    expect(texts(noY)).not.toContain('Revenue (in $)');
-    expect(texts(noY)).toContain('jan');
-    const axis = (svg: string): string => /class="pele-axis" d="([^"]*)"/.exec(svg)?.[1] ?? '';
-    const marks = (body: string): string => axis(render(configured(body, CHART), options).svg);
-    expect(marks('    xAxis:\n      showTick: false').length).toBeLessThan(axis(plain).length);
-    expect(marks('    yAxis:\n      showTick: false').length).toBeLessThan(axis(plain).length);
-    expect(marks('    xAxis:\n      showAxisLine: false')).not.toMatch(/H/);
-    expect(marks('    yAxis:\n      showAxisLine: false')).not.toMatch(/V/);
+    expect(lines(draw(configured('    showTitle: false', CHART)).scene)).not.toContain('Sales Revenue');
+    expect(items(draw(configured('    showLegend: false', CHART)).scene, 'pele-legend-item')).toHaveLength(0);
+    const noX = lines(draw(configured('    xAxis:\n      showLabel: false\n      showTitle: false', CHART)).scene);
+    expect(noX).not.toContain('jan');
+    expect(noX).not.toContain('Month');
+    expect(noX).toContain('7000');
+    const noY = lines(draw(configured('    yAxis:\n      showLabel: false\n      showTitle: false', CHART)).scene);
+    expect(noY).not.toContain('7000');
+    expect(noY).not.toContain('Revenue (in $)');
+    expect(noY).toContain('jan');
+    const marks = (body: string): number[][] => axisSegments(draw(configured(body, CHART)).scene);
+    expect(marks('    xAxis:\n      showTick: false').length).toBeLessThan(axisSegments(plain).length);
+    expect(marks('    yAxis:\n      showTick: false').length).toBeLessThan(axisSegments(plain).length);
+    expect(longer(axisSegments(plain), true)).toBe(1);
+    expect(longer(axisSegments(plain), false)).toBe(1);
+    expect(longer(marks('    xAxis:\n      showAxisLine: false'), true)).toBe(0);
+    expect(longer(marks('    xAxis:\n      showAxisLine: false'), false)).toBe(1);
+    expect(longer(marks('    yAxis:\n      showAxisLine: false'), false)).toBe(0);
+    expect(longer(marks('    yAxis:\n      showAxisLine: false'), true)).toBe(1);
     const bare = '    xAxis:\n      showTick: false\n      showAxisLine: false\n    yAxis:\n      showTick: false\n      showAxisLine: false';
-    expect(render(configured(bare, CHART), options).svg).not.toContain('pele-axis"');
-    expect(render(configured('    width: wide\n    showTitle: 3', CHART), options).svg).toBe(plain);
+    expect(marks(bare)).toEqual([]);
+    expect(drawn(configured('    width: wide\n    showTitle: 3', CHART))).toBe(drawn(CHART));
   });
 
   it('writes the value of each bar with showDataLabel', () => {
     const chart = 'xychart\n x-axis [a, b, c]\n y-axis 0 --> 30\n bar [12, 2, 25]\n bar [7, 30, 1]';
-    expect(render(chart, options).svg).not.toContain('pele-data-labels');
-    const { svg } = render(configured('    showDataLabel: true', chart), options);
-    const groups = [...svg.matchAll(/<g class="pele-data-labels"[^>]*>(.*?)<\/g>/g)];
+    // Data labels are the only text set at 12.
+    const labels = (scene: Scene): string[] => scene.texts.filter((t) => t.size === 12).map(lineOf);
+    expect(labels(draw(chart).scene)).toEqual([]);
+    const { scene } = draw(configured('    showDataLabel: true', chart));
     // Each series shows its own values; Mermaid repeats those of the first series.
-    expect(groups.flatMap((g) => texts(g[1])).sort()).toEqual(['1', '12', '2', '25', '30', '7']);
+    expect(labels(scene).sort()).toEqual(['1', '12', '2', '25', '30', '7']);
     // They are written past the end of the bars in the text color, whichever way Mermaid's setting is.
-    expect(svg).not.toContain('fill="var(--_bg)"');
+    expect(scene.texts.filter((t) => t.size === 12).every((t) => t.paint === 'var(--_fg)')).toBe(true);
     for (const outside of ['true', 'false']) {
-      expect(render(configured(`    showDataLabel: true\n    showDataLabelOutsideBar: ${outside}`, chart), options).svg).toBe(svg);
+      expect(draw(configured(`    showDataLabel: true\n    showDataLabelOutsideBar: ${outside}`, chart)).scene).toEqual(scene);
     }
   });
 
   it('thins out category labels that would run into each other', () => {
     const many = Array.from({ length: 200 }, (_, i) => `category${i}`);
-    const { svg } = render(`xychart\n x-axis [${many.join(', ')}]\n bar [${many.map((_, i) => i).join(', ')}]`, options);
-    const shown = texts(svg).filter((t) => t.startsWith('category'));
+    const { scene } = draw(`xychart\n x-axis [${many.join(', ')}]\n bar [${many.map((_, i) => i).join(', ')}]`);
+    const shown = lines(scene).filter((t) => t.startsWith('category'));
     expect(shown.length).toBeGreaterThan(3);
     expect(shown.length).toBeLessThan(15);
-    expect(tags(svg, 'rect')).toHaveLength(200);
+    // The first value is 0, which leaves nothing to draw.
+    expect(bars(scene)).toHaveLength(199);
   });
 
   it('refuses a chart with no series, as Mermaid does', () => {
-    expect(() => render('xychart\n title "Empty"', options)).toThrow('No Plot to render, please provide a plot with some data');
-    expect(() => render('xychart\n line [1, 2', options)).toThrow(PeleError);
-    expect(() => render('xychart\n x-axis [é]\n line [1]', options)).toThrow(PeleError);
+    expect(() => draw('xychart\n title "Empty"')).toThrow('No Plot to render, please provide a plot with some data');
+    expect(() => draw('xychart\n line [1, 2')).toThrow(PeleError);
+    expect(() => draw('xychart\n x-axis [é]\n line [1]')).toThrow(PeleError);
   });
 
   it('takes the title from front matter unless the chart sets one', () => {
-    expect(render('---\ntitle: From front matter\n---\nxychart\n line [1, 2]', options).svg).toContain('From front matter');
-    expect(render('---\ntitle: From front matter\n---\nxychart\n title Own\n line [1, 2]', options).svg).toContain('>Own<');
-  });
-
-  it('names the chart for assistive technology', () => {
-    const { svg } = render('xychart\n accTitle: Sales\n accDescr: By month\n line [1, 2]', options);
-    expect(svg).toContain('<title id="pele-title">Sales</title>');
-    expect(svg).toContain('<desc id="pele-desc">By month</desc>');
+    expect(lines(draw('---\ntitle: From front matter\n---\nxychart\n line [1, 2]').scene)).toContain('From front matter');
+    const own = lines(draw('---\ntitle: From front matter\n---\nxychart\n title Own\n line [1, 2]').scene);
+    expect(own).toContain('Own');
+    expect(own).not.toContain('From front matter');
   });
 
   it('exposes the model', () => {
@@ -263,6 +286,6 @@ describe('XY chart rendering', () => {
   });
 
   it('gives the same output for the same input', () => {
-    expect(render(CHART, options).svg).toBe(render(CHART, options).svg);
+    expect(draw(CHART).scene).toEqual(draw(CHART).scene);
   });
 });

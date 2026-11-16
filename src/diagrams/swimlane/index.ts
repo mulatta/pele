@@ -73,7 +73,6 @@ const variant: FlowVariant = {
 // A swimlane diagram is a flowchart whose top-level subgraphs are lanes: same syntax, same model.
 export const swimlane: Diagram<FlowDb> = {
   type: 'swimlane',
-  scene: true,
   math: true,
   parse: flowchart.parse,
   render: (db, config, options, out) => renderFlowchart(db, config, options, out, variant),

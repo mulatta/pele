@@ -6,7 +6,6 @@ import { renderSequence } from './render.js';
 
 export const sequence: Diagram<SeqDb> = {
   type: 'sequence',
-  scene: true,
   math: true,
   parse(source, config, title) {
     const seq = (config.sequence ?? {}) as Config;

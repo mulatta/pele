@@ -1,6 +1,5 @@
 import type { DiagramType } from '../detect.js';
 import { isRecord, type Config } from '../preprocess.js';
-import { esc } from './builder.js';
 import { ink, plainColor } from './ink.js';
 
 // Mermaid's palette theme variables, which set a diagram's own series colors. `first` is the
@@ -92,29 +91,26 @@ function entries(type: DiagramType, vars: Config): { list: unknown[]; repeat: bo
 }
 
 export interface Palette {
-  style: string;
   // Label colors for text on each series, where the contrast of its color is known.
   inks: (string | undefined)[];
 }
 
-const NONE: Palette = { style: '', inks: [] };
+const NONE: Palette = { inks: [] };
 
-// The --pele-series-* declarations for the palette a diagram's theme variables set. An entry
-// that isn't a usable color leaves its series in the theme's color.
+// The label inks for the palette a diagram's theme variables set. An entry that isn't a usable
+// color leaves its series in the theme's color.
 export function palette(type: DiagramType, config: Config): Palette {
   const found = entries(type, record(config.themeVariables));
   if (found === undefined || found.list.length === 0) return NONE;
   const { list, repeat } = found;
-  let style = '';
   const inks: (string | undefined)[] = [];
   for (let i = 0; i < SLOTS; i++) {
     if (!repeat && i >= list.length) break;
     const color = safeColor(list[i % list.length]);
     if (color === undefined) continue;
-    style += `;--pele-series-${i + 1}:${color}`;
     inks[i] = ink(`;fill:${color}`);
   }
-  return style === '' ? NONE : { style: esc(style), inks };
+  return inks.length === 0 ? NONE : { inks };
 }
 
 let current = NONE;
@@ -128,8 +124,6 @@ export function withPalette<T>(next: Palette, run: () => T): T {
     current = outer;
   }
 }
-
-export const paletteStyle = (): string => current.style;
 
 // A fill for a label on the series color, when the palette sets one that needs it.
 export function seriesInkFill(index: number): string {

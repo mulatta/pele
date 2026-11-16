@@ -148,5 +148,6 @@ function draw(out: Out, model: PacketModel, config: Config, options: RenderOptio
   out.section('title');
   out.label(title, totalWidth / 2, totalHeight - pad - title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
-  return { svg: out.done('packet', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
+  out.done(totalWidth, totalHeight);
+  return { width: totalWidth, height: totalHeight, links: [] };
 }

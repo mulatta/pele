@@ -2,7 +2,7 @@ import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../
 import type { Out, Run } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
 import { classNames, resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
@@ -73,48 +73,23 @@ function restyle(label: Label, bits: number, measurer: TextMeasurer): Label {
 // Draws a measured label with its lines starting at x, the first line's box starting at top. The
 // SVG keeps one text whose tspans carry their own positions; a scene gets a text for each line.
 function startText(out: Out, label: Label, x: number, top: number, attrs: string): void {
-  out.both(
-    () => startSvg(label, x, top, attrs),
-    () => {
-      const shared = sharedStyle(label);
-      const paint = textStyle(attrs, shared) + ' text-anchor="start"';
-      for (let i = 0; i < label.lines.length; i++) {
-        const line = label.lines[i];
-        if (hasMath(line)) continue;
-        const runs: Run[] = [];
-        for (const span of line) {
-          if (span.icon === undefined && span.text !== '') runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
-        }
-        if (runs.length > 0) out.spans(x, top + lineMiddle(label, i) + label.size * 0.35, runs, paint);
-      }
-      for (let i = 0; i < label.lines.length; i++) {
-        if (hasMath(label.lines[i])) out.label(labelLine(label, i), x + label.widths[i] / 2, top + lineMiddle(label, i), attrs);
-      }
-    }
-  );
-}
-
-function startSvg(label: Label, x: number, top: number, attrs: string): string {
   const shared = sharedStyle(label);
-  let body = '';
-  let math = '';
+  const paint = textStyle(attrs, shared) + ' text-anchor="start"';
   for (let i = 0; i < label.lines.length; i++) {
     const line = label.lines[i];
-    const middle = top + lineMiddle(label, i);
-    if (hasMath(line)) {
-      math += labelSvg(labelLine(label, i), x + label.widths[i] / 2, middle, attrs);
-      continue;
-    }
-    const y = middle + label.size * 0.35;
-    let first = true;
+    if (hasMath(line)) continue;
+    const runs: Run[] = [];
     for (const span of line) {
-      if (span.icon !== undefined || span.text === '') continue;
-      body += `<tspan${first ? ` x="${num(x)}" y="${num(y)}"` : ''}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
-      first = false;
+      if (span.icon === undefined && span.text !== '') runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
     }
+    if (runs.length > 0) out.spans(x, top + lineMiddle(label, i) + label.size * 0.35, runs, paint);
   }
-  return (body === '' ? '' : `<text${textStyle(attrs, shared)} text-anchor="start" xml:space="preserve">${body}</text>`) + math;
+  for (let i = 0; i < label.lines.length; i++) {
+    if (hasMath(label.lines[i])) out.label(labelLine(label, i), x + label.widths[i] / 2, top + lineMiddle(label, i), attrs);
+  }
+
 }
+
 
 // The containment mark: a circled plus whose rim touches (x, y), where (dx, dy) points at the node.
 function containsMarker(out: Out, x: number, y: number, dx: number, dy: number): void {
@@ -375,7 +350,7 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
         route[k] += ox;
         route[k + 1] += oy;
       }
-      path = routePath(route, undefined, startTrim, 0, undefined, undefined, !out.numbers);
+      path = routePath(route, undefined, startTrim, 0, undefined, undefined, false);
     }
     out.section('edges');
     out.group({ cls: `pele-edge pele-relationship-${edge.contains ? 'contains' : 'arrow'}`, id: edge.id, source: edge.written });
@@ -390,5 +365,6 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
     out.end();
   }
 
-  return { svg: out.done('requirement', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

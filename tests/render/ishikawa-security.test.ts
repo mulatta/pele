@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import type { RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, textOf, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -56,14 +49,13 @@ describe('inert Ishikawa output', () => {
     expect(rendered).toBeGreaterThan(450);
   });
 
-  it('escapes what it shows', () => {
-    const { svg } = render(`${I}  <img src=x onerror=alert(1)>\n    <script>a&b</script>\n      </text></g></svg><script>alert(1)</script>\n        " onload="alert(1)\n`, options);
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('onload="alert');
-    expect(svg).toContain('data-id="&lt;img src=x onerror=alert(1)&gt;"');
-    expect(svg).toContain('data-id="&lt;script&gt;a&amp;b&lt;/script&gt;"');
-    expect(svg).toContain('&quot; onload=&quot;alert(1)');
+  it('shows hostile text as text', () => {
+    const { scene } = draw(`${I}  <img src=x onerror=alert(1)>\n    <script>a&b</script>\n      </text></g></svg><script>alert(1)</script>\n        " onload="alert(1)\n`);
+    expect(textOf(scene)).not.toContain('<script');
+    expect(textOf(scene)).toContain('a&b');
+    expect(textOf(scene)).toContain('" onload="alert(1)');
+    expect(itemById(scene, '<img src=x onerror=alert(1)>')).toBeDefined();
+    expect(itemById(scene, '<script>a&b</script>')).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
@@ -84,7 +76,7 @@ describe('inert Ishikawa output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render(`${I}  __proto__\n    constructor\n      toString\n        hasOwnProperty\n    __proto__\n`, options);
+    draw(`${I}  __proto__\n    constructor\n      toString\n        hasOwnProperty\n    __proto__\n`);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

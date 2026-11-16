@@ -214,5 +214,6 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
     out.label(text, tx, ty, ' class="pele-label"');
   }
 
-  return { svg: out.done('quadrantChart', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

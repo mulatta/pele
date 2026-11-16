@@ -6,7 +6,6 @@ import { renderFlowchart } from './render.js';
 
 export const flowchart: Diagram<FlowDb> = {
   type: 'flowchart',
-  scene: true,
   math: true,
   parse(source, config, title, _lineOffset, limits) {
     const flow = (config.flowchart ?? {}) as Config;

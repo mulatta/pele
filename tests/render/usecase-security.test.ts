@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, textOf, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
   return true;
 }
 
@@ -116,24 +109,20 @@ describe('inert use case output', () => {
     expect(rendered).toBeGreaterThan(600);
   });
 
-  it('escapes what it shows', () => {
-    const { svg } = render(
-      `${U}actor "<img src=x onerror=alert(1)>" <<</text><script>alert(1)</script >>\n'<script>a&b</script>'\njson P@{"<b>": "</text><script>alert(1)</script>"}\nnote for P2 "<svg onload=alert(1)>"\nP2`,
-      options
+  it('shows what it is given as text', () => {
+    const { scene } = draw(
+      `${U}actor "<img src=x onerror=alert(1)>" <<</text><script>alert(1)</script >>\n'<script>a&b</script>'\njson P@{"<b>": "</text><script>alert(1)</script>"}\nnote for P2 "<svg onload=alert(1)>"\nP2`
     );
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<svg onload');
-    expect(svg).toContain('&lt;script&gt;a&amp;b&lt;/script&gt;');
-    expect(svg).toContain('data-id="_img_src_x_onerror_alert_1__"');
-    expect(svg).toContain('>&lt;b&gt;</text>');
-    expect(svg).toContain('«&lt;/text&gt;&lt;script&gt;alert(1)&lt;/script»');
+    const shown = lines(scene);
+    expect(shown).toContain('<script>a&b</script>');
+    expect(shown).toContain('<b>');
+    expect(shown).toContain('«</text><script>alert(1)</script»');
+    expect(itemById(scene, '_img_src_x_onerror_alert_1__')).toBeDefined();
   });
 
   it('never runs or emits the icon name as markup', () => {
-    const { svg } = render(`${U}actor A@{ icon: '"><script>alert(1)</script>' }`, options);
-    expect(svg).toContain('data-icon="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
-    expect(svg).not.toContain('<script');
+    const { scene } = draw(`${U}actor A@{ icon: '"><script>alert(1)</script>' }`);
+    expect(textOf(scene)).not.toContain('<script');
   });
 
   it('holds for hostile option values', () => {
@@ -154,17 +143,16 @@ describe('inert use case output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render(`${U}actor __proto__\n__proto__ constructor@--> toString\nconstructor@{ animate: true }\nnote for toString "__proto__"`, options);
-    render(`${U}A\nclassDef __proto__ fill:red\nclass A __proto__\nstyle A fill:red\nA@{ business: true }`, options);
-    render(`${U}systemBoundary __proto__[constructor]\n  hasOwnProperty\n  actor valueOf\nend\n__proto__@{ type: package }`, options);
-    render(`${U}json __proto__@{"__proto__": {"polluted": true}, "constructor": {"prototype": {"polluted": true}}}\nA --> __proto__`, options);
+    draw(`${U}actor __proto__\n__proto__ constructor@--> toString\nconstructor@{ animate: true }\nnote for toString "__proto__"`);
+    draw(`${U}A\nclassDef __proto__ fill:red\nclass A __proto__\nstyle A fill:red\nA@{ business: true }`);
+    draw(`${U}systemBoundary __proto__[constructor]\n  hasOwnProperty\n  actor valueOf\nend\n__proto__@{ type: package }`);
+    draw(`${U}json __proto__@{"__proto__": {"polluted": true}, "constructor": {"prototype": {"polluted": true}}}\nA --> __proto__`);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });
 
   it('shows a JSON key named __proto__ like any other', () => {
-    const { svg } = render(`${U}json P@{"__proto__": {"x": 1}, "constructor": 2}`, options);
-    expect(svg).toContain('>__proto__.x</text>');
-    expect(svg).toContain('>constructor</text>');
+    const { scene } = draw(`${U}json P@{"__proto__": {"x": 1}, "constructor": 2}`);
+    expect(lines(scene)).toEqual(expect.arrayContaining(['__proto__.x', 'constructor']));
   });
 });

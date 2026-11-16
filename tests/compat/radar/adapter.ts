@@ -1,6 +1,6 @@
 import { buildRadar, type RadarModel } from '../../../src/diagrams/radar/model.js';
 import { parseRadar, type RadarAst } from '../../../src/diagrams/radar/parser.js';
-import { PeleError, parse as peleParse, render } from '../../../src/index.js';
+import { PeleError, parse as peleParse, renderScene } from '../../../src/index.js';
 import { metricsMeasurer } from '../../../src/text/measurer.js';
 import { toResult } from '../../support/langium.js';
 
@@ -53,7 +53,7 @@ export const Diagram = {
     return {
       renderer: {
         async draw(): Promise<void> {
-          render(src, { measurer: metricsMeasurer });
+          renderScene(src, { measurer: metricsMeasurer });
         },
       },
     };

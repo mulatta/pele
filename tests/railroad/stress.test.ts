@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
+import { PeleError, parse, renderScene } from '../../src/index.js';
 import { tokenize } from '../../src/diagrams/common/tokens.js';
 import { ABNF_TOKENS } from '../../src/diagrams/railroad/abnf.js';
 import { EBNF_TOKENS } from '../../src/diagrams/railroad/ebnf.js';
@@ -44,34 +44,34 @@ const CASES: [string, () => unknown][] = [
   ['semicolon comments', () => lex(ABNF_TOKENS, ABNF + '; a comment\n'.repeat(N / 12))],
   ['hash comments', () => lex(PEG_TOKENS, PEG + '# a comment\n'.repeat(N / 12))],
   ['keywords glued into one name', () => lex(IR_TOKENS, IR + 'terminal'.repeat(N / 8))],
-  ['one 50,000 character name', () => render(EBNF + 'a'.repeat(N) + ' = ' + 'b'.repeat(N) + ' ;', big)],
-  ['one 50,000 character terminal', () => render(EBNF + 'r = "' + 'word '.repeat(N / 5) + '" ;', big)],
-  ['terminal of entity codes and markup', () => render(EBNF + 'r = "' + '#35;&amp;<br>*_'.repeat(N / 15) + '" ;', big)],
-  ['terminal of escapes', () => render(PEG + 'R <- "' + '\\n\\t\\\\'.repeat(N / 6) + '" ;', big)],
-  ['25,000 nested groups', () => render(EBNF + 'r = ' + '('.repeat(N / 2) + 'a' + ')'.repeat(N / 2) + ' ;', big)],
-  ['12,000 nested optionals', () => render(EBNF + 'r = ' + '['.repeat(12000) + 'a' + ']'.repeat(12000) + ' ;', big)],
-  ['12,000 nested repetitions', () => render(EBNF + 'r = ' + '{'.repeat(12000) + 'a' + '}'.repeat(12000) + ' ;', big)],
-  ['50,000 postfix operators', () => render(EBNF + 'r = a' + '*+?'.repeat(N / 3) + ' ;', big)],
-  ['chain of 12,000 exceptions', () => render(EBNF + 'r = a' + ' - b'.repeat(12000) + ' ;', big)],
-  ['exceptions nested 8,000 deep', () => render(EBNF + 'r = a' + ' - ( b'.repeat(8000) + ' )'.repeat(8000) + ' ;', big)],
+  ['one 50,000 character name', () => renderScene(EBNF + 'a'.repeat(N) + ' = ' + 'b'.repeat(N) + ' ;', big)],
+  ['one 50,000 character terminal', () => renderScene(EBNF + 'r = "' + 'word '.repeat(N / 5) + '" ;', big)],
+  ['terminal of entity codes and markup', () => renderScene(EBNF + 'r = "' + '#35;&amp;<br>*_'.repeat(N / 15) + '" ;', big)],
+  ['terminal of escapes', () => renderScene(PEG + 'R <- "' + '\\n\\t\\\\'.repeat(N / 6) + '" ;', big)],
+  ['25,000 nested groups', () => renderScene(EBNF + 'r = ' + '('.repeat(N / 2) + 'a' + ')'.repeat(N / 2) + ' ;', big)],
+  ['12,000 nested optionals', () => renderScene(EBNF + 'r = ' + '['.repeat(12000) + 'a' + ']'.repeat(12000) + ' ;', big)],
+  ['12,000 nested repetitions', () => renderScene(EBNF + 'r = ' + '{'.repeat(12000) + 'a' + '}'.repeat(12000) + ' ;', big)],
+  ['50,000 postfix operators', () => renderScene(EBNF + 'r = a' + '*+?'.repeat(N / 3) + ' ;', big)],
+  ['chain of 12,000 exceptions', () => renderScene(EBNF + 'r = a' + ' - b'.repeat(12000) + ' ;', big)],
+  ['exceptions nested 8,000 deep', () => renderScene(EBNF + 'r = a' + ' - ( b'.repeat(8000) + ' )'.repeat(8000) + ' ;', big)],
   ['unclosed brackets', () => parse(EBNF + 'r = ' + '([{'.repeat(N / 3), big)],
-  ['choice of 12,000 alternatives', () => render(EBNF + 'r = ' + repeat(12000, (i) => `a${i} | `) + 'z ;', big)],
-  ['sequence of 12,000 elements', () => render(EBNF + 'r = ' + 'a '.repeat(12000) + ';', big)],
-  ['choices nested 5,000 deep', () => render(EBNF + 'r = ' + '( a | '.repeat(5000) + 'b' + ' )'.repeat(5000) + ' ;', big)],
-  ['5,000 rules', () => render(EBNF + repeat(5000, (i) => `r${i} = a ;\n`), big)],
-  ['one rule name defined 5,000 times', () => render(EBNF + 'r = a | b ;\n'.repeat(5000), big)],
-  ['constructor calls nested 5,000 deep', () => render(IR + 'r = ' + 'optional(oneOrMore('.repeat(2500) + 'terminal("a")' + '))'.repeat(2500) + ' ;', big)],
-  ['sequence constructors nested 6,000 deep', () => render(IR + 'r = ' + 'sequence('.repeat(6000) + 'terminal("a")' + ')'.repeat(6000) + ' ;', big)],
-  ['choice call with 6,000 arguments', () => render(IR + 'r = choice(' + 'terminal("a"),'.repeat(6000) + 'special("b")) ;', big)],
+  ['choice of 12,000 alternatives', () => renderScene(EBNF + 'r = ' + repeat(12000, (i) => `a${i} | `) + 'z ;', big)],
+  ['sequence of 12,000 elements', () => renderScene(EBNF + 'r = ' + 'a '.repeat(12000) + ';', big)],
+  ['choices nested 5,000 deep', () => renderScene(EBNF + 'r = ' + '( a | '.repeat(5000) + 'b' + ' )'.repeat(5000) + ' ;', big)],
+  ['5,000 rules', () => renderScene(EBNF + repeat(5000, (i) => `r${i} = a ;\n`), big)],
+  ['one rule name defined 5,000 times', () => renderScene(EBNF + 'r = a | b ;\n'.repeat(5000), big)],
+  ['constructor calls nested 5,000 deep', () => renderScene(IR + 'r = ' + 'optional(oneOrMore('.repeat(2500) + 'terminal("a")' + '))'.repeat(2500) + ' ;', big)],
+  ['sequence constructors nested 6,000 deep', () => renderScene(IR + 'r = ' + 'sequence('.repeat(6000) + 'terminal("a")' + ')'.repeat(6000) + ' ;', big)],
+  ['choice call with 6,000 arguments', () => renderScene(IR + 'r = choice(' + 'terminal("a"),'.repeat(6000) + 'special("b")) ;', big)],
   ['unclosed constructor calls', () => parse(IR + 'r = ' + 'choice('.repeat(N / 7), big)],
-  ['ABNF groups nested 10,000 deep with repeats', () => render(ABNF + 'r = ' + '2*3( '.repeat(10000) + 'a' + ' )'.repeat(10000) + ' ;', big)],
-  ['ABNF optional groups nested 12,000 deep', () => render(ABNF + 'r = ' + '['.repeat(12000) + 'a' + ']'.repeat(12000) + ' ;', big)],
-  ['ABNF repeat of 400 digits', () => render(ABNF + 'r = ' + '9'.repeat(400) + '*' + '9'.repeat(400) + 'a ' + '9'.repeat(400) + 'b ;', big)],
-  ['ABNF alternation of 12,000', () => render(ABNF + 'r = ' + 'a / '.repeat(12000) + 'b ;', big)],
-  ['PEG predicates nested 10,000 deep', () => render(PEG + 'R <- ' + '!( &( '.repeat(5000) + 'a' + ' ) )'.repeat(5000) + ' ;', big)],
-  ['PEG groups with suffixes nested 10,000 deep', () => render(PEG + 'R <- ' + '( '.repeat(10000) + 'a' + ' )*'.repeat(10000) + ' ;', big)],
+  ['ABNF groups nested 10,000 deep with repeats', () => renderScene(ABNF + 'r = ' + '2*3( '.repeat(10000) + 'a' + ' )'.repeat(10000) + ' ;', big)],
+  ['ABNF optional groups nested 12,000 deep', () => renderScene(ABNF + 'r = ' + '['.repeat(12000) + 'a' + ']'.repeat(12000) + ' ;', big)],
+  ['ABNF repeat of 400 digits', () => renderScene(ABNF + 'r = ' + '9'.repeat(400) + '*' + '9'.repeat(400) + 'a ' + '9'.repeat(400) + 'b ;', big)],
+  ['ABNF alternation of 12,000', () => renderScene(ABNF + 'r = ' + 'a / '.repeat(12000) + 'b ;', big)],
+  ['PEG predicates nested 10,000 deep', () => renderScene(PEG + 'R <- ' + '!( &( '.repeat(5000) + 'a' + ' ) )'.repeat(5000) + ' ;', big)],
+  ['PEG groups with suffixes nested 10,000 deep', () => renderScene(PEG + 'R <- ' + '( '.repeat(10000) + 'a' + ' )*'.repeat(10000) + ' ;', big)],
   ['PEG run of operators', () => parse(PEG + 'R <- ' + '!&'.repeat(N / 2) + 'a ;', big)],
-  ['PEG sequence of 12,000 predicates', () => render(PEG + 'R <- ' + '!a &"b" '.repeat(6000) + ';', big)],
+  ['PEG sequence of 12,000 predicates', () => renderScene(PEG + 'R <- ' + '!a &"b" '.repeat(6000) + ';', big)],
 ];
 
 describe('railroad worst cases', () => {
@@ -88,6 +88,6 @@ describe('railroad worst cases', () => {
   }
 
   it('refuses source over the default limit', () => {
-    expect(() => render(EBNF + 'r = a | b ;\n'.repeat(5000))).toThrow(/limit of 50000/);
+    expect(() => renderScene(EBNF + 'r = a | b ;\n'.repeat(5000))).toThrow(/limit of 50000/);
   });
 });

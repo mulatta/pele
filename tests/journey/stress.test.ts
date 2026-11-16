@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
+import { PeleError, renderScene } from '../../src/index.js';
 import { tokenize } from '../../src/diagrams/journey/lexer.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
 const N = 50000;
 const big = { measurer: metricsMeasurer, limit: Infinity };
-const draw = (body: string) => (): unknown => render('journey\n' + body, big);
+const draw = (body: string) => (): unknown => renderScene('journey\n' + body, big);
 const repeat = (count: number, line: (i: number) => string): string => Array.from({ length: count }, (_, i) => line(i)).join('');
 
 const CASES: [string, () => unknown][] = [

@@ -1,11 +1,11 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, num, textStyle, type IconResolver } from '../../svg/builder.js';
+import { num, textStyle, type IconResolver } from '../../svg/builder.js';
 import { CRITICAL, ROUNDED, classNames } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, withHeights, type Label, type Span } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
-import { linkUrl, relAttr, safeUrl } from '../../util/url.js';
+import { linkUrl, safeUrl } from '../../util/url.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { titleRoom } from '../common/fit-width.js';
 import { iconMarkup } from '../../text/icons.js';
@@ -263,7 +263,7 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
         if (href === undefined) {
           textBlock(out, card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_m)"', icons);
         } else {
-          out.link(` href="${esc(href)}" target="_blank"${relAttr(options)}`);
+          out.link();
           textBlock(out, card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_c)"', icons);
           out.end();
           links.push({ id: item.id, href, internal: false });
@@ -278,8 +278,8 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
     out.end();
   }
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('kanban', totalWidth, totalHeight, size, options, {}),
     width: totalWidth,
     height: totalHeight,
     links,

@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { parse, type RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, paints, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -127,21 +120,21 @@ describe('inert sequence output', () => {
   }, 600_000);
 
   it('never emits a link for participant menus', () => {
-    const { svg } = render('sequenceDiagram\n  participant A\n  link A: x @ javascript:alert(1)\n  links A: {"y": "javascript:alert(1)"}\n  A->>B: hi', options);
-    expect(svg).not.toContain('javascript');
-    expect(svg).not.toContain('<a');
+    const { scene, links } = draw('sequenceDiagram\n  participant A\n  link A: x @ javascript:alert(1)\n  links A: {"y": "javascript:alert(1)"}\n  A->>B: hi');
+    expect(links).toEqual([]);
+    expect(JSON.stringify(scene)).not.toContain('javascript');
   });
 
   it('passes colors through the style filter', () => {
-    const { svg } = render('sequenceDiagram\n  rect url(javascript:alert(1))\n  A->>B: hi\n  end\n  rect red\n  B->>A: yo\n  end', options);
-    expect(svg).not.toContain('url(');
-    expect(svg).toContain('style="rx:var(--_r);fill:red;"');
+    const { scene } = draw('sequenceDiagram\n  rect url(javascript:alert(1))\n  A->>B: hi\n  end\n  rect red\n  B->>A: yo\n  end');
+    expect(paints(scene).some((p) => p.includes('url('))).toBe(false);
+    expect(paints(scene)).toContain('red');
   });
 
   it('does not pollute prototypes', () => {
-    render('sequenceDiagram\n  participant __proto__\n  participant constructor\n  __proto__->>constructor: toString\n  Note over __proto__,constructor: hasOwnProperty', options);
-    render('sequenceDiagram\n  participant A@{ "__proto__": "polluted", "constructor": 1, "type": "__proto__", "alias": "constructor" }\n  A->>A: x', options);
-    render('sequenceDiagram\n  participant A\n  links A: {"__proto__": {"polluted": true}}\n  properties A: {"__proto__": {"polluted": true}, "constructor": {"prototype": {"polluted": true}}}', options);
+    draw('sequenceDiagram\n  participant __proto__\n  participant constructor\n  __proto__->>constructor: toString\n  Note over __proto__,constructor: hasOwnProperty');
+    draw('sequenceDiagram\n  participant A@{ "__proto__": "polluted", "constructor": 1, "type": "__proto__", "alias": "constructor" }\n  A->>A: x');
+    draw('sequenceDiagram\n  participant A\n  links A: {"__proto__": {"polluted": true}}\n  properties A: {"__proto__": {"polluted": true}, "constructor": {"prototype": {"polluted": true}}}');
     const model = parse('sequenceDiagram\n  participant A\n  links A: {"__proto__": "x", "toString": "y"}');
     if (model.type !== 'sequence') throw new Error('not a sequence diagram');
     expect([...model.actors.get('A')!.links.keys()]).toEqual(['__proto__', 'toString']);

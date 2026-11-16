@@ -1,13 +1,5 @@
 import { RE_INVALID_XML, esc } from './builder.js';
 
-// Private aliases set once on the root element, so each use is short and the public
-// --pele-* tokens keep their fallbacks. The text color is set as well: an icon is drawn in
-// currentColor, which would otherwise be whatever color the page gives the diagram's container.
-export const ROOT_STYLE =
-  '--_bg:var(--pele-bg,#fff);--_fg:var(--pele-fg,#1f1f1f);--_m:var(--pele-muted,#6e6e6e);' +
-  '--_l:var(--pele-line,#1f1f1f);--_s:var(--pele-surface,#f3f3f3);--_a:var(--pele-surface-alt,#e6e6e6);' +
-  '--_b:var(--pele-border,#8a8a8a);--_c:var(--pele-accent,#5b7bd5);color:var(--_fg)';
-
 export const FONT_MONO = 'var(--_fm)';
 export const RADIUS = 'var(--pele-radius,4px)';
 
@@ -27,24 +19,6 @@ export function rounded(attrs: string): string {
 // The color of what a diagram marks as critical. It is not one of the series colors, as a theme
 // may put those in any order.
 export const CRITICAL = 'var(--pele-critical,#e45756)';
-
-// A list of font names, quoted or not, and nothing that could end the declaration it is put in.
-const FAMILY = String.raw`(?:"[^"'\\\n<>{}();:@]*"|'[^"'\\\n<>{}();:@]*'|[\p{L}\p{N}_-][\p{L}\p{N}_ .-]*)`;
-const RE_FAMILIES = new RegExp(String.raw`^\s*${FAMILY}(?:\s*,\s*${FAMILY})*\s*$`, 'u');
-
-function families(list: string | undefined, generic: string): string {
-  return list && RE_FAMILIES.test(list) ? list : generic;
-}
-
-// The fonts the labels were measured in are the ones they are drawn in, unless the page names
-// others. The rest of what text inherits is pinned, as none of it was measured.
-export function fontStyle(size: number, family: string | undefined, mono: string | undefined): string {
-  return (
-    `;--_fm:var(--pele-font-mono,${families(mono, 'monospace')});font:${size}px sans-serif;` +
-    'letter-spacing:normal;word-spacing:normal;text-transform:none;direction:ltr;' +
-    `font-family:var(--pele-font,${families(family, 'sans-serif')})`
-  );
-}
 
 const SHAPE_PROPS = new Set([
   'fill',

@@ -315,8 +315,8 @@ function draw(out: Out, model: MindmapModel, config: Config, options: RenderOpti
     }
   }
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('mindmap', totalWidth, totalHeight, size, options, {}),
     width: totalWidth,
     height: totalHeight,
     links: [],

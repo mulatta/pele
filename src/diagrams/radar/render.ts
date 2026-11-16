@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out, Pen } from '../../draw/out.js';
-import { escText, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -65,11 +65,6 @@ function flat(points: Point[]): number[] {
   return out;
 }
 
-function polygonText(points: Point[]): string {
-  let out = '';
-  for (const p of points) out += (out ? ' ' : '') + num(p.x) + ',' + num(p.y);
-  return out;
-}
 
 export function renderRadar(model: RadarModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const natural = option(config, 'width', 320, 1, 4000);
@@ -78,7 +73,6 @@ export function renderRadar(model: RadarModel, config: Config, options: RenderOp
 
 // `tight` is set when the chart does not fit the width it has with its legend beside it.
 function draw(out: Out, model: RadarModel, config: Config, options: RenderOptions, width: number, height: number, tight: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -178,20 +172,12 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
     for (const { index, points } of shapes) {
       const curve = curves[index];
       const color = seriesColor(index);
-      const attrs = ` class="pele-curve" data-id="${escText(curve.name)}"${srcAttrs(curve.source)} fill="${color}" stroke="${color}"`;
       // The SVG puts the fill before the geometry, which the typed shapes do not.
       const item = { cls: 'pele-curve', id: curve.name, source: curve.source };
       const paint = ` fill="${color}" stroke="${color}"`;
-      out.both(
-        () =>
-          graticule === 'circle'
-            ? `<path${attrs} d="${closedRoundCurve(points, tension)}"/>`
-            : `<polygon${attrs} points="${polygonText(points)}"/>`,
-        () => {
-          if (graticule === 'circle') out.path(roundCurvePen(out.pen(), points, tension), paint, undefined, item);
-          else out.polygon(flat(points), paint, item);
-        }
-      );
+      if (graticule === 'circle') out.path(roundCurvePen(out.pen(), points, tension), paint, undefined, item);
+      else out.polygon(flat(points), paint, item);
+
     }
     out.end();
   }
@@ -218,5 +204,6 @@ function draw(out: Out, model: RadarModel, config: Config, options: RenderOption
   }
   out.end();
 
-  return { svg: out.done('radar', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
+  out.done(totalWidth, totalHeight);
+  return { width: totalWidth, height: totalHeight, links: [] };
 }

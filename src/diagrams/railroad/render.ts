@@ -232,10 +232,7 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
   const pad = options.padding ?? 8;
   const { arc } = m;
 
-  const A = num(arc);
-  // The SVG writes a turn's signs apart from the radius, so a zero radius reads `-0`.
-  const turn = (pen: Pen, sweep: 0 | 1, dx: number, dy: number): Pen =>
-    pen.both(`a${A},${A} 0 0 ${sweep} ${dx < 0 ? '-' : ''}${A},${dy < 0 ? '-' : ''}${A}`, (p) => p.a(arc, arc, 0, 0, sweep, dx * arc, dy * arc));
+  const turn = (pen: Pen, sweep: 0 | 1, dx: number, dy: number): Pen => pen.a(arc, arc, 0, 0, sweep, dx * arc, dy * arc);
   const eastToSouth = (pen: Pen): Pen => turn(pen, 1, 1, 1);
   const southToEast = (pen: Pen): Pen => turn(pen, 0, 1, 1);
   const eastToNorth = (pen: Pen): Pen => turn(pen, 0, 1, -1);
@@ -442,8 +439,8 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
   out.section('main');
   out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('railroad', totalWidth, totalHeight, base, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],

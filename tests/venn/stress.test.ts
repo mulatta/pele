@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
+import { PeleError, parse, renderScene } from '../../src/index.js';
+import { sceneProblem } from '../support/scene.js';
 import { T, VennLexer } from '../../src/diagrams/venn/lexer.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
@@ -35,34 +36,34 @@ const CASES: [string, () => unknown][] = [
   ['indented text lines after a set', () => lex(V + '  text a\n'.repeat(N / 9), true)],
   ['title lines', () => lex(V + 'title a b c\n'.repeat(N / 12))],
   ['the word title with nothing after it', () => lex(V + 'title\n'.repeat(N / 6))],
-  ['one title of 50,000 characters', () => render(V + 'title ' + 'word '.repeat(N / 5) + '\nset A', big)],
+  ['one title of 50,000 characters', () => renderScene(V + 'title ' + 'word '.repeat(N / 5) + '\nset A', big)],
   ['keywords run together', () => lex(V + 'setunionstyletextvenn-beta'.repeat(N / 26))],
   ['hex colors of every length', () => lex(V + 'style A fill:' + '#123456789abcdef '.repeat(N / 17))],
   ['numbers and signs', () => lex(V + 'set A:' + '+1.5-.5 '.repeat(N / 8))],
-  ['2,000 sets', () => render(V + repeat(2000, (i) => `set s${i}\n`), big)],
-  ['5,000 sets', () => render(V + repeat(5000, (i) => `set s${i}\n`), big)],
-  ['300 sets in a chain of unions', () => render(V + repeat(300, (i) => `set s${i}\n`) + repeat(299, (i) => `union s${i},s${i + 1}\n`), big)],
+  ['2,000 sets', () => renderScene(V + repeat(2000, (i) => `set s${i}\n`), big)],
+  ['5,000 sets', () => renderScene(V + repeat(5000, (i) => `set s${i}\n`), big)],
+  ['300 sets in a chain of unions', () => renderScene(V + repeat(300, (i) => `set s${i}\n`) + repeat(299, (i) => `union s${i},s${i + 1}\n`), big)],
   ['60 sets, every pair a union', () => {
     let s = V + repeat(60, (i) => `set s${i}\n`);
     for (let i = 0; i < 60; i++) for (let j = i + 1; j < 60; j++) s += `union s${i},s${j}\n`;
-    return render(s, big);
+    return renderScene(s, big);
   }],
-  ['one union of 300 sets', () => render(V + repeat(300, (i) => `set s${i}\n`) + 'union ' + repeat(299, (i) => `s${i},`) + 's299["all"]\n', big)],
-  ['40 unions of 60 sets each', () => render(V + repeat(60, (i) => `set s${i}\n`) + repeat(40, () => 'union ' + repeat(59, (i) => `s${i},`) + 's59\n'), big)],
-  ['one set stated 8,000 times', () => render(V + 'set A["x"]:5\n'.repeat(8000), big)],
-  ['one union stated 5,000 times', () => render(V + 'set A\nset B\n' + 'union A,B["x"]:1\n'.repeat(5000), big)],
-  ['8,000 texts in one set', () => render(V + 'set A\n' + '  text t\n'.repeat(8000), big)],
-  ['5,000 texts in the overlap of three sets', () => render(V + 'set A\nset B\nset C\nunion A,B,C\n' + '  text "t t"["l"]\n'.repeat(5000), big)],
-  ['5,000 styles for one set', () => render(V + 'set A\n' + 'style A fill:red, color:blue\n'.repeat(5000), big)],
-  ['one style of 8,000 declarations', () => render(V + 'set A\nstyle A ' + repeat(8000, (i) => `p${i}:1,`) + 'fill:red\n', big)],
-  ['one style value of 20,000 words', () => render(V + 'set A\nstyle A fill:' + 'a '.repeat(20000) + '\n', big)],
-  ['5,000 styled overlaps', () => render(V + 'set A\nset B\nset C\nunion A,B,C["x"]\n' + 'style A,B,C fill:gold\n'.repeat(5000), big)],
-  ['one 50,000 character label', () => render(V + 'set A["' + 'word '.repeat(N / 5) + '"]', big)],
-  ['one 50,000 character word', () => render(V + 'set A[' + 'a'.repeat(N) + ']', big)],
-  ['a label of entities and markup', () => render(V + 'set A["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
-  ['sizes that make no sense', () => render(V + NONSENSE, big)],
-  ['a size of 50,000 digits', () => render(V + 'set A:' + '9'.repeat(N) + '\nset B\nunion A,B:' + '9'.repeat(400), big)],
-  ['a union of one set with itself, many times', () => render(V + 'set A\n' + 'union A,A,A,A["x"]\n'.repeat(3000), big)],
+  ['one union of 300 sets', () => renderScene(V + repeat(300, (i) => `set s${i}\n`) + 'union ' + repeat(299, (i) => `s${i},`) + 's299["all"]\n', big)],
+  ['40 unions of 60 sets each', () => renderScene(V + repeat(60, (i) => `set s${i}\n`) + repeat(40, () => 'union ' + repeat(59, (i) => `s${i},`) + 's59\n'), big)],
+  ['one set stated 8,000 times', () => renderScene(V + 'set A["x"]:5\n'.repeat(8000), big)],
+  ['one union stated 5,000 times', () => renderScene(V + 'set A\nset B\n' + 'union A,B["x"]:1\n'.repeat(5000), big)],
+  ['8,000 texts in one set', () => renderScene(V + 'set A\n' + '  text t\n'.repeat(8000), big)],
+  ['5,000 texts in the overlap of three sets', () => renderScene(V + 'set A\nset B\nset C\nunion A,B,C\n' + '  text "t t"["l"]\n'.repeat(5000), big)],
+  ['5,000 styles for one set', () => renderScene(V + 'set A\n' + 'style A fill:red, color:blue\n'.repeat(5000), big)],
+  ['one style of 8,000 declarations', () => renderScene(V + 'set A\nstyle A ' + repeat(8000, (i) => `p${i}:1,`) + 'fill:red\n', big)],
+  ['one style value of 20,000 words', () => renderScene(V + 'set A\nstyle A fill:' + 'a '.repeat(20000) + '\n', big)],
+  ['5,000 styled overlaps', () => renderScene(V + 'set A\nset B\nset C\nunion A,B,C["x"]\n' + 'style A,B,C fill:gold\n'.repeat(5000), big)],
+  ['one 50,000 character label', () => renderScene(V + 'set A["' + 'word '.repeat(N / 5) + '"]', big)],
+  ['one 50,000 character word', () => renderScene(V + 'set A[' + 'a'.repeat(N) + ']', big)],
+  ['a label of entities and markup', () => renderScene(V + 'set A["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
+  ['sizes that make no sense', () => renderScene(V + NONSENSE, big)],
+  ['a size of 50,000 digits', () => renderScene(V + 'set A:' + '9'.repeat(N) + '\nset B\nunion A,B:' + '9'.repeat(400), big)],
+  ['a union of one set with itself, many times', () => renderScene(V + 'set A\n' + 'union A,A,A,A["x"]\n'.repeat(3000), big)],
 ];
 
 describe('venn worst cases', () => {
@@ -79,13 +80,14 @@ describe('venn worst cases', () => {
   }
 
   it('keeps every number finite, whatever the sizes', () => {
-    const { svg, width, height } = render(V + NONSENSE, big);
-    expect(svg).not.toMatch(/NaN|Infinity/);
+    const result = renderScene(V + NONSENSE, big);
+    const { width, height } = result;
+    expect(sceneProblem(result)).toBeUndefined();
     expect(Number.isFinite(width) && Number.isFinite(height)).toBe(true);
   });
 
   it('refuses source over the default limit', () => {
-    expect(() => render(V + 'set A\n'.repeat(9000))).toThrow(/limit of 50000/);
+    expect(() => renderScene(V + 'set A\n'.repeat(9000))).toThrow(/limit of 50000/);
     expect(() => parse(V + 'set A\n'.repeat(9000))).toThrow(/limit of 50000/);
   });
 });

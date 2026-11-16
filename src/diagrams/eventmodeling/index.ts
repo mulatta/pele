@@ -5,7 +5,6 @@ import { renderEventModel } from './render.js';
 
 export const eventmodeling: Diagram<EventModelingModel> = {
   type: 'eventmodeling',
-  scene: true,
   keepComments: true,
   parse: (source, _config, title) => buildEventModel(parseEventModel(source), title),
   render: renderEventModel,

@@ -1,19 +1,15 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parse, render, renderScene, sceneSupported } from '../../src/index.js';
+import { parse, renderScene, sceneSupported } from '../../src/index.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
-import { sceneDifference, sceneSignature, signatureDifference, svgToScene } from '../support/svg-scene.js';
+import { sceneSignature, signatureDifference } from '../support/svg-scene.js';
 
 const options = { measurer: metricsMeasurer, now: Date.UTC(2026, 0, 15, 12) };
 
 const corpora = readdirSync('tests/corpus')
   .filter((file) => file.endsWith('.json'))
   .sort()
-  .map((file) => ({ file, sources: JSON.parse(readFileSync(`tests/corpus/${file}`, 'utf8')) as string[] }));
-
-// The scenes renderScene() drew before the renderers wrote both outputs through one drawing
-// interface, for the types it drew then.
-const baseline = JSON.parse(readFileSync('tests/scene/baseline.json', 'utf8')) as Record<string, unknown>;
+  .map((file) => ({ file, sources: (JSON.parse(readFileSync(`tests/corpus/${file}`, 'utf8')) as unknown[]).filter((s) => typeof s === 'string') }));
 
 const icons = (name: string) => `<path d="M4 4h16v16H4z" stroke="var(--_m)"/><circle cx="12" cy="12" r="${(name.length % 5) + 1}" fill="currentColor"/>`;
 
@@ -22,6 +18,19 @@ const math = (tex: string, size: number) =>
   tex.length % 2
     ? { svg: '<svg viewBox="0 0 20 10"><path d="M0 5h20" stroke="currentColor"/><rect x="2" y="1" width="3" height="8" fill="currentColor"/></svg>', width: size * 2, height: size }
     : { html: '<b>x</b>', width: size, height: size };
+
+// What the corpus leaves out: options it is not drawn with, and sources it lacks.
+const EXTRA: { src: string; extra: object }[] = [
+  { src: 'erDiagram\n CUSTOMER {\n string name PK "note"\n }', extra: { monospace: ['attributes'] } },
+  { src: 'sankey-beta\nA#amp;B,C,1', extra: {} },
+  { src: 'sankey-beta\nA,B,3', extra: {} },
+  { src: 'sankey-beta\nA,B,3\nA,C,2\nB,D,1', extra: { idPrefix: 'p' } },
+  { src: 'flowchart LR\n A["$$x^2$$ and $$yy$$"] --> B["plain"]\n subgraph S["$$abc$$ title"]\n B\n end', extra: { math } },
+  { src: 'sequenceDiagram\n A->>B: $$x^2$$ hi', extra: { math } },
+  { src: 'journey\n title T\n section S\n  $$abc$$ task: 5: Me', extra: { math } },
+  { src: 'railroad-ebnf-beta\nletter = "a" | "b" ;', extra: {} },
+  { src: 'flowchart TD\n A[Test]\n style A rx:20,ry:2', extra: {} },
+];
 
 // What a call gave, or the message it threw.
 const attempt = <T>(f: () => T): { value: T } | { error: string } => {
@@ -32,40 +41,42 @@ const attempt = <T>(f: () => T): { value: T } | { error: string } => {
   }
 };
 
-describe('scene output', () => {
-  it.each(corpora)('draws what the SVG shows for $file', ({ file, sources }) => {
-    for (const src of sources) {
-      if (!sceneSupported(src)) continue;
-      // Narrow, a diagram is drawn more than once to fit; icons are drawn from what a host gives.
-      for (const extra of [{}, { maxWidth: 300 }, { icons }]) {
-        const at = `${file} ${JSON.stringify(extra)}: ${JSON.stringify(src).slice(0, 120)}`;
-        const svg = attempt(() => render(src, { ...options, ...extra, sourceInfo: true }).svg);
-        const scene = attempt(() => renderScene(src, { ...options, ...extra }).scene);
-        // A source the SVG rejects, the scene rejects too; one it draws, the scene draws.
-        if ('error' in svg) {
-          expect('error' in scene, at).toBe(true);
-          continue;
-        }
-        if ('error' in scene) expect.fail(`${at}: ${scene.error}`);
-        expect(sceneDifference(scene.value, svgToScene(svg.value)), at).toBeNull();
-      }
-    }
-  });
+const signature = (src: string, extra: object): unknown => {
+  const result = attempt(() => renderScene(src, { ...options, ...extra }).scene);
+  return 'error' in result ? { error: result.error } : sceneSignature(result.value);
+};
 
-  // What the corpus leaves out: options it is not drawn with, and sources it lacks.
-  it.each([
-    { src: 'erDiagram\n CUSTOMER {\n string name PK "note"\n }', extra: { monospace: ['attributes'] } },
-    { src: 'sankey-beta\nA#amp;B,C,1', extra: {} },
-    { src: 'sankey-beta\nA,B,3', extra: {} },
-    { src: 'sankey-beta\nA,B,3\nA,C,2\nB,D,1', extra: { idPrefix: 'p' } },
-    { src: 'flowchart LR\n A["$$x^2$$ and $$yy$$"] --> B["plain"]\n subgraph S["$$abc$$ title"]\n B\n end', extra: { math } },
-    { src: 'sequenceDiagram\n A->>B: $$x^2$$ hi', extra: { math } },
-    { src: 'journey\n title T\n section S\n  $$abc$$ task: 5: Me', extra: { math } },
-    { src: 'railroad-ebnf-beta\nletter = "a" | "b" ;', extra: {} },
-    { src: 'flowchart TD\n A[Test]\n style A rx:20,ry:2', extra: {} },
-  ])('draws what the SVG shows for $src', ({ src, extra }) => {
-    const scene = renderScene(src, { ...options, ...extra }).scene;
-    expect(sceneDifference(scene, svgToScene(render(src, { ...options, ...extra, sourceInfo: true }).svg))).toBeNull();
+// The signature of every scene the tests compare against, by `file#index` (with ` icons` when
+// icons change it) and `extra#index`. Each was checked against what the SVG pele used to write
+// showed, as an SVG reader saw it, before SVG was dropped.
+function signatures(): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const { file, sources } of corpora) {
+    sources.forEach((src, i) => {
+      if (!sceneSupported(src)) return;
+      const plain = signature(src, {});
+      out[`${file}#${i}`] = plain;
+      const drawn = signature(src, { icons });
+      if (JSON.stringify(drawn) !== JSON.stringify(plain)) out[`${file}#${i} icons`] = drawn;
+    });
+  }
+  EXTRA.forEach(({ src, extra }, i) => (out[`extra#${i}`] = signature(src, extra)));
+  return out;
+}
+
+const BASELINE = 'tests/scene/baseline.json';
+
+describe('scene output', () => {
+  // Run with UPDATE_SCENE_BASELINE=1 to write the baseline after a change meant to change scenes.
+  it('draws the scenes it drew before', () => {
+    const now = signatures();
+    if (process.env.UPDATE_SCENE_BASELINE) {
+      writeFileSync(BASELINE, JSON.stringify(now) + '\n');
+      return;
+    }
+    const baseline = JSON.parse(readFileSync(BASELINE, 'utf8')) as Record<string, unknown>;
+    expect(Object.keys(now).sort()).toEqual(Object.keys(baseline).sort());
+    for (const key of Object.keys(baseline)) expect(signatureDifference(now[key], baseline[key]), key).toBeNull();
   });
 
   // A text the source names is an item of its own inside its region, with where it was written,
@@ -98,18 +109,5 @@ describe('scene output', () => {
       expect(sceneSupported(model.value), src).toBe(true);
       expect(renderScene(model.value, opts).scene, src).toEqual(renderScene(src, opts).scene);
     }
-  });
-
-  it('draws the scenes it drew before', () => {
-    let compared = 0;
-    for (const { file, sources } of corpora) {
-      sources.forEach((src, i) => {
-        const key = `${file}#${i}`;
-        if (!(key in baseline)) return;
-        compared++;
-        expect(signatureDifference(sceneSignature(renderScene(src, options).scene), baseline[key]), key).toBeNull();
-      });
-    }
-    expect(compared).toBe(Object.keys(baseline).length);
   });
 });

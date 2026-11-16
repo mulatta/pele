@@ -240,8 +240,8 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
   const totalHeight = Math.ceil(Math.max(height, pad * 2));
   out.section('title');
   out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('timeline', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],

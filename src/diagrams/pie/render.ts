@@ -184,5 +184,6 @@ function draw(out: Out, model: PieModel, config: Config, options: RenderOptions,
   });
   if (legend.length > 0) out.end();
 
-  return { svg: out.done('pie', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
+  out.done(totalWidth, totalHeight);
+  return { width: totalWidth, height: totalHeight, links: [] };
 }

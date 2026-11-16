@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { SankeyModel } from '../../src/diagrams/sankey/db.js';
-import { PeleError, parse, render, supports } from '../../src/index.js';
+import type { Scene } from '../../src/draw/scene.js';
+import { PeleError, parse, supports } from '../../src/index.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus } from '../support/corpus.js';
-import { assertWellFormed } from '../support/xml.js';
+import { assertSafe, draw, itemById, items, lineOf, lines, paints, sceneProblem, shapesOf, textOf, textsOf, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
 const corpus = loadCorpus('sankey', /sankey/i);
 
 const BASIC = 'sankey\na,b,5\na,c,3\nb,d,4\nc,d,1.239\n';
+
+// The chart is drawn inside the padding of the picture.
+const PAD = 8;
 
 function configured(sankey: string, body = BASIC): string {
   return `---\nconfig:\n  sankey:\n${sankey
@@ -17,95 +20,93 @@ function configured(sankey: string, body = BASIC): string {
     .join('\n')}\n---\n${body}`;
 }
 
-function count(svg: string, pattern: RegExp): number {
-  return svg.match(pattern)?.length ?? 0;
+// What is drawn, without where in the source each part was written.
+const picture = (scene: Scene): string => JSON.stringify([scene.shapes, scene.texts, scene.gradients]);
+
+const node = (scene: Scene, id: string) => itemById(scene, id, 'pele-sankey-node')!;
+const link = (scene: Scene, id: string) => itemById(scene, id, 'pele-sankey-link')!;
+
+// A bar's rectangle, in the chart's own coordinates.
+function bar(scene: Scene, id: string): { x: number; y: number; width: number; height: number } {
+  const { box } = shapesOf(scene, node(scene, id))[0];
+  return { x: box.x0 - PAD, y: box.y0 - PAD, width: box.x1 - box.x0, height: box.y1 - box.y0 };
 }
 
-function attr(svg: string, id: string, name: string): string {
-  return new RegExp(`class="pele-sankey-node" data-id="${id}"[^>]* ${name}="([^"]*)"`).exec(svg)![1];
-}
+const fillOf = (scene: Scene, item: ReturnType<typeof node>): string => shapesOf(scene, item)[0].paint;
+
+// The lines of a node's label, which an outlined label draws twice.
+const labelOf = (scene: Scene, id: string) => textsOf(scene, itemById(scene, id, 'pele-label')!);
 
 describe('sankey rendering', () => {
-  it('renders every documentation example as well-formed SVG', () => {
+  it('renders every documentation example, the same each time', () => {
     let rendered = 0;
     for (const src of corpus) {
-      let svg: string;
-      try {
-        svg = render(src, options).svg;
-      } catch (error) {
-        expect(error).toBeInstanceOf(PeleError);
-        continue;
-      }
+      const result = tryDraw(src);
+      if (result === undefined) continue;
       rendered++;
       const where = JSON.stringify(src).slice(0, 120);
-      expect(() => assertWellFormed(svg), where).not.toThrow();
-      expect(svg, where).not.toContain('NaN');
-      expect(svg, where).not.toContain('undefined');
-      expect(svg, where).not.toContain('Infinity');
-      expect(render(src, options).svg, where).toBe(svg);
+      assertSafe(result, where);
+      expect(textOf(result.scene), where).not.toMatch(/NaN|undefined|Infinity/);
+      expect(tryDraw(src), where).toEqual(result);
     }
     expect(rendered).toBeGreaterThanOrEqual(8);
   });
 
   it('draws a bar and a label per node and a band per link', () => {
-    const { svg, type } = render(BASIC, options);
+    const { scene, type } = draw(BASIC);
     expect(type).toBe('sankey');
     expect(supports('sankey\na,b,1')).toBe(true);
     expect(supports('sankey-beta\na,b,1')).toBe(true);
-    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" class="pele pele-sankey"/);
-    expect(count(svg, /class="pele-sankey-node"/g)).toBe(4);
-    expect(count(svg, /class="pele-sankey-link"/g)).toBe(4);
-    expect(count(svg, /class="pele-label"/g)).toBe(4);
-    expect(svg).toContain('data-id="a-&gt;b"');
-    expect(svg).toContain('<title>a → b: 5</title>');
+    expect(items(scene, 'pele-sankey-node')).toHaveLength(4);
+    expect(items(scene, 'pele-sankey-link')).toHaveLength(4);
+    expect(items(scene, 'pele-label')).toHaveLength(4);
+    expect(link(scene, 'a->b')).toBeDefined();
   });
 
   it('colors bars by series, in the order nodes first appear', () => {
-    const { svg } = render(BASIC, options);
-    expect(attr(svg, 'a', 'fill')).toBe('var(--pele-series-1,#4c78a8)');
-    expect(attr(svg, 'b', 'fill')).toBe('var(--pele-series-2,#f58518)');
-    expect(attr(svg, 'd', 'fill')).toBe('var(--pele-series-4,#e45756)');
+    const { scene } = draw(BASIC);
+    expect(fillOf(scene, node(scene, 'a'))).toBe('var(--pele-series-1,#4c78a8)');
+    expect(fillOf(scene, node(scene, 'b'))).toBe('var(--pele-series-2,#f58518)');
+    expect(fillOf(scene, node(scene, 'd'))).toBe('var(--pele-series-4,#e45756)');
   });
 
   it('has the default size of 600 by 400 plus padding', () => {
-    const { width, height } = render(BASIC, options);
+    const { width, height } = draw(BASIC);
     expect(width).toBe(616);
     expect(height).toBe(416);
   });
 
   it('honours width and height', () => {
-    const { width, height, svg } = render(configured('width: 300\nheight: 150'), options);
+    const { width, height, scene } = draw(configured('width: 300\nheight: 150'));
     expect(width).toBe(316);
     expect(height).toBe(166);
-    expect(Number(attr(svg, 'd', 'x'))).toBe(290);
+    expect(bar(scene, 'd').x).toBe(290);
   });
 
   it('shows values with two decimals, a prefix and a suffix, unless showValues is off', () => {
-    const shown = render(BASIC, options).svg;
-    expect(shown).toContain('>a <tspan class="pele-sankey-value" fill="var(--_m)">8</tspan><');
-    expect(shown).toContain('>5.24</tspan>');
-    const money = render(configured('prefix: "$"\nsuffix: " M"'), options).svg;
-    expect(money).toContain('>$8 M</tspan>');
-    expect(money).toContain('<title>a → b: $5 M</title>');
-    const coded = render(configured('prefix: "&euro;"\nsuffix: " &amp;lt;"\nlabelStyle: outlined'), options).svg;
-    expect(coded).toContain('>€8 &amp;lt;</tspan>');
-    expect(coded).toContain('<title>a → b: €5 &amp;lt;</title>');
-    const hidden = render(configured('showValues: false'), options).svg;
-    expect(hidden).not.toContain('pele-sankey-value');
-    expect(hidden).toContain('>a</text>');
+    const shown = draw(BASIC).scene;
+    expect(lines(shown)).toEqual(['a 8', 'b 5', 'c 3', 'd 5.24']);
+    expect(labelOf(shown, 'a')[0].spans.map((s) => [s.text, s.paint])).toEqual([['a ', undefined], ['8', 'var(--_m)']]);
+    const money = draw(configured('prefix: "$"\nsuffix: " M"')).scene;
+    expect(lines(money)[0]).toBe('a $8 M');
+    // The affixes are decoded like any text, and a code that decodes to another is left as that.
+    const coded = draw(configured('prefix: "&euro;"\nsuffix: " &amp;lt;"\nlabelStyle: outlined')).scene;
+    expect(lines(coded)).toContain('a €8 &lt;');
+    const hidden = draw(configured('showValues: false')).scene;
+    expect(lines(hidden)).toEqual(['a', 'b', 'c', 'd']);
   });
 
   it('gives nodes more room when values are shown, as Mermaid does', () => {
     const body = 'sankey\na,b,1\na,c,1\na,d,1\n';
-    const gap = (svg: string): number => Number(attr(svg, 'c', 'y')) - Number(attr(svg, 'b', 'y')) - Number(attr(svg, 'b', 'height'));
-    expect(gap(render(body, options).svg)).toBeCloseTo(27, 1);
-    expect(gap(render(configured('showValues: false', body), options).svg)).toBeGreaterThanOrEqual(12);
-    expect(gap(render(configured('showValues: false\nnodePadding: 40', body), options).svg)).toBeCloseTo(40, 1);
+    const gap = (scene: Scene): number => bar(scene, 'c').y - bar(scene, 'b').y - bar(scene, 'b').height;
+    expect(gap(draw(body).scene)).toBeCloseTo(27, 1);
+    expect(gap(draw(configured('showValues: false', body)).scene)).toBeGreaterThanOrEqual(12 - 1e-9);
+    expect(gap(draw(configured('showValues: false\nnodePadding: 40', body)).scene)).toBeCloseTo(40, 1);
   });
 
   it('honours nodeAlignment', () => {
     const body = 'sankey\na,b,4\nb,c,3\nc,d,3\nx,d,2\na,y,1\n';
-    const x = (alignment: string, id: string): number => Number(attr(render(configured(`nodeAlignment: ${alignment}`, body), options).svg, id, 'x'));
+    const x = (alignment: string, id: string): number => bar(draw(configured(`nodeAlignment: ${alignment}`, body)).scene, id).x;
     expect(x('justify', 'y')).toBe(590);
     expect(x('left', 'y')).toBeCloseTo(590 / 3, 1);
     expect(x('left', 'x')).toBe(0);
@@ -116,75 +117,88 @@ describe('sankey rendering', () => {
   });
 
   it('honours linkColor', () => {
-    const link = (svg: string): string => /class="pele-sankey-link" data-id="a-&gt;b"[^>]*/.exec(svg)![0];
     // Without an idPrefix, gradient links take their source's colour.
-    expect(link(render(BASIC, options).svg)).toContain('fill="var(--pele-series-1,#4c78a8)"');
-    expect(link(render(configured('linkColor: gradient'), options).svg)).toContain('fill="var(--pele-series-1,#4c78a8)"');
-    expect(link(render(configured('linkColor: source'), options).svg)).toContain('fill="var(--pele-series-1,#4c78a8)"');
-    expect(link(render(configured('linkColor: target'), options).svg)).toContain('fill="var(--pele-series-2,#f58518)"');
-    expect(link(render(configured('linkColor: "#a1a1a1"'), options).svg)).toContain('style="fill:#a1a1a1;"');
-    expect(link(render(configured('linkColor: "url(#x)"'), options).svg)).not.toContain('style=');
-    expect(render(BASIC, options).svg).not.toMatch(/<defs|<linearGradient|url\(/);
-    expect(render(BASIC, options).svg).toContain('class="pele-sankey-links" fill-opacity="0.4"');
+    const color = (src: string): string => {
+      const { scene } = draw(src);
+      return fillOf(scene, link(scene, 'a->b'));
+    };
+    expect(color(BASIC)).toBe('var(--pele-series-1,#4c78a8)');
+    expect(color(configured('linkColor: gradient'))).toBe('var(--pele-series-1,#4c78a8)');
+    expect(color(configured('linkColor: source'))).toBe('var(--pele-series-1,#4c78a8)');
+    expect(color(configured('linkColor: target'))).toBe('var(--pele-series-2,#f58518)');
+    expect(color(configured('linkColor: "#a1a1a1"'))).toBe('#a1a1a1');
+    expect(color(configured('linkColor: "url(#x)"'))).toBe('var(--pele-series-1,#4c78a8)');
+    const { scene } = draw(BASIC);
+    expect(scene.gradients).toBeUndefined();
+    expect(paints(scene).filter((p) => p.includes('url('))).toEqual([]);
+    expect(items(scene, 'pele-sankey-link').map((l) => shapesOf(scene, l)[0].opacity)).toEqual([0.4, 0.4, 0.4, 0.4]);
   });
 
   it('fills links with gradients when there is an idPrefix', () => {
-    const { svg } = render(BASIC, { ...options, idPrefix: 'p1' });
-    assertWellFormed(svg);
-    expect(count(svg, /<linearGradient /g)).toBe(4);
-    const ab = /class="pele-sankey-link" data-id="a-&gt;b"[^>]* fill="url\(#(p1-sankey-[a-z0-9]+)\) var\(--pele-series-1,#4c78a8\)"/.exec(svg)!;
-    expect(svg).toMatch(
-      new RegExp(`<linearGradient id="${ab[1]}" gradientUnits="userSpaceOnUse" x1="[\\d.]+" x2="[\\d.]+"><stop offset="0" stop-color="var\\(--pele-series-1,#4c78a8\\)"/><stop offset="1" stop-color="var\\(--pele-series-2,#f58518\\)"/></linearGradient>`)
-    );
-    expect(render(BASIC, { ...options, idPrefix: 'p1' }).svg).toBe(svg);
-    const ids = (text: string): string[] => [...text.matchAll(/<linearGradient id="([^"]+)"/g)].map((m) => m[1]);
-    const other = render('sankey\nx,y,2\n', { ...options, idPrefix: 'p1' }).svg;
-    expect(ids(other).filter((id) => ids(svg).includes(id))).toEqual([]);
+    const { scene } = draw(BASIC, { idPrefix: 'p1' });
+    expect(Object.keys(scene.gradients ?? {})).toHaveLength(4);
+    const [first] = shapesOf(scene, link(scene, 'a->b'));
+    expect(first.gradient).toMatch(/^p1-sankey-[a-z0-9]+$/);
+    expect(first.paint).toBe('var(--pele-series-1,#4c78a8)');
+    const gradient = scene.gradients![first.gradient!];
+    expect(gradient.stops).toEqual([
+      { offset: 0, paint: 'var(--pele-series-1,#4c78a8)' },
+      { offset: 1, paint: 'var(--pele-series-2,#f58518)' },
+    ]);
+    expect(draw(BASIC, { idPrefix: 'p1' })).toEqual(draw(BASIC, { idPrefix: 'p1' }));
+    const ids = (scene: Scene): string[] => Object.keys(scene.gradients ?? {});
+    const other = draw('sankey\nx,y,2\n', { idPrefix: 'p1' }).scene;
+    expect(ids(other)).toHaveLength(1);
+    expect(ids(other).filter((id) => ids(scene).includes(id))).toEqual([]);
     for (const color of ['source', 'target', '"#a1a1a1"']) {
-      expect(render(configured(`linkColor: ${color}`), { ...options, idPrefix: 'p1' }).svg).not.toMatch(/<defs|url\(/);
+      expect(draw(configured(`linkColor: ${color}`), { idPrefix: 'p1' }).scene.gradients).toBeUndefined();
     }
   });
 
   it('takes gradient colours from nodeColors', () => {
-    const { svg } = render(configured('nodeColors:\n  a: "#123456"\n  b: "url(#x)"'), { ...options, idPrefix: 'p_1' });
-    assertWellFormed(svg);
-    expect(svg).toContain('<stop offset="0" stop-color="#123456"/><stop offset="1" stop-color="var(--pele-series-2,#f58518)"/>');
-    expect(svg).toMatch(/data-id="a-&gt;b"[^>]* fill="url\(#p_1-sankey-[a-z0-9]+\) #123456"/);
-    expect(svg).not.toContain('url(#x)');
+    const { scene } = draw(configured('nodeColors:\n  a: "#123456"\n  b: "url(#x)"'), { idPrefix: 'p_1' });
+    const [first] = shapesOf(scene, link(scene, 'a->b'));
+    expect(first.gradient).toMatch(/^p_1-sankey-[a-z0-9]+$/);
+    expect(first.paint).toBe('#123456');
+    expect(scene.gradients![first.gradient!].stops.map((s) => s.paint)).toEqual(['#123456', 'var(--pele-series-2,#f58518)']);
+    expect(paints(scene).filter((p) => p.includes('url('))).toEqual([]);
   });
 
-  it('keeps escaped nodeColors whole in gradients', () => {
-    const { svg } = render(configured(`nodeColors:\n  a: 'red&blue'\n  b: 'x"y'`), { ...options, idPrefix: 'p1' });
-    assertWellFormed(svg);
-    expect(svg).toContain('<stop offset="0" stop-color="red&amp;blue"/><stop offset="1" stop-color="x&quot;y"/>');
-    expect(svg).toMatch(/data-id="a-&gt;b"[^>]* fill="url\(#p1-sankey-[a-z0-9]+\) red&amp;blue"/);
+  it('keeps nodeColors with markup characters in gradients', () => {
+    const { scene } = draw(configured(`nodeColors:\n  a: 'red&blue'\n  b: 'x"y'`), { idPrefix: 'p1' });
+    const [first] = shapesOf(scene, link(scene, 'a->b'));
+    expect(scene.gradients![first.gradient!].stops.map((s) => s.paint)).toEqual(['red&blue', 'x"y']);
   });
 
   it('keeps links flat when the idPrefix could not appear in a url()', () => {
     for (const idPrefix of ['p"1', 'p)1', 'p 1', '']) {
-      const { svg } = render(BASIC, { ...options, idPrefix });
-      expect(svg, idPrefix).not.toMatch(/<defs|url\(/);
-      expect(svg, idPrefix).toMatch(/data-id="a-&gt;b"[^>]* fill="var\(--pele-series-1,#4c78a8\)"/);
+      const { scene } = draw(BASIC, { idPrefix });
+      expect(scene.gradients, idPrefix).toBeUndefined();
+      expect(fillOf(scene, link(scene, 'a->b')), idPrefix).toBe('var(--pele-series-1,#4c78a8)');
     }
   });
 
   it('honours nodeWidth, nodeColors and labelStyle', () => {
-    expect(attr(render(configured('nodeWidth: 24'), options).svg, 'a', 'width')).toBe('24');
-    const colored = render(configured('linkColor: source\nnodeColors:\n  a: "#123456"\n  d: "url(#x)"\n  __proto__: red'), options).svg;
-    expect(colored).toMatch(/class="pele-sankey-node" data-id="a"[^>]*style="fill:#123456;"/);
-    expect(colored).toMatch(/class="pele-sankey-link" data-id="a-&gt;b"[^>]*style="fill:#123456;"/);
-    expect(colored).not.toContain('url(');
-    const legacy = render(BASIC, options).svg;
-    const outlined = render(configured('labelStyle: outlined'), options);
-    expect(legacy).toMatch(/data-id="d"><text[^>]*text-anchor="end"/);
-    expect(outlined.svg).toMatch(/data-id="d"><text[^>]*text-anchor="start"[^>]*stroke="var\(--_bg\)"/);
+    expect(bar(draw(configured('nodeWidth: 24')).scene, 'a').width).toBe(24);
+    const { scene: colored } = draw(configured('linkColor: source\nnodeColors:\n  a: "#123456"\n  d: "url(#x)"\n  __proto__: red'));
+    expect(fillOf(colored, node(colored, 'a'))).toBe('#123456');
+    expect(fillOf(colored, link(colored, 'a->b'))).toBe('#123456');
+    expect(paints(colored).filter((p) => p.includes('url('))).toEqual([]);
+    const legacy = draw(BASIC).scene;
+    const outlined = draw(configured('labelStyle: outlined'));
+    expect(labelOf(legacy, 'd').map((t) => t.anchor)).toEqual(['end']);
+    // An outlined label is a halo in the background colour with the text over it.
+    expect(labelOf(outlined.scene, 'd').map((t) => [t.anchor, t.paint, t.stroke])).toEqual([
+      ['start', 'none', 'var(--_bg)'],
+      ['start', 'var(--_fg)', undefined],
+    ]);
     expect(outlined.width).toBeGreaterThan(616);
   });
 
   it('puts each label on the side of its bar that faces the middle', () => {
-    const { svg } = render(BASIC, options);
-    expect(svg).toMatch(/data-id="a"><text[^>]*text-anchor="start"/);
-    expect(svg).toMatch(/data-id="d"><text[^>]*text-anchor="end"/);
+    const { scene } = draw(BASIC);
+    expect(labelOf(scene, 'a')[0].anchor).toBe('start');
+    expect(labelOf(scene, 'd')[0].anchor).toBe('end');
   });
 
   it('keeps adjacent-column labels clear without moving the bars', () => {
@@ -200,51 +214,49 @@ Ran Agency,Stayed free,1070
 Upgraded to Pro,Upgraded to Team,96
 Upgraded to Pro,Stayed on Pro,284`;
     for (const fontSize of [14, 16]) {
-      const { svg } = render(source, { ...options, fontSize, maxWidth: 664 });
-      const bounds = (id: string, value: number): [number, number, number] => {
-        const label = new RegExp(`data-id="${id}"><text x="([\\d.]+)" y="([\\d.]+)" text-anchor="([^"]+)"`).exec(svg)!;
-        const width = metricsMeasurer.width(`${id} ${value}`, Math.round(fontSize * 0.875), 0);
-        const left = Number(label[1]) - (label[3] === 'end' ? width : 0);
-        return [left, left + width, Number(label[2])];
+      const { scene } = draw(source, { fontSize, maxWidth: 664 });
+      const bounds = (id: string): [number, number, number] => {
+        const [label] = labelOf(scene, id);
+        const width = metricsMeasurer.width(lineOf(label), Math.round(fontSize * 0.875), 0);
+        const left = label.x - (label.anchor === 'end' ? width : 0);
+        return [left, left + width, label.y];
       };
-      const a = bounds('Opened a folder', 2100);
-      const b = bounds('Ran Agency', 1450);
+      const a = bounds('Opened a folder');
+      const b = bounds('Ran Agency');
       expect(a[1] <= b[0] || b[1] <= a[0] || Math.abs(a[2] - b[2]) >= Math.round(fontSize * 0.875) * 1.5).toBe(true);
-      expect(svg).toContain('>1450</tspan>');
-      const hidden = render(configured('showValues: false', source), { ...options, fontSize }).svg;
-      expect([...svg.matchAll(/class="pele-sankey-node"[^>]* x="([^"]+)"/g)].map((m) => m[1])).toEqual(
-        [...hidden.matchAll(/class="pele-sankey-node"[^>]* x="([^"]+)"/g)].map((m) => m[1])
-      );
+      expect(lines(scene)).toContain('Ran Agency 1450');
+      const hidden = draw(configured('showValues: false', source), { fontSize }).scene;
+      expect(items(scene, 'pele-sankey-node').map((n) => bar(scene, n.id).x)).toEqual(items(hidden, 'pele-sankey-node').map((n) => bar(hidden, n.id).x));
     }
   });
 
   it('keeps a moved label beside its own bar', () => {
-    const { svg } = render(configured('showValues: false', 'sankey\nA,B,1\nC,D,200\nE,F,1\nF,G,600\nG,D,200\nB,D,1\n'), options);
-    const label = Number(/data-id="E"><text x="[\d.]+" y="([\d.]+)"/.exec(svg)![1]) - Math.round(16 * 0.875) * 0.35;
-    const bar = (id: string): [number, number] => {
-      const m = new RegExp(`class="pele-sankey-node" data-id="${id}" x="[^"]+" y="([^"]+)" width="[^"]+" height="([^"]+)"`).exec(svg)!;
-      return [Number(m[1]), Number(m[1]) + Number(m[2])];
+    const { scene } = draw(configured('showValues: false', 'sankey\nA,B,1\nC,D,200\nE,F,1\nF,G,600\nG,D,200\nB,D,1\n'));
+    const label = labelOf(scene, 'E')[0].y - Math.round(16 * 0.875) * 0.35;
+    const span = (id: string): [number, number] => {
+      const { y, height } = bar(scene, id);
+      return [y + PAD, y + PAD + height];
     };
     const gap = ([top, bottom]: [number, number]): number => Math.max(0, top - label, label - bottom);
-    expect(gap(bar('E'))).toBeLessThan(gap(bar('C')));
+    expect(gap(span('E'))).toBeLessThan(gap(span('C')));
   });
 
   it('shrinks labels in narrow or crowded charts, down to 10px', () => {
-    const labelSize = (svg: string): number => Number(/class="pele-labels" font-size="(\d+)"/.exec(svg)![1]);
+    const labelSize = (src: string, extra = {}): number => draw(src, extra).scene.texts[0].size;
     const fan = (n: number): string => 'sankey\n' + Array.from({ length: n }, (_, i) => `s${i},t,1\n`).join('');
-    expect(labelSize(render(BASIC, options).svg)).toBe(14);
-    expect(labelSize(render(fan(20), options).svg)).toBe(11);
-    expect(labelSize(render(fan(60), options).svg)).toBe(10);
-    const narrow = labelSize(render(BASIC, { ...options, maxWidth: 320 }).svg);
+    expect(labelSize(BASIC)).toBe(14);
+    expect(labelSize(fan(20))).toBe(11);
+    expect(labelSize(fan(60))).toBe(10);
+    const narrow = labelSize(BASIC, { maxWidth: 320 });
     expect(narrow).toBeLessThan(14);
     expect(narrow).toBeGreaterThanOrEqual(10);
-    expect(labelSize(render(fan(20), { ...options, fontSize: 32 }).svg)).toBe(20);
+    expect(labelSize(fan(20), { fontSize: 32 })).toBe(20);
   });
 
   it('grows the picture to hold labels that reach outside the chart', () => {
-    const { width, svg } = render(configured('labelStyle: outlined', 'sankey\nA,Somewhere with a very long name indeed,1\n'), options);
+    const { width, scene } = draw(configured('labelStyle: outlined', 'sankey\nA,Somewhere with a very long name indeed,1\n'));
     expect(width).toBeGreaterThan(800);
-    expect(svg).toContain(`viewBox="0 0 ${width} `);
+    expect(scene.w).toBe(width);
   });
 
   it('keeps quoted fields, escaped quotes and odd characters as node names', () => {
@@ -257,9 +269,8 @@ Upgraded to Pro,Stayed on Pro,284`;
         ['Lighting & appliances - commercial', 'Over generation / exports', 2],
       ]);
     }
-    const { svg } = render('sankey\n"Heating, ""homes""",Lighting & appliances,1\n', options);
-    expect(svg).toContain('>Heating, &quot;homes&quot; <tspan');
-    expect(svg).toContain('>Lighting &amp; appliances <tspan');
+    const { scene } = draw('sankey\n"Heating, ""homes""",Lighting & appliances,1\n');
+    expect(lines(scene)).toEqual(['Heating, "homes" 1', 'Lighting & appliances 1']);
   });
 
   for (const keyword of ['sankey', 'sankey-beta']) {
@@ -280,12 +291,10 @@ Upgraded to Pro,Stayed on Pro,284`;
             expect(model.nodes.map((node) => node.id)).toEqual([from, to]);
             expect(model.links.map((link) => [link.source.id, link.target.id, link.value])).toEqual([[from, to, 100]]);
           }
-          const { svg } = render(src, options);
-          assertWellFormed(svg);
-          expect(svg).toContain(`data-id="${from}"`);
-          expect(svg).toContain(`data-id="${to}"`);
-          expect(svg).toContain(`>${from} <tspan`);
-          expect(svg).toContain(`>${to} <tspan`);
+          const { scene } = draw(src);
+          expect(node(scene, from)).toBeDefined();
+          expect(node(scene, to)).toBeDefined();
+          expect(lines(scene)).toEqual([`${from} 100`, `${to} 100`]);
         });
       }
     }
@@ -298,20 +307,18 @@ Upgraded to Pro,Stayed on Pro,284`;
         expect(model.nodes.map((node) => node.id)).toEqual(['Доход, "чистый"', 'Café', '収入']);
         expect(model.links[0].target).toBe(model.links[1].source);
       }
-      const { svg } = render(src, options);
-      assertWellFormed(svg);
-      expect(svg).toContain('>Доход, &quot;чистый&quot; <tspan');
+      const { scene } = draw(src);
+      expect(lines(scene)).toContain('Доход, "чистый" 2');
     });
 
     it(`decodes entity codes in Unicode names in ${keyword}`, () => {
       const src = `${keyword}\n"Доход #35; #amp; #34;чистый#34;",Расходы,1\n`;
       for (const labelStyle of ['normal', 'outlined']) {
-        const { svg } = render(configured(`labelStyle: ${labelStyle}`, src), options);
-        assertWellFormed(svg);
-        expect(svg).toContain('>Доход # &amp; &quot;чистый&quot; <tspan');
-        expect(svg).toContain('data-id="Доход # &amp; &quot;чистый&quot;"');
-        expect(svg).toContain('<title>Доход # &amp; &quot;чистый&quot; → Расходы: 1</title>');
-        expect(svg).not.toMatch(/ﬂ°|¶ß/);
+        const { scene } = draw(configured(`labelStyle: ${labelStyle}`, src));
+        expect(lines(scene)).toContain('Доход # & "чистый" 1');
+        expect(node(scene, 'Доход # & "чистый"')).toBeDefined();
+        expect(link(scene, 'Доход # & "чистый"->Расходы')).toBeDefined();
+        expect(textOf(scene)).not.toMatch(/ﬂ°|¶ß/);
       }
     });
 
@@ -336,7 +343,7 @@ Upgraded to Pro,Stayed on Pro,284`;
             const src = `${keyword}\n${row}\n`;
             expect(() => parse(src), src).toThrow(/Invalid XML character in node name/);
             for (const labelStyle of ['normal', 'outlined']) {
-              expect(() => render(configured(`labelStyle: ${labelStyle}`, src), options), src).toThrow(PeleError);
+              expect(() => draw(configured(`labelStyle: ${labelStyle}`, src)), src).toThrow(PeleError);
             }
           }
         }
@@ -345,9 +352,8 @@ Upgraded to Pro,Stayed on Pro,284`;
 
     it(`shows a double-encoded entity code as text in ${keyword}`, () => {
       for (const name of ['a#amp;#35;xFFFE;', '"a#amp;#35;xFFFE;"']) {
-        const { svg } = render(`${keyword}\n${name},b,1\n`, options);
-        assertWellFormed(svg);
-        expect(svg).toContain('>a&amp;#xFFFE; <tspan');
+        const { scene } = draw(`${keyword}\n${name},b,1\n`);
+        expect(lines(scene)).toContain('a&#xFFFE; 1');
       }
     });
 
@@ -355,45 +361,45 @@ Upgraded to Pro,Stayed on Pro,284`;
       for (const entity of ['&#xFFFE;', '&#xFFFF;', '&#x01;']) {
         const src = `${keyword}\nДоход ${entity},Расходы,1\n`;
         for (const labelStyle of ['normal', 'outlined']) {
-          const { svg } = render(configured(`labelStyle: ${labelStyle}`, src), options);
-          assertWellFormed(svg);
-          expect(svg).not.toMatch(/[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]/u);
+          const result = draw(configured(`labelStyle: ${labelStyle}`, src));
+          expect(sceneProblem(result)).toBeUndefined();
+          expect(textOf(result.scene)).not.toMatch(/[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]/u);
         }
       }
     });
   }
 
   it('accepts comments, blank lines and both keywords', () => {
-    const a = render('sankey-beta\n\n%% source,target,value\na,b,1\n\n\nb,c,2\n', options).svg;
-    const b = render('sankey\na,b,1\nb,c,2', options).svg;
-    expect(a).toBe(b);
+    const a = draw('sankey-beta\n\n%% source,target,value\na,b,1\n\n\nb,c,2\n').scene;
+    const b = draw('sankey\na,b,1\nb,c,2').scene;
+    expect(picture(a)).toBe(picture(b));
   });
 
   it('draws the front matter title', () => {
-    const plain = render(BASIC, options);
-    const titled = render(`---\ntitle: Energy flows\n---\n${BASIC}`, options);
-    expect(titled.svg).toContain('class="pele-title"');
-    expect(titled.svg).toContain('>Energy flows<');
+    const plain = draw(BASIC);
+    const titled = draw(`---\ntitle: Energy flows\n---\n${BASIC}`);
+    expect(lines(titled.scene)).toContain('Energy flows');
+    expect(titled.scene.texts.find((t) => lineOf(t) === 'Energy flows')!.weight).toBe(700);
     expect(titled.height).toBeGreaterThan(plain.height);
   });
 
   it('rejects circular links at render time, as d3-sankey fails on them', () => {
-    expect(() => render('sankey\na,b,1\nb,c,1\nc,a,1\n', options)).toThrow(/circular links.*"[abc]" is part of one/);
-    expect(() => render('sankey\na,a,1\n', options)).toThrow(PeleError);
+    expect(() => draw('sankey\na,b,1\nb,c,1\nc,a,1\n')).toThrow(/circular links.*"[abc]" is part of one/);
+    expect(() => draw('sankey\na,a,1\n')).toThrow(PeleError);
     expect(parse('sankey\na,b,1\nb,a,1\n').type).toBe('sankey');
   });
 
   it('rejects what Mermaid rejects', () => {
     for (const src of ['sankey\n', 'sankey\na,b\n', 'sankey\na,b,1,2\n', 'sankey\na,,1\n', 'sankey\n"",b,1\n', 'sankey x\na,b,1\n']) {
-      expect(() => render(src, options), src).toThrow(PeleError);
+      expect(() => draw(src), src).toThrow(PeleError);
     }
-    expect(() => render('sankey\na,b\n', options)).toThrow(/Expecting 'COMMA', 'NEWLINE', 'EOF', got 'EOF'|Expecting 'COMMA'/);
+    expect(() => draw('sankey\na,b\n')).toThrow(/Expecting 'COMMA', 'NEWLINE', 'EOF', got 'EOF'|Expecting 'COMMA'/);
   });
 
   it('reads values that start with a number, and refuses the rest', () => {
-    expect(render('sankey\na,b,50%\nb,c, 2e1 kWh\n', options).svg).toContain('<title>b → c: 20</title>');
+    expect(lines(draw('sankey\na,b,50%\nb,c, 2e1 kWh\n').scene)).toEqual(['a 50', 'b 50', 'c 20']);
     for (const value of ['abc', '', 'Infinity', '1e400', '-']) {
-      expect(() => render(`sankey\na,b,1\nb,c,${value}\n`, options), value).toThrow(expect.objectContaining({ code: 'syntax', line: 3, column: 5 }));
+      expect(() => draw(`sankey\na,b,1\nb,c,${value}\n`), value).toThrow(expect.objectContaining({ code: 'syntax', line: 3, column: 5 }));
     }
   });
 
@@ -421,9 +427,9 @@ Upgraded to Pro,Stayed on Pro,284`;
   });
 
   it('draws non-positive values as empty flows', () => {
-    const { svg } = render('sankey\na,b,0\na,c,-3\nb,d,0\nc,d,2\n', options);
-    expect(svg).not.toContain('NaN');
-    expect(count(svg, /class="pele-sankey-link"/g)).toBe(4);
-    expect(svg).toContain('<title>a → b: 0</title>');
+    const result = draw('sankey\na,b,0\na,c,-3\nb,d,0\nc,d,2\n');
+    assertSafe(result, 'non-positive values');
+    expect(items(result.scene, 'pele-sankey-link')).toHaveLength(4);
+    expect(link(result.scene, 'a->b')).toBeDefined();
   });
 });

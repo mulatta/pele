@@ -10,7 +10,7 @@ import { resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
-import { linkUrl, relAttr, sanitizeUrl } from '../../util/url.js';
+import { linkUrl, sanitizeUrl } from '../../util/url.js';
 import { leftLabel } from '../common/literal-label.js';
 import type { C4Db } from './db.js';
 import { HEAD_LEFT, HEAD_TOP, layoutC4 } from './layout.js';
@@ -42,7 +42,7 @@ function openLink(out: Out, url: string | undefined, id: string, links: LinkInfo
   const href = linkUrl(sanitizeUrl(url.includes('\u00b6\u00df') ? url.replace(/\ufb02\u00b0\u00b0?/g, '#').replace(/\u00b6\u00df/g, ';') : url), options);
   if (href === undefined) return false;
   links.push({ id, href, internal: false });
-  out.link(` href="${esc(href)}"${relAttr(options)}`);
+  out.link();
   return true;
 }
 
@@ -231,7 +231,6 @@ function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight
     grow(cx - lw / 2, top, cx + lw / 2, top + lh);
     out.section('edge-labels');
     out.group({ cls: 'pele-edge-label', id, source: rel.source });
-    if (rel.descr) out.tooltip(rel.descr);
     out.rect(cx - lw / 2, top, lw, lh, ' rx="3" fill="var(--_bg)"');
     const linked = openLink(out, rel.link, id, links, options);
     out.label(label, cx, top + label.height / 2, style.text);
@@ -304,5 +303,6 @@ function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight
   out.section('main');
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
   out.frame(ox, oy);
-  return [{ svg: out.done('c4', width, height, size, options, db), width, height, links }, lanes.squeezed];
+  out.done(width, height);
+  return [{ width, height, links }, lanes.squeezed];
 }

@@ -5,7 +5,6 @@ import { renderVenn } from './render.js';
 
 export const venn: Diagram<VennDb> = {
   type: 'venn',
-  scene: true,
   parse(source, _config, title) {
     const db = new VennDb();
     if (title) db.title = title;

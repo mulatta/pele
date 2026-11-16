@@ -1,37 +1,60 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
+import { PeleError, parse, supports } from '../../src/index.js';
+import type { Box, Scene, SceneItem, SceneShape } from '../../src/draw/scene.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
-import { elements } from '../support/xml.js';
+import { draw, itemById, items, lines, sceneProblem, shapesOf, textOf } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-const count = (svg: string, cls: string): number => svg.split(`class="${cls}"`).length - 1;
-const texts = (svg: string): string[] => [...svg.matchAll(/>([^<>]+)</g)].map((m) => m[1]);
+// What is drawn, without where in the source each part was written.
+const picture = (scene: Scene): string => JSON.stringify([scene.shapes, scene.texts]);
+
+// The boxes a period draws: its own, then one for each event under it. The dot on the line is
+// round, so it is left out.
+const boxesOf = (scene: Scene, period: SceneItem): { box: Box; shape: SceneShape }[] =>
+  shapesOf(scene, period)
+    .filter((s) => s.kind === 'fill' && s.cmds[3] === 1)
+    .map((shape) => ({ box: shape.box, shape }));
+
+// The events of a period are the boxes drawn faint.
+const eventsOf = (scene: Scene, period: SceneItem): Box[] =>
+  boxesOf(scene, period)
+    .filter(({ shape }) => shape.opacity < 1)
+    .map(({ box }) => box);
+
+// The dots on the line are the circles with an outline in the background colour.
+const dots = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => s.kind === 'stroke' && s.paint === 'var(--_bg)');
+
+// The line the periods hang on is the only stroke of no item in the line colour.
+const axes = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => s.kind === 'stroke' && s.item === -1 && s.paint === 'var(--_l)');
+
+// The arrow at its end.
+const markers = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => s.kind === 'fill' && s.item === -1 && s.paint === 'var(--_l)');
 
 const SOCIAL = 'timeline\n  title History of Social Media\n  2002 : LinkedIn\n  2004 : Facebook : Google\n  2005 : YouTube\n';
 
 describe('timeline rendering', () => {
   it('draws a title, a period per time period, and its events beneath', () => {
-    const { svg, type, links } = render(SOCIAL, options);
+    const { scene, type, links } = draw(SOCIAL);
     expect(type).toBe('timeline');
     expect(supports(SOCIAL)).toBe(true);
     expect(links).toEqual([]);
-    expect(svg).toContain('class="pele pele-timeline"');
-    expect(svg).toContain('>History of Social Media<');
-    expect(count(svg, 'pele-node pele-period')).toBe(3);
-    expect(count(svg, 'pele-node pele-event')).toBe(4);
-    expect(count(svg, 'pele-dot')).toBe(3);
-    expect(count(svg, 'pele-axis')).toBe(1);
-    expect(count(svg, 'pele-marker')).toBe(1);
-    expect(texts(svg)).toEqual(['History of Social Media', '2002', 'LinkedIn', '2004', 'Facebook', 'Google', '2005', 'YouTube']);
-    expect(svg).toContain('data-id="2004"');
+    expect(lines(scene)).toContain('History of Social Media');
+    const periods = items(scene, 'pele-period');
+    expect(periods).toHaveLength(3);
+    expect(periods.map((p) => eventsOf(scene, p).length)).toEqual([1, 2, 1]);
+    expect(dots(scene)).toHaveLength(3);
+    expect(axes(scene)).toHaveLength(1);
+    expect(markers(scene)).toHaveLength(1);
+    expect(lines(scene)).toEqual(['History of Social Media', '2002', 'LinkedIn', '2004', 'Facebook', 'Google', '2005', 'YouTube']);
+    expect(itemById(scene, '2004', 'pele-period')).toBeDefined();
   });
 
   it('places periods left to right and events below their period', () => {
-    const { svg } = render(SOCIAL, options);
-    const rects = elements(svg).filter((el) => el.name === 'rect');
-    const x = rects.map((el) => Number(el.attrs.get('x')));
-    const y = rects.map((el) => Number(el.attrs.get('y')));
+    const { scene } = draw(SOCIAL);
     // 2002, LinkedIn, 2004, Facebook, Google, 2005, YouTube
+    const [x, y] = [
+      (b: Box) => b.x0,
+      (b: Box) => b.y0,
+    ].map((at) => items(scene, 'pele-period').flatMap((p) => boxesOf(scene, p).map(({ box }) => at(box))));
     expect(x[0]).toBe(x[1]);
     expect(x[2]).toBeGreaterThan(x[0]);
     expect(x[3]).toBe(x[2]);
@@ -43,143 +66,134 @@ describe('timeline rendering', () => {
   });
 
   it('gives each period its own series color, or one color with disableMulticolor', () => {
-    const multi = render(SOCIAL, options).svg;
-    expect(multi).toContain('var(--pele-series-1,');
-    expect(multi).toContain('var(--pele-series-2,');
-    expect(multi).toContain('var(--pele-series-3,');
-    const single = render('---\nconfig:\n  timeline:\n    disableMulticolor: true\n---\n' + SOCIAL, options).svg;
-    expect(single).toContain('var(--pele-series-1,');
-    expect(single).not.toContain('var(--pele-series-2,');
-    const directive = render('%%{init: {"timeline": {"disableMulticolor": true}}}%%\n' + SOCIAL, options).svg;
-    expect(directive).toBe(render(SOCIAL, { ...options, config: { timeline: { disableMulticolor: true } } }).svg);
-    expect(directive).not.toContain('var(--pele-series-2,');
+    const colors = (scene: Scene): string[] => items(scene, 'pele-period').map((p) => shapesOf(scene, p)[0].paint);
+    expect(colors(draw(SOCIAL).scene).map((c) => /series-(\d)/.exec(c)![1])).toEqual(['1', '2', '3']);
+    const single = draw('---\nconfig:\n  timeline:\n    disableMulticolor: true\n---\n' + SOCIAL).scene;
+    expect(new Set(colors(single)).size).toBe(1);
+    expect(colors(single)[0]).toMatch(/series-1,/);
+    const directive = draw('%%{init: {"timeline": {"disableMulticolor": true}}}%%\n' + SOCIAL).scene;
+    expect(picture(directive)).toBe(picture(draw(SOCIAL, { config: { timeline: { disableMulticolor: true } } }).scene));
+    expect(new Set(colors(directive)).size).toBe(1);
   });
 
   it('colors by section and draws a header over each section', () => {
-    const { svg } = render('timeline\n  section One\n    A : a\n    B : b\n  section Two\n    C : c\n', options);
-    expect(count(svg, 'pele-cluster pele-section')).toBe(2);
-    expect(svg).toContain('data-id="One"');
-    expect(svg).toContain('>One<');
-    expect(svg).not.toContain('var(--pele-series-3,');
-    const rects = elements(svg).filter((el) => el.name === 'rect');
-    const header = rects[0];
-    const [a, , b] = rects.slice(1);
-    expect(Number(header.attrs.get('x'))).toBe(Number(a.attrs.get('x')));
-    expect(Number(header.attrs.get('width'))).toBe(
-      Number(b.attrs.get('x')) + Number(b.attrs.get('width')) - Number(a.attrs.get('x'))
-    );
-    expect(a.attrs.get('fill')).toBe(header.attrs.get('fill'));
-    expect(b.attrs.get('fill')).toBe(header.attrs.get('fill'));
+    const { scene } = draw('timeline\n  section One\n    A : a\n    B : b\n  section Two\n    C : c\n');
+    expect(items(scene, 'pele-section')).toHaveLength(2);
+    expect(itemById(scene, 'One', 'pele-section')).toBeDefined();
+    expect(lines(scene)).toContain('One');
+    expect(scene.shapes.some((s) => s.paint.includes('series-3,'))).toBe(false);
+    const header = shapesOf(scene, itemById(scene, 'One', 'pele-section')!)[0];
+    const a = shapesOf(scene, itemById(scene, 'A', 'pele-period')!)[0];
+    const b = shapesOf(scene, itemById(scene, 'B', 'pele-period')!)[0];
+    expect(header.box.x0).toBe(a.box.x0);
+    expect(header.box.x1).toBe(b.box.x1);
+    expect(a.paint).toBe(header.paint);
+    expect(b.paint).toBe(header.paint);
   });
 
   it('keeps periods that come before the first section, and gives each section its own periods', () => {
-    const { svg } = render('timeline\n  Early : e\n  section Same\n    A\n  section Empty\n  section Same\n    B\n', options);
-    expect(count(svg, 'pele-node pele-period')).toBe(3);
-    expect(count(svg, 'pele-cluster pele-section')).toBe(3);
-    expect(svg).toContain('fill="var(--_m)"');
-    expect(svg.indexOf('>Early<')).toBeLessThan(svg.indexOf('>Same<'));
+    const { scene } = draw('timeline\n  Early : e\n  section Same\n    A\n  section Empty\n  section Same\n    B\n');
+    expect(items(scene, 'pele-period')).toHaveLength(3);
+    expect(items(scene, 'pele-section')).toHaveLength(3);
+    expect(shapesOf(scene, itemById(scene, 'Early', 'pele-period')!)[0].paint).toBe('var(--_m)');
+    expect(lines(scene).indexOf('Early')).toBeLessThan(lines(scene).indexOf('Same'));
   });
 
   it('runs top to bottom with TD', () => {
-    const lr = render(SOCIAL, options);
-    const td = render(SOCIAL.replace('timeline', 'timeline TD'), options);
-    expect(render(SOCIAL.replace('timeline', 'timeline LR'), options).svg).toBe(lr.svg);
+    const lr = draw(SOCIAL);
+    const td = draw(SOCIAL.replace('timeline', 'timeline TD'));
+    expect(picture(draw(SOCIAL.replace('timeline', 'timeline LR')).scene)).toBe(picture(lr.scene));
     expect(td.height).toBeGreaterThan(lr.height);
     expect(td.width).toBeLessThan(lr.width);
-    expect(count(td.svg, 'pele-node pele-period')).toBe(3);
-    expect(count(td.svg, 'pele-node pele-event')).toBe(4);
-    const rects = elements(td.svg).filter((el) => el.name === 'rect');
-    expect(Number(rects[2].attrs.get('y'))).toBeGreaterThan(Number(rects[0].attrs.get('y')));
-    expect(Number(rects[1].attrs.get('x'))).toBeGreaterThan(Number(rects[0].attrs.get('x')));
+    const periods = items(td.scene, 'pele-period');
+    expect(periods).toHaveLength(3);
+    expect(periods.reduce((n, p) => n + eventsOf(td.scene, p).length, 0)).toBe(4);
+    const [first, second] = periods.map((p) => boxesOf(td.scene, p)[0].box);
+    expect(second.y0).toBeGreaterThan(first.y0);
+    // Events sit to the right of their period.
+    const [event] = eventsOf(td.scene, periods[0]);
+    expect(event.x0).toBeGreaterThan(first.x0);
   });
 
   it('runs the line from a period to its first event straight, TD, whichever box is taller', () => {
     const source = 'timeline TD\n  2002 : LinkedIn\n  2004 : Facebook : Google\n  2005<br>and on<br>and on : YouTube\n  2006 : first<br>second<br>third<br>fourth\n';
-    const { svg } = render(source, options);
-    const box = (rect: string): { top: number; bottom: number; middle: number } => {
-      const [, y, h] = rect.match(/ y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/) ?? [];
-      return { top: Number(y), bottom: Number(y) + Number(h), middle: Number(y) + Number(h) / 2 };
-    };
-    const rows = svg.split('<g class="pele-node pele-period"').slice(1);
+    const { scene } = draw(source);
+    const middle = (b: Box): number => (b.y0 + b.y1) / 2;
+    const rows = items(scene, 'pele-period');
     expect(rows).toHaveLength(4);
     let above = 0;
     for (const row of rows) {
-      const boxes = (row.match(/<rect [^>]+>/g) ?? []).map(box);
+      const boxes = boxesOf(scene, row).map(({ box }) => box);
       const [period, event] = boxes;
-      expect(event.middle).toBe(period.middle);
-      const path = row.match(/class="pele-edge" d="([^"]+)"/)?.[1] ?? '';
-      const stubs = [...path.matchAll(/M[\d.]+,([\d.]+)H/g)].slice(0, 2).map((m) => Number(m[1]));
-      expect(stubs).toEqual([period.middle, period.middle]);
-      expect(Math.min(...boxes.map((b) => b.top))).toBeGreaterThan(above);
-      above = Math.max(...boxes.map((b) => b.bottom));
+      expect(middle(event)).toBe(middle(period));
+      // The line is a stub out of the period and one into the event; the first is level with both.
+      const stub = shapesOf(scene, row).find((s) => s.kind === 'stroke' && s.paint === 'var(--_b)')!;
+      expect([stub.cmds[2], stub.cmds[8]]).toEqual([middle(period), middle(period)]);
+      expect(Math.min(...boxes.map((b) => b.y0))).toBeGreaterThan(above);
+      above = Math.max(...boxes.map((b) => b.y1));
     }
   });
 
   it('breaks lines at <br> and wraps long text to the column', () => {
-    const one = render('timeline\n  2001 : first second\n', options);
-    const two = render('timeline\n  2001 : first<br>second\n', options);
+    const one = draw('timeline\n  2001 : first second\n');
+    const two = draw('timeline\n  2001 : first<br>second\n');
     expect(two.height).toBeGreaterThan(one.height);
     expect(two.width).toBe(one.width);
-    expect(texts(two.svg)).toEqual(['2001', 'first', 'second']);
-    expect(texts(render('timeline\n  2001 : a<br/>b<br />c\n', options).svg)).toEqual(['2001', 'a', 'b', 'c']);
-    const long = render('timeline\n  2001 : ' + 'several words that go on '.repeat(6) + '\n', options);
+    expect(lines(two.scene)).toEqual(['2001', 'first', 'second']);
+    expect(lines(draw('timeline\n  2001 : a<br/>b<br />c\n').scene)).toEqual(['2001', 'a', 'b', 'c']);
+    const long = draw('timeline\n  2001 : ' + 'several words that go on '.repeat(6) + '\n');
     expect(long.width).toBe(one.width);
-    expect(texts(long.svg).length).toBeGreaterThan(6);
-    for (const line of texts(long.svg)) expect(metricsMeasurer.width(line, 14, 0)).toBeLessThanOrEqual(152);
+    expect(lines(long.scene).length).toBeGreaterThan(6);
+    for (const line of lines(long.scene)) expect(metricsMeasurer.width(line, 14, 0)).toBeLessThanOrEqual(152);
   });
 
   it('widens columns for a long word, then cuts it', () => {
-    const base = render('timeline\n  2001 : short\n', options);
+    const base = draw('timeline\n  2001 : short\n');
     const word = 'Supercalifragilisticexpiali';
     expect(metricsMeasurer.width(word, 14, 0)).toBeGreaterThan(152);
     expect(metricsMeasurer.width(word, 14, 0)).toBeLessThan(216);
-    const wider = render(`timeline\n  2001 : ${word}\n`, options);
-    const cut = render('timeline\n  2001 : ' + 'x'.repeat(300) + '\n', options);
+    const wider = draw(`timeline\n  2001 : ${word}\n`);
+    const cut = draw('timeline\n  2001 : ' + 'x'.repeat(300) + '\n');
     expect(wider.width).toBeGreaterThan(base.width);
-    expect(texts(wider.svg)).toEqual(['2001', word]);
+    expect(lines(wider.scene)).toEqual(['2001', word]);
     expect(cut.width).toBeLessThanOrEqual(base.width + 64);
-    expect(texts(cut.svg).slice(1).join('')).toBe('x'.repeat(300));
-    const rect = elements(cut.svg).filter((el) => el.name === 'rect')[1];
-    for (const line of texts(cut.svg).slice(1)) {
-      expect(metricsMeasurer.width(line, 14, 0)).toBeLessThanOrEqual(Number(rect.attrs.get('width')) - 24);
+    expect(lines(cut.scene).slice(1).join('')).toBe('x'.repeat(300));
+    const [event] = eventsOf(cut.scene, items(cut.scene, 'pele-period')[0]);
+    for (const line of lines(cut.scene).slice(1)) {
+      expect(metricsMeasurer.width(line, 14, 0)).toBeLessThanOrEqual(event.x1 - event.x0 - 24);
     }
   });
 
   it('decodes entities and shows tags, links and icon names as written', () => {
-    const { svg } = render('timeline\n  2001 : #35;1 &amp; <b>bold</b> [link](http://example.com) fa:fa-check a<T>\n', options);
-    expect(texts(svg).slice(1).join(' ')).toBe('#1 &amp; &lt;b&gt;bold&lt;/b&gt; [link](http://example.com) fa:fa-check a&lt;T&gt;');
-    expect(svg).not.toContain('<a');
-    expect(svg).not.toContain('pele-icon');
+    const { scene } = draw('timeline\n  2001 : #35;1 &amp; <b>bold</b> [link](http://example.com) fa:fa-check a<T>\n');
+    expect(lines(scene).slice(1).join(' ')).toBe('#1 & <b>bold</b> [link](http://example.com) fa:fa-check a<T>');
+    expect(scene.skipped).toEqual({});
+    expect(scene.texts.every((t) => t.spans.every((s) => s.mono !== true))).toBe(true);
   });
 
   it('takes the title from front matter unless the diagram sets one', () => {
-    expect(render('---\ntitle: From front matter\n---\ntimeline\n  2001\n', options).svg).toContain('>From front matter<');
-    const own = render('---\ntitle: From front matter\n---\ntimeline\n  title Own\n  2001\n', options).svg;
-    expect(own).toContain('>Own<');
-    expect(own).not.toContain('From front matter');
-  });
-
-  it('writes accessible names', () => {
-    const { svg } = render('timeline\n  accTitle: Short name\n  accDescr {\n    A longer\n    description\n  }\n  2001\n', options);
-    expect(svg).toContain('<title id="pele-title">Short name</title>');
-    expect(svg).toContain('<desc id="pele-desc">A longer\ndescription</desc>');
+    expect(lines(draw('---\ntitle: From front matter\n---\ntimeline\n  2001\n').scene)).toContain('From front matter');
+    const own = draw('---\ntitle: From front matter\n---\ntimeline\n  title Own\n  2001\n').scene;
+    expect(lines(own)).toContain('Own');
+    expect(textOf(own)).not.toContain('From front matter');
   });
 
   it('draws an empty timeline, a lone title, and sections without periods', () => {
     for (const src of ['timeline', 'timeline TD', 'timeline\n  title Only', 'timeline\n  section S', 'timeline TD\n  section S\n  section T']) {
-      const { svg, width, height } = render(src, options);
-      expect(svg).not.toMatch(/NaN|Infinity|undefined/);
-      expect(width).toBeGreaterThan(0);
-      expect(height).toBeGreaterThan(0);
-      expect(count(svg, 'pele-axis')).toBe(0);
+      const result = draw(src);
+      expect(sceneProblem(result), src).toBeUndefined();
+      expect(textOf(result.scene), src).not.toMatch(/NaN|Infinity|undefined/);
+      expect(result.width).toBeGreaterThan(0);
+      expect(result.height).toBeGreaterThan(0);
+      expect(axes(result.scene), src).toHaveLength(0);
     }
   });
 
   it('rejects what Mermaid rejects', () => {
-    expect(() => render('timeline\n  : orphan event\n', options)).toThrow(PeleError);
-    expect(() => render('timeline\n  2001 :no space\n', options)).toThrow(/Expecting .* got 'INVALID'/);
-    expect(() => render('timeline\n  Timeline of things : x\n', options)).toThrow(/got 'timeline'/);
-    expect(() => render('timeline\n  accDescr {\n  never closed\n', options)).toThrow(PeleError);
+    expect(() => draw('timeline\n  : orphan event\n')).toThrow(PeleError);
+    expect(() => draw('timeline\n  2001 :no space\n')).toThrow(/Expecting .* got 'INVALID'/);
+    expect(() => draw('timeline\n  Timeline of things : x\n')).toThrow(/got 'timeline'/);
+    expect(() => draw('timeline\n  accDescr {\n  never closed\n')).toThrow(PeleError);
   });
 
   it('treats a bare title as no title', () => {
@@ -196,7 +210,7 @@ describe('timeline rendering', () => {
     const model = parse('timeline\nA%% label : event\nB : e2');
     expect(model.type).toBe('timeline');
     if (model.type === 'timeline') expect(model.periods.map((p) => p.text)).toEqual(['A%% label ', 'B ']);
-    expect(() => render('timeline\n  2024 :%% c\n', options)).toThrow(/got 'INVALID'/);
+    expect(() => draw('timeline\n  2024 :%% c\n')).toThrow(/got 'INVALID'/);
   });
 
   it('attaches an event after a section header to the last period, as Mermaid does', () => {
@@ -221,6 +235,6 @@ describe('timeline rendering', () => {
   });
 
   it('is deterministic', () => {
-    expect(render(SOCIAL, options).svg).toBe(render(SOCIAL, options).svg);
+    expect(draw(SOCIAL)).toEqual(draw(SOCIAL));
   });
 });

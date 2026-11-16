@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
-import { elements } from '../support/xml.js';
-
-const options = { measurer: metricsMeasurer };
+import { PeleError, parse, supports } from '../../src/index.js';
+import type { Scene, SceneShape } from '../../src/draw/scene.js';
+import { assertSafe, draw, hasClass, itemById, items, lineOf, lines, paints, shapesOf, textsOf } from '../support/scene.js';
 
 const FLOW = `
   commit id: "init"
@@ -24,111 +22,128 @@ const FLOW = `
 `;
 
 const withConfig = (yaml: string, body: string): string => `---\nconfig:\n  gitGraph:\n${yaml}\n---\n${body}`;
-const count = (svg: string, text: string): number => svg.split(text).length - 1;
+
+// Arguments after each path op code, as the scene's paths are written.
+const ARGC = [2, 2, 6, 4, 7, 0];
+
+// The op codes of a path: M 0, L 1, C 2, Q 3, A 4, Z 5.
+function ops(cmds: number[]): string {
+  let out = '';
+  for (let i = 0; i < cmds.length; i += 1 + ARGC[cmds[i]]) out += cmds[i];
+  return out;
+}
+
+const isCircle = (shape: SceneShape): boolean => ops(shape.cmds) === '0445';
+
+// The lines between commits: the strokes that belong to no part of the diagram.
+const edges = (scene: Scene): SceneShape[] => scene.shapes.filter((s) => s.item < 0 && s.kind === 'stroke');
+
+// A commit's labels are in the muted colour, its tags in the text colour.
+const commitLabels = (scene: Scene) => scene.texts.filter((t) => t.item >= 0 && hasClass(scene.items[t.item], 'pele-commit') && t.paint === 'var(--_m)');
+const tags = (scene: Scene) => scene.texts.filter((t) => t.item >= 0 && hasClass(scene.items[t.item], 'pele-commit') && t.paint === 'var(--_fg)');
 
 // Centers of the commit symbols, in drawing order, which is the order the commits were made in.
-function commitCenters(svg: string): { x: number; y: number }[] {
-  const out: { x: number; y: number }[] = [];
-  for (const group of svg.split('<g class="pele-commit ').slice(1)) {
-    const circle = /<circle cx="([-\d.]+)" cy="([-\d.]+)"/.exec(group);
-    const rect = /^[^>]*>(?:<title>[^<]*<\/title>)?<rect x="([-\d.]+)" y="([-\d.]+)"/.exec(group);
-    if (rect) out.push({ x: Number(rect[1]) + 8, y: Number(rect[2]) + 8 });
-    else if (circle) out.push({ x: Number(circle[1]), y: Number(circle[2]) });
-  }
-  return out;
+function commitCenters(scene: Scene): { x: number; y: number }[] {
+  return items(scene, 'pele-commit').map((item) => {
+    const { box } = shapesOf(scene, item).find((s) => s.kind === 'fill' && s.paint.startsWith('var(--pele-series-'))!;
+    return { x: (box.x0 + box.x1) / 2, y: (box.y0 + box.y1) / 2 };
+  });
 }
 
 describe('git graph rendering', () => {
   it('draws a lane per branch and a symbol per commit', () => {
-    const { svg, type } = render('gitGraph\n' + FLOW, options);
+    const { scene, type } = draw('gitGraph\n' + FLOW);
     expect(type).toBe('gitGraph');
     expect(supports('gitGraph\n commit')).toBe(true);
-    expect(svg).toContain('class="pele pele-gitGraph"');
-    expect(count(svg, 'class="pele-branch"')).toBe(3);
-    expect(count(svg, 'class="pele-lane"')).toBe(3);
-    expect(count(svg, '<g class="pele-commit ')).toBe(10);
-    expect(svg).toContain('data-id="develop"');
-    expect(svg).toContain('>hotfix<');
-    for (const k of [1, 2, 3]) expect(svg).toContain(`var(--pele-series-${k},`);
+    const branches = items(scene, 'pele-branch');
+    expect(branches).toHaveLength(3);
+    // Each branch draws its lane as a line and its name on a tab.
+    for (const branch of branches) expect(shapesOf(scene, branch).map((sh) => sh.kind)).toEqual(['stroke', 'fill']);
+    expect(items(scene, 'pele-commit')).toHaveLength(10);
+    expect(itemById(scene, 'develop', 'pele-branch')).toBeDefined();
+    expect(lines(scene)).toContain('hotfix');
+    for (const k of [1, 2, 3]) expect(paints(scene).some((p) => p.startsWith(`var(--pele-series-${k},`))).toBe(true);
   });
 
   it('gives each commit type its own symbol', () => {
-    const { svg } = render('gitGraph\n' + FLOW, options);
-    expect(count(svg, 'pele-commit-normal"')).toBe(5);
-    expect(count(svg, 'pele-commit-reverse"')).toBe(1);
-    expect(count(svg, 'pele-commit-highlight"')).toBe(1);
-    expect(count(svg, 'pele-commit-merge"')).toBe(2);
-    expect(count(svg, 'pele-commit-cherry-pick"')).toBe(1);
-    const highlight = svg.split('pele-commit-highlight"')[1].split('</g>')[0];
-    expect(highlight).toContain('<rect');
-    const merge = svg.split('pele-commit-merge"')[1].split('</g>')[0];
-    expect(count(merge, '<circle')).toBe(2);
+    const { scene } = draw('gitGraph\n' + FLOW);
+    const ofType = (type: string) => items(scene, `pele-commit-${type}`);
+    expect(ofType('normal')).toHaveLength(5);
+    expect(ofType('reverse')).toHaveLength(1);
+    expect(ofType('highlight')).toHaveLength(1);
+    expect(ofType('merge')).toHaveLength(2);
+    expect(ofType('cherry-pick')).toHaveLength(1);
+    // A highlight is a square, not a circle.
+    expect(shapesOf(scene, ofType('highlight')[0]).some(isCircle)).toBe(false);
+    expect(shapesOf(scene, ofType('normal')[0]).filter(isCircle)).toHaveLength(1);
+    // A merge is a ring with a dot in it: the dot, and the ring's inside and outline.
+    // (A tag's bullet is a circle too, in the border colour.)
+    expect(shapesOf(scene, ofType('merge')[0]).filter((s) => isCircle(s) && s.paint !== 'var(--_b)')).toHaveLength(3);
   });
 
   it('draws a merge with a type as that type, and still marks it as a merge', () => {
-    const { svg } = render('gitGraph\n commit\n branch b\n commit\n checkout main\n commit\n merge b type: REVERSE', options);
-    expect(svg).toContain('class="pele-commit pele-commit-reverse pele-commit-merge"');
+    const { scene } = draw('gitGraph\n commit\n branch b\n commit\n checkout main\n commit\n merge b type: REVERSE');
+    expect(items(scene).filter((i) => i.kind === 'pele-commit pele-commit-reverse pele-commit-merge')).toHaveLength(1);
   });
 
   it('labels commits with their ids, except unnamed merges and cherry-picks', () => {
-    const { svg } = render('gitGraph\n' + FLOW, options);
-    expect(svg).toContain('>init<');
-    expect(svg).toContain('>merged<');
-    expect(count(svg, 'class="pele-commit-label"')).toBe(8);
-    expect(count(svg, 'rotate(-45 ')).toBe(8);
-    const hidden = render(withConfig('    showCommitLabel: false', 'gitGraph\n' + FLOW), options).svg;
-    expect(hidden).not.toContain('pele-commit-label');
-    expect(hidden).toContain('>v0.1<');
+    const { scene } = draw('gitGraph\n' + FLOW);
+    expect(lines(scene)).toContain('init');
+    expect(lines(scene)).toContain('merged');
+    expect(commitLabels(scene)).toHaveLength(8);
+    expect(commitLabels(scene).every((t) => t.angle === -45)).toBe(true);
+    const hidden = draw(withConfig('    showCommitLabel: false', 'gitGraph\n' + FLOW)).scene;
+    expect(commitLabels(hidden)).toHaveLength(0);
+    expect(lines(hidden)).toContain('v0.1');
   });
 
   it('keeps ids level when rotateCommitLabel is off, and spaces commits to fit them', () => {
     const src = 'gitGraph\n commit id: "a rather long commit id"\n commit id: "another long commit id"\n commit';
-    const rotated = render(src, options);
-    const level = render(withConfig('    rotateCommitLabel: false', src), options);
-    expect(level.svg).not.toContain('rotate(');
+    const rotated = draw(src);
+    const level = draw(withConfig('    rotateCommitLabel: false', src));
+    expect(commitLabels(level.scene)).toHaveLength(3);
+    expect(commitLabels(level.scene).every((t) => t.angle === undefined)).toBe(true);
     expect(level.width).toBeGreaterThan(rotated.width);
     expect(level.height).toBeLessThan(rotated.height);
   });
 
   it('draws tags, the default cherry-pick tag, and no empty tag', () => {
-    const { svg } = render('gitGraph\n' + FLOW, options);
-    expect(count(svg, 'class="pele-tag"')).toBe(5);
-    expect(svg).toContain('>cherry-pick:fix<');
-    const none = render('gitGraph\n commit id:"a" tag:""\n branch b\n commit id:"c"\n checkout main\n commit\n cherry-pick id:"c" tag:""', options).svg;
-    expect(none).not.toContain('pele-tag');
+    const { scene } = draw('gitGraph\n' + FLOW);
+    expect(tags(scene)).toHaveLength(5);
+    expect(lines(scene)).toContain('cherry-pick:fix');
+    const none = draw('gitGraph\n commit id:"a" tag:""\n branch b\n commit id:"c"\n checkout main\n commit\n cherry-pick id:"c" tag:""').scene;
+    expect(tags(none)).toHaveLength(0);
   });
 
   it('connects commits: straight along a lane, curved between lanes, dashed for a cherry-pick', () => {
-    const { svg } = render('gitGraph\n' + FLOW, options);
-    expect(count(svg, 'class="pele-edge"')).toBe(9);
-    expect(count(svg, 'class="pele-edge pele-edge-merge"')).toBe(2);
-    expect(count(svg, 'class="pele-edge pele-edge-cherry-pick"')).toBe(1);
-    const cherry = svg.split('pele-edge-cherry-pick"')[1].split('/>')[0];
-    expect(cherry).toContain('stroke-dasharray');
-    const merge = svg.split('pele-edge-merge"')[1].split('/>')[0];
-    expect(merge).toMatch(/d="M[^"]*C[^"]*"/);
-    expect(merge).toContain('var(--pele-series-2,');
+    const { scene } = draw('gitGraph\n' + FLOW);
+    const all = edges(scene);
+    expect(all).toHaveLength(12);
+    const dashed = all.filter((e) => e.dash);
+    expect(dashed).toHaveLength(1);
+    expect(ops(dashed[0].cmds)).toContain('2');
+    expect(all.filter((e) => !ops(e.cmds).includes('2'))).toHaveLength(7);
+    // A branch leaves its parent in a curve and a merge arrives in one, after a straight run.
+    const merges = all.filter((e) => ops(e.cmds) === '012');
+    expect(merges).toHaveLength(2);
+    expect(merges[0].paint).toMatch(/^var\(--pele-series-2,/);
   });
 
   it('writes ids, tags, and branch names as plain text, with entity codes decoded and <br> as a line break', () => {
-    const { svg } = render('gitGraph\n commit id:"add <Button> #35;1" tag:"<i>t</i>"\n branch "one<br>two"\n commit id:"**a**"', options);
-    expect(svg).toContain('>add &lt;Button&gt; #1<');
-    expect(svg).toContain('>&lt;i&gt;t&lt;/i&gt;<');
-    expect(svg).toContain('>**a**<');
-    expect(svg).toMatch(/<tspan[^>]*>one<\/tspan><tspan[^>]*>two<\/tspan>/);
-    expect(svg).toContain('data-id="add &lt;Button&gt; #1"');
-  });
-
-  it('puts the commit message in a tooltip', () => {
-    expect(render('gitGraph\n commit id:"a" msg:"Fix <the> bug"', options).svg).toContain('<title>Fix &lt;the&gt; bug</title>');
+    const { scene } = draw('gitGraph\n commit id:"add <Button> #35;1" tag:"<i>t</i>"\n branch "one<br>two"\n commit id:"**a**"');
+    expect(lines(scene)).toContain('add <Button> #1');
+    expect(lines(scene)).toContain('<i>t</i>');
+    expect(lines(scene)).toContain('**a**');
+    expect(textsOf(scene, items(scene, 'pele-branch')[1]).map(lineOf)).toEqual(['one', 'two']);
+    expect(itemById(scene, 'add <Button> #1')).toBeDefined();
   });
 
   it('lays lanes out across the page for TB and upside down for BT', () => {
     const body = '\n commit\n commit\n branch b\n commit\n commit\n checkout main\n commit';
-    const lr = render('gitGraph' + body, options);
-    const tb = render('gitGraph TB:' + body, options);
-    const bt = render('gitGraph BT:' + body, options);
-    const [l, t, b] = [lr, tb, bt].map((r) => commitCenters(r.svg));
+    const lr = draw('gitGraph' + body);
+    const tb = draw('gitGraph TB:' + body);
+    const bt = draw('gitGraph BT:' + body);
+    const [l, t, b] = [lr, tb, bt].map((r) => commitCenters(r.scene));
     expect(l).toHaveLength(5);
     expect(l[1].x).toBeGreaterThan(l[0].x);
     expect(l[1].y).toBe(l[0].y);
@@ -140,24 +155,24 @@ describe('git graph rendering', () => {
     expect(b[2].x).toBeGreaterThan(b[0].x);
     expect(tb.height).toBeGreaterThan(tb.width);
     expect(bt.height).toBe(tb.height);
-    expect(bt.svg).toContain('rotate(45 ');
+    expect(commitLabels(bt.scene).every((t) => t.angle === 45)).toBe(true);
   });
 
   it('shares positions between branches with parallelCommits', () => {
     const src = 'gitGraph\n commit\n branch develop\n commit\n commit\n checkout main\n commit\n commit';
-    const serial = render(src, options);
-    const parallel = render(withConfig('    parallelCommits: true', src), options);
+    const serial = draw(src);
+    const parallel = draw(withConfig('    parallelCommits: true', src));
     expect(parallel.width).toBeLessThan(serial.width);
-    const centers = commitCenters(parallel.svg);
+    const centers = commitCenters(parallel.scene);
     expect(centers[3].x).toBe(centers[1].x);
     expect(centers[4].x).toBe(centers[2].x);
   });
 
   it('hides branch names and lane lines when showBranches is off', () => {
-    const { svg } = render(withConfig('    showBranches: false', 'gitGraph\n' + FLOW), options);
-    expect(svg).not.toContain('pele-branch');
-    expect(svg).not.toContain('>develop<');
-    expect(count(svg, '<g class="pele-commit ')).toBe(10);
+    const { scene } = draw(withConfig('    showBranches: false', 'gitGraph\n' + FLOW));
+    expect(items(scene, 'pele-branch')).toHaveLength(0);
+    expect(lines(scene)).not.toContain('develop');
+    expect(items(scene, 'pele-commit')).toHaveLength(10);
   });
 
   it('names and orders the main branch from config, and orders branches by `order`', () => {
@@ -166,9 +181,10 @@ describe('git graph rendering', () => {
     expect(model.type).toBe('gitGraph');
     if (model.type !== 'gitGraph') return;
     expect(model.lanes).toEqual(['b1', 'b3', 'trunk', 'b2']);
-    const { svg } = render(withConfig('    mainBranchName: trunk\n    mainBranchOrder: 2', src), options);
-    expect(svg.indexOf('data-id="b3"')).toBeLessThan(svg.indexOf('data-id="trunk"'));
-    expect(render('%%{init: {"gitGraph": {"mainBranchName": "dev"}}}%%\ngitGraph\n commit', options).svg).toContain('>dev<');
+    const { scene } = draw(withConfig('    mainBranchName: trunk\n    mainBranchOrder: 2', src));
+    const ids = items(scene, 'pele-branch').map((i) => i.id);
+    expect(ids.indexOf('b3')).toBeLessThan(ids.indexOf('trunk'));
+    expect(lines(draw('%%{init: {"gitGraph": {"mainBranchName": "dev"}}}%%\ngitGraph\n commit').scene)).toContain('dev');
   });
 
   it('reads branch names that start with title', () => {
@@ -181,16 +197,10 @@ describe('git graph rendering', () => {
   });
 
   it('takes the title from front matter unless the graph sets one', () => {
-    expect(render('---\ntitle: From front matter\n---\ngitGraph\n commit', options).svg).toContain('From front matter');
-    const own = render('---\ntitle: From front matter\n---\ngitGraph\n title Own\n commit', options).svg;
-    expect(own).toContain('>Own<');
-    expect(own).not.toContain('From front matter');
-  });
-
-  it('writes the accessible title and description', () => {
-    const { svg } = render('gitGraph\n accTitle: History\n accDescr: Two branches\n commit', options);
-    expect(svg).toContain('<title id="pele-title">History</title>');
-    expect(svg).toContain('<desc id="pele-desc">Two branches</desc>');
+    expect(lines(draw('---\ntitle: From front matter\n---\ngitGraph\n commit').scene)).toContain('From front matter');
+    const own = draw('---\ntitle: From front matter\n---\ngitGraph\n title Own\n commit').scene;
+    expect(lines(own)).toContain('Own');
+    expect(lines(own)).not.toContain('From front matter');
   });
 
   it('generates the same commit ids every time, in Mermaid\'s shape', () => {
@@ -201,7 +211,7 @@ describe('git graph rendering', () => {
     expect(ids).toHaveLength(5);
     ids.forEach((id, seq) => expect(id).toMatch(new RegExp(`^${seq}-[0-9a-f]{7}$`)));
     expect(new Set(ids).size).toBe(5);
-    expect(render(src, options).svg).toBe(render(src, options).svg);
+    expect(draw(src).scene).toEqual(draw(src).scene);
     const again = parse(src);
     expect(again.type === 'gitGraph' && [...again.commits.keys()]).toEqual(ids);
   });
@@ -222,7 +232,7 @@ describe('git graph rendering', () => {
     expect([...model.commits.keys()]).toEqual(['a', 'b']);
     expect(model.commits.get('a')?.seq).toBe(2);
     expect(model.warnings).toEqual(['Commit ID a already exists']);
-    expect(render('gitGraph\n commit id:"a"\n commit id:"a"\n branch b\n commit id:"a"', options).svg).toContain('pele-commit');
+    expect(items(draw('gitGraph\n commit id:"a"\n commit id:"a"\n branch b\n commit id:"a"').scene, 'pele-commit').length).toBeGreaterThan(0);
   });
 
   it('rejects what Mermaid rejects, with its messages', () => {
@@ -246,7 +256,7 @@ describe('git graph rendering', () => {
     for (const [src, message] of cases) {
       let error: unknown;
       try {
-        render(src, options);
+        draw(src);
       } catch (e) {
         error = e;
       }
@@ -257,24 +267,19 @@ describe('git graph rendering', () => {
   });
 
   it('draws a graph with no commits, and one with only branches', () => {
-    expect(render('gitGraph', options).svg).toContain('>main<');
-    const { svg } = render('gitGraph\n branch a\n branch "b c"', options);
-    expect(count(svg, 'class="pele-branch"')).toBe(3);
-    expect(svg).toContain('>b c<');
-    expect(svg).not.toContain('NaN');
+    expect(lines(draw('gitGraph').scene)).toContain('main');
+    const result = draw('gitGraph\n branch a\n branch "b c"');
+    expect(items(result.scene, 'pele-branch')).toHaveLength(3);
+    expect(lines(result.scene)).toContain('b c');
+    assertSafe(result, 'branches only');
   });
 
   it('emits only finite coordinates', () => {
     for (const header of ['gitGraph', 'gitGraph TB:', 'gitGraph BT:']) {
       for (const config of ['    parallelCommits: true', '    rotateCommitLabel: false', '    showBranches: false']) {
-        const { svg, width, height } = render(withConfig(config, header + '\n' + FLOW), options);
-        expect(Number.isFinite(width) && Number.isFinite(height)).toBe(true);
-        expect(svg).not.toMatch(/NaN|Infinity|undefined/);
-        for (const el of elements(svg)) {
-          for (const [name, value] of el.attrs) {
-            if (name === 'cx' || name === 'cy' || name === 'x' || name === 'y') expect(Number.isFinite(Number(value)), name).toBe(true);
-          }
-        }
+        const result = draw(withConfig(config, header + '\n' + FLOW));
+        expect(Number.isFinite(result.width) && Number.isFinite(result.height)).toBe(true);
+        assertSafe(result, `${header} ${config}`);
       }
     }
   });

@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { esc, num } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { inkFill } from '../../svg/ink.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill } from '../../svg/theme.js';
@@ -18,8 +18,6 @@ const HEADER = 28;
 const SHORT_HEADER = 18;
 const SIDE = 6;
 const LINE = 1.25;
-
-const titlePart = (raw: string): string => esc(decodeEntities(raw).trim()).trim();
 
 function leafCount(roots: TreemapNode[]): number {
   let count = 0;
@@ -85,25 +83,12 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     const y = top + b.y;
     const name = decodeEntities(node.name).trim();
     const value = showValues ? format(b.value) : '';
-    // Include headerless ancestors in tooltips because their children cover them.
-    const own = titlePart(node.name);
-    const path = own === '' ? [] : [own];
-    for (let p = b.parent; p !== undefined && !p.headed; p = p.parent) {
-      const section = titlePart(p.node.name);
-      if (section !== '') path.unshift(section);
-    }
-    const full = path.join(' › ');
-    // Already escaped, which a tooltip would escape again.
-    const tooltip = (drawn: string | undefined): void => {
-      if (!(full === '' || (drawn === name && full === own))) out.raw(`<title>${full}</title>`);
-    };
     // Inline font sizes override SVG attributes, so truncate instead of shrinking.
     const fixed = style.fontSize;
     const textStyle = (style.bold ? Style.Bold : 0) | (style.italic ? Style.Italic : 0);
     const ink = setsFill(style.shape) ? inkFill(style) : seriesInkFill(b.series);
 
     if (node.children !== undefined) {
-      let drawn: string | undefined;
       let header: (() => void) | undefined;
       if (b.headed) {
         const short = b.header < HEADER;
@@ -117,7 +102,6 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
             ? fitText(name, withValue ? room - valueWidth - 12 : room, labelSize, labelSize, measurer, textStyle | Style.Bold)
             : undefined;
         const baseline = y + b.header / 2 + 1;
-        drawn = label?.text;
         header = () => {
           if (label) {
             out.text(x + SIDE + 2, baseline + labelSize * 0.35, label.text, '', ` font-weight="var(--_hw)"${short ? ` font-size="${labelSize}"` : ''}${ink}${style.text}`);
@@ -132,7 +116,6 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
       const tint = /[";]fill:/.test(style.shape) ? '' : ' fill-opacity="0.12"';
       out.section('sections');
       out.group({ cls: `pele-node pele-section${classNames(node.classSelector ?? '')}`, id: node.name, source: node.source });
-      tooltip(drawn);
       if (b.headed) out.rect(x, y, b.w, b.h, ` fill="${color}"${corners(`${tint} stroke="${color}"${style.shape}`, b)}`);
       else out.rect(x, y, b.w, b.h, ' fill="none"');
       header?.();
@@ -147,7 +130,6 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     const label = tallest >= smallest ? fitText(name, room, tallest, smallest, measurer, textStyle) : undefined;
     out.section('leaves');
     out.group({ cls: `pele-node pele-leaf${classNames(node.classSelector ?? '')}`, id: node.name, source: node.source });
-    tooltip(label?.text);
     out.rect(x, y, b.w, b.h, ` fill="${color}"${corners(style.shape, b)}`);
     if (label) {
       const cx = x + b.w / 2;
@@ -166,5 +148,6 @@ export function renderTreemap(model: TreemapModel, config: Config, options: Rend
     out.end();
   }
 
-  return { svg: out.done('treemap', totalWidth, totalHeight, size, options, model), width: totalWidth, height: totalHeight, links: [] };
+  out.done(totalWidth, totalHeight);
+  return { width: totalWidth, height: totalHeight, links: [] };
 }

@@ -1,6 +1,6 @@
 # Security
 
-Pele escapes diagram text, filters links and styles, and limits source and output size.
+Pele filters links and styles and limits source and output size.
 
 ## Reporting a vulnerability
 
@@ -11,11 +11,8 @@ Please report diagrams that bypass URL filtering, inject scripts or HTML, or tak
 ## Handling untrusted diagrams
 
 - Display errors with `textContent`. Error messages can contain text from the diagram.
-- Supply icons from a set you trust. Pele inserts icon markup without filtering.
+- Supply icons from a set you trust. Pele reads icon markup into the scene without filtering its paints.
 - Handle internal links as note names. Their values are not filtered as URLs.
 - Keep control of `options` and `options.config`. Do not let diagram authors supply them directly.
 - Images can make network requests when displayed. Pass `links: false` and `images: false` to disable links and images.
-- To use your app's SVG sanitizer, pass a `sanitize` function to `mount()`.
-- For a time limit, render in a worker that your app can terminate.
-
-See the [security documentation](https://pele.run/security) for URL filtering, default limits, and examples.
+- For a time limit, draw in a worker that your app can terminate.

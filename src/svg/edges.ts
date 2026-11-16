@@ -470,12 +470,6 @@ export function edgeInk(fill: Fill, line = ''): string {
   return (/[";]stroke:/.test(line) ? undefined : ink(fill.shape)) ?? '';
 }
 
-// Markers with the page color inside them, with the fill's color there instead.
-export function hollowOn(markers: string, fill: Fill): string {
-  const color = /[";]fill:([^;"]*)/.exec(fill.shape)?.[1].trim();
-  return color ? markers.replace(/ fill="var\(--_bg\)"/g, ` fill="${color}"`) : markers;
-}
-
 // The ink of the innermost fill that holds the whole edge, '' for a casing where it crosses a border, or undefined off fills.
 export function overFills(d: string, tips: number[], fills: Fill[], line = '', tokens?: number[]): string | undefined {
   const fill = fillUnder(d, tips, fills, tokens);

@@ -561,5 +561,6 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
   out.section('main');
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
   if (G > 0 || N > 0) out.frame(ox, oy);
-  return { svg: out.done('architecture', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

@@ -1,22 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { parse, type RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
 const H = 'agentflow-beta TB\n';
 
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
-  expect(svg, JSON.stringify(src).slice(0, 160)).not.toMatch(/ (?:d|transform|points|x|y|width|height|viewBox)="[^"]*(?:NaN|Infinity|undefined)/);
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -105,7 +98,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"agentflow": {"nodeSpacing": "${p}"}, "flowchart": {"curve": "${p}"}, "themeVariables": {"fontFamily": "${p}"}}}%%\n${H}  a --> b`,
 ];
 
-describe('inert agentflow output', () => {
+describe('safe agentflow output', () => {
   it('holds for every corpus input', () => {
     for (const src of loadCorpus('agentflow', /agentflow-beta/)) check(src);
   });
@@ -120,21 +113,19 @@ describe('inert agentflow output', () => {
     expect(rendered).toBeGreaterThan(900);
   });
 
-  it('escapes what it shows', () => {
-    const { svg } = render(
-      `${H}  a["<img src=x onerror=alert(1)>"] -- "</text><script>alert(1)</script>" --> b["a&b"]\n  flow f["<svg onload=alert(1)>"]\n   c\n  end`,
-      options
+  it('shows what it is given as text', () => {
+    const { scene } = draw(
+      `${H}  a["<img src=x onerror=alert(1)>"] -- "</text><script>alert(1)</script>" --> b["a&b"]\n  flow f["<svg onload=alert(1)>"]\n   c\n  end`
     );
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<svg onload');
-    expect(svg).toContain('a&amp;b');
+    const text = lines(scene);
+    expect(text).toContain('a&b');
+    expect(text.join('\n')).not.toContain('<script');
   });
 
-  it('escapes ids in attributes', () => {
-    const { svg } = render(`${H}  flow q&r\n  a\n  end\n  connector 'x&y'`, options);
-    expect(svg).toContain('data-id="q&amp;r"');
-    expect(svg).toContain(`data-id="'x&amp;y'"`);
+  it('keeps ids as written', () => {
+    const { scene } = draw(`${H}  flow q&r\n  a\n  end\n  connector 'x&y'`);
+    expect(itemById(scene, 'q&r')).toBeDefined();
+    expect(itemById(scene, `'x&y'`)).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
@@ -159,23 +150,22 @@ describe('inert agentflow output', () => {
 
   it('never links to a script', () => {
     for (const url of ['javascript:alert(1)', ' JaVaScRiPt:alert(1)', 'data:text/html,<script>alert(1)</script>', 'vbscript:x']) {
-      const { svg, links } = render(`${H}  a\n  click a href "${url}"`, options);
-      expect(svg).not.toMatch(/href="(?:\s*javascript|data|vbscript)/i);
-      for (const link of links) expect(link.href).not.toMatch(/^\s*(?:javascript|data|vbscript):/i);
+      const result = draw(`${H}  a\n  click a href "${url}"`);
+      assertSafe(result, url);
+      for (const link of result.links) expect(link.href).not.toMatch(/^\s*(?:javascript|data|vbscript):/i);
     }
   });
 
-  it('never gives an unsafe href to an internal link', () => {
-    const { svg, links } = render(`${H}  a["javascript:alert(1)"]:::internal-link`, options);
-    expect(svg).toContain('<a class="internal-link" data-href="javascript:alert(1)">');
+  it('reports the target of an internal link as written', () => {
+    const { links } = draw(`${H}  a["javascript:alert(1)"]:::internal-link`);
     expect(links).toEqual([{ id: 'a', href: 'javascript:alert(1)', internal: true }]);
   });
 
   it('does not pollute prototypes', () => {
-    render(`${H}  __proto__ --> constructor --> toString\n  flow __proto__[constructor]\n  hasOwnProperty\n  end\n  connector prototype["__proto__"]`, options);
-    render(`${H}  a\n  classDef __proto__ fill:red\n  class a __proto__\n  class __proto__ constructor\n  style __proto__ fill:red\n  a:::__proto__`, options);
-    render(`${H}  a@{ __proto__: 1, constructor: 2, prototype: 3 }\n  a@{\n    __proto__:\n      polluted: true\n    constructor:\n      prototype:\n        polluted: true\n  }`, options);
-    render(`${H}  a[|__proto__:polluted|x]\n  global\n  __proto__\n  end\n  flow f@{ __proto__: 1 }\n  __proto__\n  end`, options);
+    draw(`${H}  __proto__ --> constructor --> toString\n  flow __proto__[constructor]\n  hasOwnProperty\n  end\n  connector prototype["__proto__"]`);
+    draw(`${H}  a\n  classDef __proto__ fill:red\n  class a __proto__\n  class __proto__ constructor\n  style __proto__ fill:red\n  a:::__proto__`);
+    draw(`${H}  a@{ __proto__: 1, constructor: 2, prototype: 3 }\n  a@{\n    __proto__:\n      polluted: true\n    constructor:\n      prototype:\n        polluted: true\n  }`);
+    draw(`${H}  a[|__proto__:polluted|x]\n  global\n  __proto__\n  end\n  flow f@{ __proto__: 1 }\n  __proto__\n  end`);
     const model = parse(`${H}  a@{ shape: constructor }`);
     expect(model.type === 'agentflow' && model.diagnostics.map((d) => d.id)).toEqual(['SHAPE_UNSUPPORTED']);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();

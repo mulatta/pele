@@ -11,7 +11,7 @@ import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from 
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
-import { imageUrl, internalLink, linkUrl, relAttr, safeUrl } from '../../util/url.js';
+import { imageUrl, linkUrl, safeUrl } from '../../util/url.js';
 import type { IconResolver, LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, tighten, titleRoom, turnToFit } from '../common/fit-width.js';
 import type { FlowDb } from './db.js';
@@ -220,7 +220,8 @@ function draw(out: Out, db: FlowDb, config: Config, options: RenderOptions, vari
 
   out.section('title');
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-  return { svg: out.done(variant?.type ?? 'flowchart', width, height, size, options, db), width, height, links };
+  out.done(width, height);
+  return { width, height, links };
 }
 
 // Draws clusters and nodes; returns the boxes of filled clusters, which edges over them take ink from.
@@ -271,8 +272,7 @@ function drawNodes(
     out.section('nodes');
     out.group({ cls: `pele-node pele-shape-${view.shape}${classes}`, id: node.id, source: node.source, x, y });
     const href = node.link ? linkUrl(node.link, options) : undefined;
-    if (href !== undefined) out.link(` href="${esc(href)}"${node.linkTarget ? ` target="${esc(node.linkTarget)}"` : ''}${relAttr(options)}`);
-    if (node.tooltip) out.tooltip(node.tooltip);
+    if (href !== undefined) out.link();
     let ink = '';
     if (node.img) {
       const aw = assetSize(node.assetWidth, 80);
@@ -303,9 +303,7 @@ function drawNodes(
     if (internal && node.label && options.links !== false) {
       // The label is a note name, but it still ends up in an href, so it gets the same check as a URL.
       const name = decodeEntities(node.label);
-      const safe = internalLink(name, options);
-      const target = esc(name);
-      out.link(` class="internal-link"${safe ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}"`);
+      out.link();
       out.label(view.label, 0, view.dy, textAttrs, icons);
       out.end();
       links.push({ id: node.id, href: name, internal: true });
@@ -359,7 +357,7 @@ function drawEdges(
         const arrives = reach.of(ce.dst, endSide(route, route.length - 3, cnodes[ce.dst]));
         insetRoute(route, 0, views[ce.src], cnodes[ce.src]);
         insetRoute(route, route.length - 3, views[ce.dst], cnodes[ce.dst]);
-        path = routePath(route, edge.curve, markerTrim(startType), markerTrim(endType), leaves, arrives, !out.numbers);
+        path = routePath(route, edge.curve, markerTrim(startType), markerTrim(endType), leaves, arrives, false);
       }
       const over = overFills(path.d, [path.sx, path.sy, path.ex, path.ey], fills, style?.line, path.tokens);
       const color = over || (style?.stroke && edge.thickness !== 'invisible' ? esc(style.stroke) : 'var(--_l)');

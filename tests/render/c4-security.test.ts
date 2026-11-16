@@ -1,21 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, paints, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
 const corpus = loadCorpus('c4', /C4(?:Context|Container|Component|Dynamic|Deployment)/);
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -71,7 +64,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"c4": {"c4ShapeInRow": "${p}"}, "themeVariables": {"fontFamily": "${p}"}}}%%\nC4Context\n${TWO}`,
 ];
 
-describe('inert C4 output', () => {
+describe('safe C4 scenes', () => {
   it('holds for every corpus input', () => {
     let rendered = 0;
     for (const src of corpus) if (check(src)) rendered++;
@@ -109,25 +102,20 @@ describe('inert C4 output', () => {
 
   it('never emits an unsafe link', () => {
     for (const url of ['javascript:alert(1)', ' JaVaScRiPt:alert(1)', 'data:text/html,x', 'vbscript:x', 'jav&#x09;ascript:alert(1)']) {
-      const { svg, links } = render(
-        `C4Context\nSystem(a, "A", $link="${url}")\nBoundary(b, "B", $link="${url}") {\nSystem(c, "C")\n}\nRel(a, c, "x", $link="${url}")`,
-        options
-      );
-      expect(svg).not.toContain('<a ');
+      const { links } = draw(`C4Context\nSystem(a, "A", $link="${url}")\nBoundary(b, "B", $link="${url}") {\nSystem(c, "C")\n}\nRel(a, c, "x", $link="${url}")`);
       expect(links).toEqual([]);
     }
   });
 
   it('drops colours that are more than a colour', () => {
-    const { svg } = render(
-      `C4Context\nSystem(a, "A")\nSystem(b, "B")\nRel(a, b, "x")\nUpdateElementStyle(a, "red;background:url(//evil.example/x)", "expression(alert(1))", "url(#x)")\nUpdateRelStyle(a, b, "red}", "blue<")`,
-      options
+    const { scene } = draw(
+      `C4Context\nSystem(a, "A")\nSystem(b, "B")\nRel(a, b, "x")\nUpdateElementStyle(a, "red;background:url(//evil.example/x)", "expression(alert(1))", "url(#x)")\nUpdateRelStyle(a, b, "red}", "blue<")`
     );
-    expect(svg).not.toMatch(/url\(|expression|evil|red|blue/);
+    expect(paints(scene).join('\n')).not.toMatch(/url\(|expression|evil|red|blue/);
   });
 
   it('does not pollute prototypes', () => {
-    render('C4Context\nSystem(__proto__, "A", $__proto__="polluted", $constructor="x")\nSystem(constructor, "B", $tags="__proto__,constructor", $shape="toString")\nRel(__proto__, constructor, "x")\nUpdateElementStyle(__proto__, $prototype="x")\nUpdateRelStyle(__proto__, constructor, $__proto__="1")', options);
+    draw('C4Context\nSystem(__proto__, "A", $__proto__="polluted", $constructor="x")\nSystem(constructor, "B", $tags="__proto__,constructor", $shape="toString")\nRel(__proto__, constructor, "x")\nUpdateElementStyle(__proto__, $prototype="x")\nUpdateRelStyle(__proto__, constructor, $__proto__="1")');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'x')).toBe(false);
   });

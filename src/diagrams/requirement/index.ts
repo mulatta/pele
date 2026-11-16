@@ -5,7 +5,6 @@ import { renderRequirement } from './render.js';
 
 export const requirement: Diagram<RequirementDb> = {
   type: 'requirement',
-  scene: true,
   math: true,
   parse(source, _config, title) {
     const db = new RequirementDb();

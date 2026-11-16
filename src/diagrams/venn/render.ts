@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { ink } from '../../svg/ink.js';
 import { resolveStyle, seriesColor, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -33,7 +33,6 @@ function keyOf(ids: string[]): string {
 }
 
 export function renderVenn(model: VennModel, _config: Config, options: RenderOptions, out: Out): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.8125);
@@ -209,20 +208,17 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
         out.label(line.label, x, cy, ` class="pele-label"${line.size === size ? '' : ` font-size="${line.size}"`}${color ? ` fill="${color}"` : ''}${own}`);
       } else {
         const paint = ` font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
-        // The SVG writes the item's attributes on the text itself; a scene gets a group for it.
-        out.both(
-          () => labelSvg(line.label, x, cy, ` class="pele-venn-text" data-id="${escText(line.id!)}"${srcAttrs(line.source)}${paint}`),
-          () => {
-            out.group({ cls: 'pele-venn-text', id: line.id, source: line.source, attrs: paint });
-            out.label(line.label, x, cy, '');
-            out.end();
-          }
-        );
+        // The item is a group, so its paint reaches the label's text.
+        out.group({ cls: 'pele-venn-text', id: line.id, source: line.source, attrs: paint });
+        out.label(line.label, x, cy, '');
+        out.end();
+
       }
       y += line.label.height;
     }
     out.end();
   }
 
-  return { svg: out.done('venn', width, height, size, options, {}), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

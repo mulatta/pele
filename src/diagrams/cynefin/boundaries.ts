@@ -89,7 +89,7 @@ export function curvePen(pen: Pen, curve: number[]): Pen {
   return forward(pen.M(curve[0], curve[1]), curve);
 }
 
-// The same curve as text, which the SVG writers of the reference tests compare against.
+// The same curve as path text, which the reference tests compare against.
 export function curvePath(curve: number[]): string {
   let d = `M${num(curve[0])},${num(curve[1])}`;
   for (let i = 2; i < curve.length; i += 6) {
@@ -103,7 +103,7 @@ export function ellipsePath(cx: number, cy: number, rx: number, ry: number): str
   return `M${num(cx - rx)},${num(cy)}A${r} 0 1,1 ${num(cx + rx)},${num(cy)}A${r} 0 1,1 ${num(cx - rx)},${num(cy)}Z`;
 }
 
-// The same ellipse as numbers, for a scene; ellipsePath writes the arc flags the SVG way.
+// The same ellipse as numbers, for a scene.
 export function ellipsePen(pen: Pen, cx: number, cy: number, rx: number, ry: number): Pen {
   return pen.M(cx - rx, cy).A(rx, ry, 0, 1, 1, cx + rx, cy).A(rx, ry, 0, 1, 1, cx - rx, cy).Z();
 }

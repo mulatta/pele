@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
+import { esc, num, sharedStyle, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
 import { CASINGS_ATTRS, edgeInk, fillUnder, routePath, type Fill } from '../../svg/edges.js';
 import { ON_DARK, ON_LIGHT, ink, inkFill, paints } from '../../svg/ink.js';
@@ -9,7 +9,6 @@ import { ROUNDED, classNames, resolveStyle, rounded, setsFill, type ResolvedStyl
 import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
-import { internalLink, relAttr } from '../../util/url.js';
 import { iconSvg } from '../common/icon.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
@@ -93,89 +92,52 @@ function textLeft(out: Out, label: Label, x: number, y: number, attrs: string, i
   const shift = label.size * 0.35;
   const top = y - shift - label.lineHeight / 2;
   // Runs that set no position of their own continue the one before; icons and math sit after the text.
-  out.both(
-    () => {
-      let body = '';
-      let extra = '';
-      let ty = y;
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const middle = top + lineMiddle(label, i);
-        if (hasMath(line)) {
-          extra += labelSvg(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
-          continue;
+  const style = textStyle(attrs, shared);
+  let runs: Run[] = [];
+  let rx = 0;
+  let ry = 0;
+  const flush = (): void => {
+    if (runs.length > 0) out.spans(rx, ry, runs, style);
+    runs = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (hasMath(line)) continue;
+    const ty = top + lineMiddle(label, i) + shift;
+    let hasIcon = false;
+    for (const span of line) if (span.icon !== undefined) hasIcon = true;
+    let sx = x;
+    let placed = false;
+    for (const span of line) {
+      if (span.icon === undefined && span.text !== '') {
+        if (hasIcon || !placed) {
+          flush();
+          rx = sx;
+          ry = ty;
         }
-        ty = middle + shift;
-        let hasIcon = false;
-        for (const span of line) if (span.icon !== undefined) hasIcon = true;
-        let sx = x;
-        let placed = false;
-        for (const span of line) {
-          if (span.icon !== undefined) {
-            const side = label.size * 1.1;
-            extra += `<svg class="pele-icon" data-icon="${escText(span.icon)}" x="${num(sx)}" y="${num(
-              ty - label.size * 0.35 - side / 2
-            )}" width="${num(side)}" height="${num(side)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-              icons?.(span.icon) ?? ''
-            }</svg>`;
-          } else if (span.text !== '') {
-            const pos = hasIcon || !placed ? ` x="${num(sx)}" y="${num(ty)}"` : '';
-            body += `<tspan${pos}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
-            placed = true;
-          }
-          sx += span.width;
-        }
+        runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
+        placed = true;
       }
-      return `<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>${extra}`;
-    },
-    () => {
-      const style = textStyle(attrs, shared);
-      let runs: Run[] = [];
-      let rx = 0;
-      let ry = 0;
-      const flush = (): void => {
-        if (runs.length > 0) out.spans(rx, ry, runs, style);
-        runs = [];
-      };
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (hasMath(line)) continue;
-        const ty = top + lineMiddle(label, i) + shift;
-        let hasIcon = false;
-        for (const span of line) if (span.icon !== undefined) hasIcon = true;
-        let sx = x;
-        let placed = false;
-        for (const span of line) {
-          if (span.icon === undefined && span.text !== '') {
-            if (hasIcon || !placed) {
-              flush();
-              rx = sx;
-              ry = ty;
-            }
-            runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
-            placed = true;
-          }
-          sx += span.width;
-        }
-      }
-      flush();
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const middle = top + lineMiddle(label, i);
-        if (hasMath(line)) {
-          out.label(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
-          continue;
-        }
-        const ty = middle + shift;
-        const side = label.size * 1.1;
-        let sx = x;
-        for (const span of line) {
-          if (span.icon !== undefined) out.opaque(iconSvg(span.icon, sx, ty - label.size * 0.35 - side / 2, side, icons), 'icon');
-          sx += span.width;
-        }
-      }
+      sx += span.width;
     }
-  );
+  }
+  flush();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const middle = top + lineMiddle(label, i);
+    if (hasMath(line)) {
+      out.label(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
+      continue;
+    }
+    const ty = middle + shift;
+    const side = label.size * 1.1;
+    let sx = x;
+    for (const span of line) {
+      if (span.icon !== undefined) out.opaque(iconSvg(span.icon, sx, ty - label.size * 0.35 - side / 2, side, icons), 'icon');
+      sx += span.width;
+    }
+  }
+
 }
 
 // Mermaid reads `~` pairs as angle brackets. They are written as entities so the label parser
@@ -437,33 +399,15 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
       // Over a fill the diagram chose, the shading is a tint of that fill. The opacity is on the
       // group because the two parts of the last row overlap.
       const stripeAttrs = ` fill="${shade}"${view.style.shape.includes('fill:') ? ' opacity="0.6"' : ''}`;
-      // The SVG writes each stripe's width before its y, which no typed rect does.
-      out.both(
-        () => {
-          const span = `x="${num(x0)}" width="${num(w)}"`;
-          let stripes = '';
-          for (let k = 0; k < stripeAt.length; k += 3) {
-            const at = num(stripeAt[k]);
-            const hh = stripeAt[k + 1];
-            // The last row follows the box's rounded bottom corners: a rounded rect, squared off on top.
-            stripes +=
-              stripeAt[k + 2] === 1
-                ? `<rect ${span} y="${at}" height="${num(hh)}"${ROUNDED}/><rect ${span} y="${at}" height="${num(hh / 2)}"/>`
-                : `<rect ${span} y="${at}" height="${num(hh)}"/>`;
-          }
-          return `<g class="pele-er-stripes"${stripeAttrs}>${stripes}</g>`;
-        },
-        () => {
-          out.group({ cls: 'pele-er-stripes', attrs: stripeAttrs });
-          for (let k = 0; k < stripeAt.length; k += 3) {
-            if (stripeAt[k + 2] === 1) {
-              out.rect(x0, stripeAt[k], w, stripeAt[k + 1], ROUNDED);
-              out.rect(x0, stripeAt[k], w, stripeAt[k + 1] / 2, '');
-            } else out.rect(x0, stripeAt[k], w, stripeAt[k + 1], '');
-          }
-          out.end();
-        }
-      );
+      out.group({ cls: 'pele-er-stripes', attrs: stripeAttrs });
+      for (let k = 0; k < stripeAt.length; k += 3) {
+        if (stripeAt[k + 2] === 1) {
+          out.rect(x0, stripeAt[k], w, stripeAt[k + 1], ROUNDED);
+          out.rect(x0, stripeAt[k], w, stripeAt[k + 1] / 2, '');
+        } else out.rect(x0, stripeAt[k], w, stripeAt[k + 1], '');
+      }
+      out.end();
+
       out.path(out.pen().M(x0, y0 + view.headH).H(x0 + w), view.style.stroke ? ` stroke="${lineColor}"` : DIVIDER, undefined, { cls: 'pele-er-divider' });
       out.rect(x0, y0, w, h, view.style.line ? ` fill="none" stroke="var(--_b)"${rounded(view.style.line)}` : OUTLINE);
     }
@@ -472,9 +416,7 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
     if (/ internal-link(?: |$)/.test(classes + ' ') && view.label.lines.length > 0 && options.links !== false) {
       // The name ends up in an href, so it gets the same check as a URL.
       const display = decodeEntities(node.alias || node.label);
-      const safe = internalLink(display, options);
-      const target = esc(display);
-      out.link(` class="internal-link"${safe ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}"`);
+      out.link();
       out.label(view.label, 0, nameY, nameAttrs, icons);
       out.end();
       links.push({ id: node.label, href: display, internal: true });
@@ -558,11 +500,9 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
       const stub = direct ? 0 : MARKER_LENGTH;
       const path = routePath(route, undefined, stub, stub);
       d = stub > 0 ? `M${num(path.sx)},${num(path.sy)}L${path.d.slice(1)}L${num(path.ex)},${num(path.ey)}` : path.d;
-      if (out.numbers) {
-        // The stub is drawn as the line from the untrimmed start to the trimmed one, and on to the end.
-        const t = path.tokens ?? [];
-        tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
-      }
+      // The stub is drawn as the line from the untrimmed start to the trimmed one, and on to the end.
+      const t = path.tokens ?? [];
+      tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
       ends = [path.sx, path.sy, path.sdx, path.sdy, path.ex, path.ey, path.edx, path.edy];
     }
     const under = fillUnder(d, [], fills);
@@ -597,7 +537,8 @@ function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned
 
   out.section('title');
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-  return { svg: out.done('er', width, height, size, options, db), width, height, links };
+  out.done(width, height);
+  return { width, height, links };
 }
 
 function straighten(route: number[]): number[] {

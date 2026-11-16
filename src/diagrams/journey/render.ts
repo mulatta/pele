@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out, type Pen } from '../../draw/out.js';
-import { escText, labelSvg, mathMarkup, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { mathMarkup, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -45,39 +45,35 @@ function face(out: Out, x: number, y: number, mood: keyof typeof MOUTHS): void {
 
 // Measured at the small size but drawn at the inherited one, which out.label would not reproduce.
 function inheritedLabel(out: Out, label: Label, cx: number, cy: number, attrs: string): void {
-  out.both(
-    () => labelSvg(label, cx, cy, attrs),
-    () => {
-      const lines = label.lines;
-      if (lines.length === 0) return;
-      const shift = label.size * 0.35;
-      const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
-      let top = cy - label.height / 2;
-      if (only && only.icon === undefined && only.math === undefined && only.style === 0) {
-        out.text(cx, top + label.lineHeight / 2 + shift, only.text, attrs, ' text-anchor="middle"');
-        return;
+  const lines = label.lines;
+  if (lines.length === 0) return;
+  const shift = label.size * 0.35;
+  const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
+  let top = cy - label.height / 2;
+  if (only && only.icon === undefined && only.math === undefined && only.style === 0) {
+    out.text(cx, top + label.lineHeight / 2 + shift, only.text, attrs, ' text-anchor="middle"');
+    return;
+  }
+  const shared = sharedStyle(label);
+  const look = textStyle(attrs, shared);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const h = label.heights ? label.heights[i] : label.lineHeight;
+    const y = top + h / 2 + shift;
+    if (line.some((span) => span.icon !== undefined || span.math)) {
+      let x = cx - label.widths[i] / 2;
+      for (const span of line) {
+        if (span.math) out.fragment(mathMarkup(span.math, x, y - shift, label.size, attrs));
+        else if (span.icon !== undefined) out.opaque(iconSvg(span.icon, x, y - shift - (label.size * 1.1) / 2, label.size * 1.1, undefined), 'icon');
+        else if (span.text !== '') out.spans(x, y, [{ text: span.text, attrs: spanStyle(span.style & ~shared) }], look, ' text-anchor="start"');
+        x += span.width;
       }
-      const shared = sharedStyle(label);
-      const look = textStyle(attrs, shared);
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const h = label.heights ? label.heights[i] : label.lineHeight;
-        const y = top + h / 2 + shift;
-        if (line.some((span) => span.icon !== undefined || span.math)) {
-          let x = cx - label.widths[i] / 2;
-          for (const span of line) {
-            if (span.math) out.fragment(mathMarkup(span.math, x, y - shift, label.size, attrs));
-            else if (span.icon !== undefined) out.opaque(iconSvg(span.icon, x, y - shift - (label.size * 1.1) / 2, label.size * 1.1, undefined), 'icon');
-            else if (span.text !== '') out.spans(x, y, [{ text: span.text, attrs: spanStyle(span.style & ~shared) }], look, ' text-anchor="start"');
-            x += span.width;
-          }
-        } else {
-          out.spans(cx, y, line.length ? line.map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) })) : [{ text: ' ' }], look, ' text-anchor="middle"');
-        }
-        top += h;
-      }
+    } else {
+      out.spans(cx, y, line.length ? line.map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) })) : [{ text: ' ' }], look, ' text-anchor="middle"');
     }
-  );
+    top += h;
+  }
+
 }
 
 export function renderJourney(model: JourneyModel, _config: Config, options: RenderOptions, out: Out): Rendered {
@@ -100,12 +96,10 @@ function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOpt
   names.forEach((name, i) => actor.set(name, i));
   // An actor is only named, by tasks; its legend entry comes from the first task that names it.
   const named = new Map<string, SourceInfo>();
-  if (out.sources) {
-    for (const task of tasks) {
-      const line = task.source?.line;
-      if (line === undefined) continue;
-      for (const name of task.people) if (name !== '' && !named.has(name)) named.set(name, { line, symbol: name });
-    }
+  for (const task of tasks) {
+    const line = task.source?.line;
+    if (line === undefined) continue;
+    for (const name of task.people) if (name !== '' && !named.has(name)) named.set(name, { line, symbol: name });
   }
 
   // Cards widen, up to a point, for a word that would not fit; past that the word is cut.
@@ -216,10 +210,7 @@ function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOpt
           const py = cardsY + cardH - PAD_Y - DOT;
           const dot = ` fill="${seriesColor(actor.get(name) ?? 0)}" stroke="var(--_s)"`;
           // The tooltip sits inside the circle, which no typed call writes.
-          out.both(
-            () => `<circle class="pele-actor" cx="${num(px)}" cy="${num(py)}" r="${DOT}"${dot}><title>${escText(name)}</title></circle>`,
-            () => out.circle(px, py, DOT, dot, { cls: 'pele-actor' })
-          );
+          out.circle(px, py, DOT, dot, { cls: 'pele-actor' });
         });
         out.end();
       });
@@ -263,8 +254,8 @@ function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOpt
 
   const totalWidth = Math.ceil(width + 2 * pad);
   const totalHeight = Math.ceil(Math.max(bottom, pad) + pad);
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('journey', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],
@@ -326,5 +317,6 @@ function verticalJourney(out: Out, model: JourneyModel, options: RenderOptions):
   const height = Math.ceil(Math.max(pad + title.height, y - (model.tasks.length ? 16 : 0)) + pad);
   out.section('title');
   out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-  return { svg: out.done('journey', totalWidth, height, size, options, model), width: totalWidth, height, links: [] };
+  out.done(totalWidth, height);
+  return { width: totalWidth, height, links: [] };
 }

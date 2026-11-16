@@ -1,6 +1,7 @@
-// Reads pele's SVG back into a scene, as a host that only has the SVG would, to check the scene a
-// renderer draws directly against the SVG it writes. Follows what the scene output keeps: groups
-// moved by translate(), inherited presentation attributes, `data-id` items, outlines and text.
+// Reads SVG into a scene, as a host that only has SVG would, to check what SceneOut draws against
+// markup written by hand; also signs scenes for the corpus baseline. Follows what the scene output
+// keeps: groups moved by translate(), inherited presentation attributes, `data-id` items, outlines
+// and text.
 // Anything else (another transform, images, icons, math) is counted in `skipped` and not drawn.
 // Path geometry is computed here, not imported from the scene output, so a fault there shows.
 import type { Box, Path, Scene, SceneItem, SceneShape, SceneSpan, SceneText } from '../../src/draw/scene.js';

@@ -1,10 +1,10 @@
 // Scene output: a renderer-neutral vector scene written while a diagram is
-// drawn, instead of SVG text that a host would have to parse again.
+// drawn.
 //
 // A renderer draws into it through the Out calls: structure (sections, items,
 // translations) and the geometry it holds as numbers go in as they are, labels
 // straight from their measured layout. SVG fragments (a shape's outline, a
-// marker) are read the way the SVG they are part of would be, and small ones
+// marker) are read the way a browser would read them in place, and small ones
 // are cached, as the same pieces come again.
 //
 // The data matches herdr-scene's scene contract, version 2: paint stays a
@@ -55,7 +55,7 @@ export interface Box {
 // Shapes are listed in the order they are painted; a later one covers an earlier one.
 export interface SceneShape {
   kind: 'fill' | 'stroke';
-  // A colour or a CSS variable of the theme (`var(--_s)`), as the SVG would paint it.
+  // A colour or a CSS variable of the theme (`var(--_s)`).
   paint: string;
   opacity: number;
   // Outline width and dash lengths, in scene units; strokes only.
@@ -107,7 +107,7 @@ export interface SceneText {
 }
 
 // A part of the diagram a host can point at: a node, an edge, a label. `kind` is the part's
-// class list in the SVG; where the source wrote it comes from SourceInfo.
+// class list; where the source wrote it comes from SourceInfo.
 export interface SceneItem extends SourceInfo {
   id: string;
   kind: string;
@@ -128,7 +128,7 @@ export interface Scene {
   baseline: number | null;
   shapes: SceneShape[];
   texts: SceneText[];
-  // In the SVG's document order: where two overlap, the later one is on top.
+  // In drawing order: where two overlap, the later one is on top.
   items: SceneItem[];
   // The gradients fills use, by id; absent when none do.
   gradients?: Record<string, SceneGradient>;
@@ -165,6 +165,15 @@ const RE_ATTR = /([\w:-]+)\s*=\s*"([^"]*)"/g;
 
 const lookCache = new Map<string, Look>();
 
+const XML: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+// Text and attribute values as the SVG means them.
+const unescape = (s: string): string =>
+  s.includes('&')
+    ? s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (all, e: string) =>
+        e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (XML[e] ?? all)
+      )
+    : s;
+
 // ` fill="x" style="stroke:y;rx:var(--_r)"` -> { fill: 'x', stroke: 'y', rx: ... }. Declarations in
 // style win over attributes, as in CSS.
 function parseLook(attrs: string): Look {
@@ -172,9 +181,10 @@ function parseLook(attrs: string): Look {
   if (look) return look;
   look = {};
   let style = '';
+  // Attribute text is SVG, so its entities are read before CSS reads a style.
   for (const m of attrs.matchAll(RE_ATTR)) {
-    if (m[1] === 'style') style = m[2];
-    else if (KEYS.has(m[1])) (look as Record<string, string>)[m[1]] = m[2];
+    if (m[1] === 'style') style = unescape(m[2]);
+    else if (KEYS.has(m[1])) (look as Record<string, string>)[m[1]] = unescape(m[2]);
   }
   for (const decl of style.split(';')) {
     const i = decl.indexOf(':');
@@ -327,10 +337,6 @@ class ScenePen implements Pen {
   z(): this {
     return this.Z();
   }
-  both(_svg: string, scene: (pen: Pen) => void): this {
-    scene(this);
-    return this;
-  }
 }
 const merges = new WeakMap<Look, WeakMap<Look, Look>>();
 
@@ -393,7 +399,8 @@ const roots = new Map<number, Look>();
 export function sceneRoot(size: number): Look {
   let look = roots.get(size);
   if (!look) {
-    look = { fill: 'var(--_fg)', 'font-size': String(size) };
+    // currentColor, an icon's paint, is the text color.
+    look = { fill: 'var(--_fg)', color: 'var(--_fg)', 'font-size': String(size) };
     // Font sizes come from callers; keep the cache bounded as the other caches are.
     if (roots.size > 50) roots.clear();
     roots.set(size, look);
@@ -761,7 +768,7 @@ function elements(svg: string): Element[] {
       if (stack.length > 1) stack.pop();
     } else if (m[2]) {
       const a: Record<string, string> = {};
-      for (const p of m[3].matchAll(RE_ATTR)) a[p[1]] = p[2];
+      for (const p of m[3].matchAll(RE_ATTR)) a[p[1]] = unescape(p[2]);
       const el: Element = { tag: m[2], a, children: [] };
       top.children.push(el);
       if (!m[4]) stack.push(el);
@@ -770,23 +777,14 @@ function elements(svg: string): Element[] {
   return root.children.filter((c): c is Element => typeof c !== 'string');
 }
 
-const XML: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
-// Text and attribute values as the SVG means them.
-const unescape = (s: string): string =>
-  s.includes('&')
-    ? s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (all, e: string) =>
-        e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : (XML[e] ?? all)
-      )
-    : s;
-
-// Where an element comes from, read from the `data-` attributes sourceAttrs writes.
+// Where an element of a fragment comes from, read from its `data-` attributes.
 function sourceOf(a: Record<string, string>): SourceInfo | undefined {
   const info: SourceInfo = {};
   if (a['data-line'] !== undefined) info.line = Number(a['data-line']);
   if (a['data-end'] !== undefined) info.end = Number(a['data-end']);
-  if (a['data-symbol'] !== undefined) info.symbol = unescape(a['data-symbol']);
-  if (a['data-from'] !== undefined) info.from = unescape(a['data-from']);
-  if (a['data-to'] !== undefined) info.to = unescape(a['data-to']);
+  if (a['data-symbol'] !== undefined) info.symbol = a['data-symbol'];
+  if (a['data-from'] !== undefined) info.from = a['data-from'];
+  if (a['data-to'] !== undefined) info.to = a['data-to'];
   return Object.keys(info).length > 0 ? info : undefined;
 }
 
@@ -796,7 +794,7 @@ function runAttrs(attrs: string): Record<string, string> {
   let a = runCache.get(attrs);
   if (!a) {
     a = {};
-    for (const m of attrs.matchAll(RE_ATTR)) a[m[1]] = m[2];
+    for (const m of attrs.matchAll(RE_ATTR)) a[m[1]] = unescape(m[2]);
     if (runCache.size > 500) runCache.clear();
     runCache.set(attrs, a);
   }
@@ -859,7 +857,7 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
       if (t[0] !== 1 || t[1] !== 0 || t[2] !== 0 || t[3] !== 1) turn = t;
     }
     const look = lookOf(a);
-    const id = a['data-id'] === undefined ? undefined : unescape(a['data-id']);
+    const id = a['data-id'];
     const group = el.tag === 'g' || el.tag === 'a';
     // A group, or an element that is an item or moved: what is in it is drawn in its frame.
     const framed = group || id !== undefined || dx !== 0 || dy !== 0 || turn !== undefined;
@@ -1040,8 +1038,6 @@ export class SceneOut implements Out {
   private frames: Frame[] = [];
   // The move of sections made from the first call of frame() on.
   private framing: { x: number; y: number } | null = null;
-  readonly sources = true;
-  readonly numbers = true;
   private items: SceneItem[] = [];
   private skipped: Record<string, number> = {};
 
@@ -1072,7 +1068,7 @@ export class SceneOut implements Out {
       s = { look: null, attrs, outer, framed: f !== null, dx: f ? f.x : 0, dy: f ? f.y : 0, shapes: null, texts: null, items: null, base: [] };
       this.sections.set(name, s);
       if (outer) {
-        // Painted after its outer section and those made within it before, as the SVG writes it in that group.
+        // Painted after its outer section and those made within it before, as if drawn in that group.
         let i = this.order.indexOf(outer) + 1;
         while (i < this.order.length && this.order[i].outer === outer) i++;
         this.order.splice(i, 0, s);
@@ -1112,7 +1108,7 @@ export class SceneOut implements Out {
   }
 
   // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
-  // where it comes from in the text, read as `data-` attributes would be (see sourceAttrs).
+  // where it comes from in the text.
   private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo, turn?: Matrix): void {
     const f = this.top;
     if (f.hidden) {
@@ -1241,7 +1237,7 @@ export class SceneOut implements Out {
     const at = (x: number, y: number): [number, number] => (f.m ? [f.m[0] * x + f.m[2] * y + f.m[4], f.m[1] * x + f.m[3] * y + f.m[5]] : [x + f.dx, y + f.dy]);
     const [ax, ay] = at(x1, y1);
     const [bx, by] = at(x2, y2);
-    (this.gradients ??= {})[id] = { x1: ax, y1: ay, x2: bx, y2: by, stops: stops.map(([offset, paint]) => ({ offset, paint })) };
+    (this.gradients ??= {})[id] = { x1: ax, y1: ay, x2: bx, y2: by, stops: stops.map(([offset, paint]) => ({ offset, paint: unescape(paint) })) };
   }
 
   // An icon is drawn from its markup; what has none to draw from (math) is left out.
@@ -1250,9 +1246,6 @@ export class SceneOut implements Out {
     else this.skip(what);
   }
 
-  both(_svg: () => string, scene: () => void): void {
-    scene();
-  }
 
   ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
     const f = this.top;
@@ -1312,7 +1305,7 @@ export class SceneOut implements Out {
     }
   }
 
-  // A measured label centered on (cx, cy), placed as labelSvg places it.
+  // A measured label centered on (cx, cy).
   label(label: Label, cx: number, cy: number, attrs: Attrs = '', icons?: IconResolver): void {
     const lines = label.lines;
     if (lines.length === 0) return;
@@ -1393,8 +1386,7 @@ export class SceneOut implements Out {
   private finish(width: number, height: number): Scene {
     const shapes: SceneShape[] = [];
     const texts: SceneText[] = [];
-    // Items in the order the SVG writes them, section by section, as a host reading it would
-    // number them (where two overlap, the later one is on top).
+    // Items in drawing order, section by section (where two overlap, the later one is on top).
     const items: SceneItem[] = [];
     const at = new Array<number>(this.items.length);
     const f = this.framing;
@@ -1481,8 +1473,6 @@ export class SceneOut implements Out {
     this.open(undefined, '', 0, 0, null);
   }
 
-  tooltip(): void {}
-
   text(x: number, y: number, text: string, attrs: Attrs, after = ''): void {
     const look = merge(this.top.look, after ? parseLook((typeof attrs === 'string' ? attrs : attrs.attrs) + after) : lookAt(attrs));
     this.put(x, y, [{ text }], textBase(look), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
@@ -1517,11 +1507,9 @@ export class SceneOut implements Out {
     this.part(typeof d !== 'string' ? (d as ScenePen).take() : tokens ? tokenCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
   }
 
-  raw(): void {}
 
-  done(_type: string, width: number, height: number): string {
+  done(width: number, height: number): void {
     this.scene = this.finish(width, height);
-    return '';
   }
 }
 

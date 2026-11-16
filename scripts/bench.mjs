@@ -2,7 +2,7 @@
 // Run `npm run build` first. Pass --compare to also time beautiful-mermaid on the same inputs.
 import { readFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
-import { render } from '../dist/pele.js';
+import { renderScene } from '../dist/pele.js';
 
 const docs = JSON.parse(readFileSync('tests/corpus/flowchart-docs.json', 'utf8'));
 
@@ -57,7 +57,7 @@ function time(fn, inputs) {
   return { ms: samples[samples.length >> 1], done };
 }
 
-const engines = [['pele', (src) => render(src)]];
+const engines = [['pele', (src) => renderScene(src)]];
 if (process.argv.includes('--compare')) {
   const bm = await import('beautiful-mermaid');
   engines.push(['beautiful-mermaid', (src) => bm.renderMermaidSVG(src)]);

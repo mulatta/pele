@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { browserBuild } from '../scripts/browser-build.mjs';
-import { render } from '../src/index.js';
+import { renderScene } from '../src/index.js';
 
 // Built-ins that are newer than Safari 15.0, the system WebKit of macOS 12. esbuild does not
 // lower them, so the browser script must not need them.
@@ -26,7 +26,7 @@ describe('the browser script', () => {
     runInContext(`for (const [owner, names] of ${JSON.stringify(NEWER)}) { const target = eval(owner); for (const name of names) delete target[name]; }`, context);
     runInContext(bundle.outputFiles[0].text, context);
     const draw = runInContext(
-      '(source, maxWidth) => { try { return pele.render(source, { maxWidth }).svg; } catch (error) { return "error: " + error.message; } }',
+      '(source, maxWidth) => { try { return JSON.stringify(pele.renderScene(source, { maxWidth }).scene); } catch (error) { return "error: " + error.message; } }',
       context,
     ) as (source: string, maxWidth?: number) => string;
     let drawn = 0;
@@ -34,7 +34,7 @@ describe('the browser script', () => {
       for (const { name, source } of corpus) {
         let expected: string;
         try {
-          expected = render(source, { maxWidth }).svg;
+          expected = JSON.stringify(renderScene(source, { maxWidth }).scene);
         } catch (error) {
           expected = `error: ${(error as Error).message}`;
         }

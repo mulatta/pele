@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { tokenize } from '../../src/diagrams/quadrant/lexer.js';
 import { parseStyles } from '../../src/diagrams/quadrant/db.js';
-import { PeleError, parse, render } from '../../src/index.js';
+import { PeleError, parse, renderScene } from '../../src/index.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
 // Inputs of about 50,000 characters built to hit the quadrant chart's worst cases. Each must finish
@@ -28,19 +28,19 @@ const CASES: [string, () => unknown][] = [
   ['space before the comma of a point', () => tokenize('quadrantChart\nA: [0' + ' '.repeat(N) + '1]')],
   ['a style of spaces around one colon', () => parseStyles(['radius' + ' '.repeat(N) + ':' + ' '.repeat(N) + '5'])],
   ['a style of spaces and no colon', () => parseStyles(['a' + ' '.repeat(N) + 'b'])],
-  ['a class of 8,000 styles', () => render('quadrantChart\nA:::c: [0.5, 0.5]\nclassDef c ' + 'radius: 5,'.repeat(8000) + 'radius: 6', big)],
-  ['a point with 6,000 styles', () => render('quadrantChart\nA: [0.5, 0.5] ' + 'color: #abc ,'.repeat(6000) + 'radius: 6', big)],
-  ['3,500 points', () => render('quadrantChart\n' + repeat(3500, (i) => `P${i}: [0.${i % 100}, 0.${(i * 7) % 100}]\n`), big)],
-  ['300 points at one place', () => render('quadrantChart\n' + repeat(300, (i) => `Point ${i}: [0.5, 0.5]\n`), big)],
-  ['3,000 classes', () => render('quadrantChart\n' + repeat(3000, (i) => `classDef c${i} radius: ${i}\n`) + 'A:::c7: [0.5, 0.5]', big)],
-  ['one point with a 50,000 character label', () => render('quadrantChart\n' + 'word '.repeat(N / 5) + ': [0.5, 0.5]', big)],
-  ['a quadrant label of emphasis markers', () => render('quadrantChart\nquadrant-1 "`' + '*a _b '.repeat(N / 6) + '`"', big)],
-  ['labels of entities and line breaks', () => render('quadrantChart\nx-axis "' + '#35;&amp;<br>'.repeat(N / 13) + '"', big)],
-  ['a title of 50,000 characters', () => render('quadrantChart\ntitle ' + 'long title '.repeat(N / 11), big)],
-  ['a class name of 50,000 characters', () => render('quadrantChart\nA:::' + 'c'.repeat(N) + ': [0.5, 0.5]', big)],
-  ['10,000 statements on one line', () => render('quadrantChart;' + 'quadrant-1 a;'.repeat(10000), big)],
-  ['leading spaces before every statement', () => render('quadrantChart\n' + (' '.repeat(100) + 'quadrant-2 b\n').repeat(450), big)],
-  ['a radius of 400 digits', () => render('quadrantChart\nA: [0.5, 0.5] radius: ' + '9'.repeat(400), big)],
+  ['a class of 8,000 styles', () => renderScene('quadrantChart\nA:::c: [0.5, 0.5]\nclassDef c ' + 'radius: 5,'.repeat(8000) + 'radius: 6', big)],
+  ['a point with 6,000 styles', () => renderScene('quadrantChart\nA: [0.5, 0.5] ' + 'color: #abc ,'.repeat(6000) + 'radius: 6', big)],
+  ['3,500 points', () => renderScene('quadrantChart\n' + repeat(3500, (i) => `P${i}: [0.${i % 100}, 0.${(i * 7) % 100}]\n`), big)],
+  ['300 points at one place', () => renderScene('quadrantChart\n' + repeat(300, (i) => `Point ${i}: [0.5, 0.5]\n`), big)],
+  ['3,000 classes', () => renderScene('quadrantChart\n' + repeat(3000, (i) => `classDef c${i} radius: ${i}\n`) + 'A:::c7: [0.5, 0.5]', big)],
+  ['one point with a 50,000 character label', () => renderScene('quadrantChart\n' + 'word '.repeat(N / 5) + ': [0.5, 0.5]', big)],
+  ['a quadrant label of emphasis markers', () => renderScene('quadrantChart\nquadrant-1 "`' + '*a _b '.repeat(N / 6) + '`"', big)],
+  ['labels of entities and line breaks', () => renderScene('quadrantChart\nx-axis "' + '#35;&amp;<br>'.repeat(N / 13) + '"', big)],
+  ['a title of 50,000 characters', () => renderScene('quadrantChart\ntitle ' + 'long title '.repeat(N / 11), big)],
+  ['a class name of 50,000 characters', () => renderScene('quadrantChart\nA:::' + 'c'.repeat(N) + ': [0.5, 0.5]', big)],
+  ['10,000 statements on one line', () => renderScene('quadrantChart;' + 'quadrant-1 a;'.repeat(10000), big)],
+  ['leading spaces before every statement', () => renderScene('quadrantChart\n' + (' '.repeat(100) + 'quadrant-2 b\n').repeat(450), big)],
+  ['a radius of 400 digits', () => renderScene('quadrantChart\nA: [0.5, 0.5] radius: ' + '9'.repeat(400), big)],
 ];
 
 describe('quadrant chart worst cases', () => {
@@ -57,6 +57,6 @@ describe('quadrant chart worst cases', () => {
   }
 
   it('refuses source over the default limit', () => {
-    expect(() => render('quadrantChart\n' + 'A: [0.5, 0.5]\n'.repeat(5000))).toThrow(/limit of 50000/);
+    expect(() => renderScene('quadrantChart\n' + 'A: [0.5, 0.5]\n'.repeat(5000))).toThrow(/limit of 50000/);
   });
 });

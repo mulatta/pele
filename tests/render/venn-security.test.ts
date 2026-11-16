@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, paints, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -78,17 +70,15 @@ describe('inert venn output', () => {
     expect(rendered).toBeGreaterThan(400);
   });
 
-  it('escapes what it shows', () => {
-    const { svg } = render(
-      `${V}title <img src=x onerror=alert(1)>\nset "<script>a&b</script>"\n  text "</text><script>alert(1)</script>"\nset B[<svg onload=alert(1)>]\nstyle B fill:"url(javascript:alert(1))", stroke:"red' onload='alert(1)"`,
-      options
+  it('shows markup as text', () => {
+    const result = draw(
+      `${V}title <img src=x onerror=alert(1)>\nset "<script>a&b</script>"\n  text "</text><script>alert(1)</script>"\nset B[<svg onload=alert(1)>]\nstyle B fill:"url(javascript:alert(1))", stroke:"red' onload='alert(1)"`
     );
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<svg onload');
-    expect(svg).not.toContain('javascript:');
-    expect(svg).toContain('data-id="&lt;script&gt;a&amp;b&lt;/script&gt;"');
-    expect(svg).toContain('&lt;/text&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    assertSafe(result, 'hostile venn');
+    expect(paints(result.scene).filter((p) => p.includes('javascript:') || p.includes('url('))).toEqual([]);
+    expect(lines(result.scene)).toContain('a&b');
+    expect(lines(result.scene)).toContain('<svg onload=alert(1)>');
+    expect(itemById(result.scene, '<script>a&b</script>', 'pele-venn-set')).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
@@ -109,7 +99,7 @@ describe('inert venn output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render(`${V}set __proto__\nset constructor\nunion __proto__,constructor["toString"]\n  text hasOwnProperty["__proto__"]\nstyle __proto__ __proto__:red, constructor:blue\nstyle hasOwnProperty color:red`, options);
+    draw(`${V}set __proto__\nset constructor\nunion __proto__,constructor["toString"]\n  text hasOwnProperty["__proto__"]\nstyle __proto__ __proto__:red, constructor:blue\nstyle hasOwnProperty color:red`);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

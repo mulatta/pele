@@ -1,15 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PeleError, detectType, parse, render, supports } from '../../src/index.js';
-import type { FlowchartModel } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { PeleError, detectType, parse, supports } from '../../src/index.js';
+import type { FlowchartModel, RenderOptions } from '../../src/index.js';
+import type { Scene, SceneItem } from '../../src/draw/scene.js';
 import { loadCorpus } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-import { assertWellFormed } from '../support/xml.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, items, lines, shapesOf, textsOf, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-const svgOf = (src: string, extra: object = {}): string => render(src, { ...options, ...extra }).svg;
-const count = (svg: string, needle: string): number => svg.split(needle).length - 1;
+const sceneOf = (src: string, extra: RenderOptions = {}): Scene => draw(src, extra).scene;
+// Scenes are compared as the JSON of their drawing.
+const drawn = (src: string, extra: RenderOptions = {}): string => JSON.stringify(sceneOf(src, extra), (key, value) => (['line', 'end', 'from', 'to', 'symbol'].includes(key) ? undefined : value));
 
 const ORDER = `swimlane-beta LR
   subgraph Customer
@@ -29,28 +29,24 @@ interface Box {
   h: number;
 }
 
-// The outline of each lane and the center of each node, read back from the SVG.
-function lanes(svg: string): Map<string, Box> {
-  const out = new Map<string, Box>();
-  for (const m of svg.matchAll(/<g class="pele-cluster pele-lane[^"]*" data-id="([^"]*)"><rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="([\d.]+)"/g)) {
-    out.set(m[1], { x: Number(m[2]), y: Number(m[3]), w: Number(m[4]), h: Number(m[5]) });
-  }
-  return out;
+const boxOf = (item: SceneItem): Box => ({ x: item.box!.x0, y: item.box!.y0, w: item.box!.x1 - item.box!.x0, h: item.box!.y1 - item.box!.y0 });
+
+// The outline of each lane and the center of each node.
+function lanes(scene: Scene): Map<string, Box> {
+  return new Map(items(scene, 'pele-lane').map((lane) => [lane.id, boxOf(lane)]));
 }
-function centers(svg: string): Map<string, [number, number]> {
-  const out = new Map<string, [number, number]>();
-  for (const m of svg.matchAll(/<g class="pele-node[^"]*" data-id="([^"]*)" transform="translate\(([-\d.]+),([-\d.]+)\)"/g)) {
-    out.set(m[1], [Number(m[2]), Number(m[3])]);
-  }
-  return out;
+function centers(scene: Scene): Map<string, [number, number]> {
+  return new Map(items(scene, 'pele-node').map((node) => [node.id, [(node.box!.x0 + node.box!.x1) / 2, (node.box!.y0 + node.box!.y1) / 2]]));
 }
 const inside = (p: [number, number], b: Box): boolean => p[0] > b.x && p[0] < b.x + b.w && p[1] > b.y && p[1] < b.y + b.h;
+// A lane's title is turned on its side when the lanes are bands across the page.
+const turned = (scene: Scene): boolean => scene.texts.some((t) => t.angle === -90);
 
 describe('swimlane rendering', () => {
   it('is detected and supported', () => {
     expect(detectType(ORDER)).toBe('swimlane');
     expect(supports(ORDER)).toBe(true);
-    expect(render(ORDER, options).type).toBe('swimlane');
+    expect(draw(ORDER).type).toBe('swimlane');
     expect(detectType('swimlane-betax\n a --> b')).not.toBe('swimlane');
   });
 
@@ -64,38 +60,37 @@ describe('swimlane rendering', () => {
   });
 
   it('rejects what the flowchart grammar rejects', () => {
-    expect(() => render('swimlane-beta LR\n  a --> ', options)).toThrow(PeleError);
-    expect(() => render('swimlane-beta LR\n  subgraph x\n  a', options)).toThrow(PeleError);
+    expect(() => draw('swimlane-beta LR\n  a --> ')).toThrow(PeleError);
+    expect(() => draw('swimlane-beta LR\n  subgraph x\n  a')).toThrow(PeleError);
   });
 
   it('draws one lane per top-level subgraph and keeps each node in its lane', () => {
-    const svg = svgOf(ORDER);
-    assertWellFormed(svg);
-    expect(svg).toContain('class="pele pele-swimlane"');
-    expect(svg).toContain('aria-roledescription="swimlane"');
-    const boxes = lanes(svg);
-    const at = centers(svg);
+    const scene = sceneOf(ORDER);
+    const boxes = lanes(scene);
+    const at = centers(scene);
     expect([...boxes.keys()]).toEqual(['Warehouse', 'Customer']);
     expect(inside(at.get('browse')!, boxes.get('Customer')!)).toBe(true);
     expect(inside(at.get('pay')!, boxes.get('Customer')!)).toBe(true);
     expect(inside(at.get('pick')!, boxes.get('Warehouse')!)).toBe(true);
     expect(inside(at.get('ship')!, boxes.get('Warehouse')!)).toBe(true);
-    expect(svg).toContain('>paid<');
+    expect(lines(scene)).toContain('paid');
   });
 
   it('stacks lanes down the page when the flow runs sideways, and across it otherwise', () => {
-    const sideways = lanes(svgOf(ORDER));
+    const scene = sceneOf(ORDER);
+    const sideways = lanes(scene);
     expect(sideways.get('Customer')!.y).toBeLessThan(sideways.get('Warehouse')!.y);
     expect(sideways.get('Customer')!.x).toBe(sideways.get('Warehouse')!.x);
-    expect(svgOf(ORDER)).toContain('transform="rotate(-90 ');
-    const down = lanes(svgOf(ORDER.replace('LR', 'TD')));
+    expect(turned(scene)).toBe(true);
+    const across = sceneOf(ORDER.replace('LR', 'TD'));
+    const down = lanes(across);
     expect(down.get('Customer')!.x).toBeLessThan(down.get('Warehouse')!.x);
     expect(down.get('Customer')!.y).toBe(down.get('Warehouse')!.y);
-    expect(svgOf(ORDER.replace('LR', 'TD'))).not.toContain('rotate(');
+    expect(turned(across)).toBe(false);
   });
 
   it('lines up steps of the same rank across lanes', () => {
-    const at = centers(svgOf('swimlane-beta TD\n  subgraph A\n    a1 --> a2\n  end\n  subgraph B\n    b1 --> b2\n  end\n  a1 --> b2'));
+    const at = centers(sceneOf('swimlane-beta TD\n  subgraph A\n    a1 --> a2\n  end\n  subgraph B\n    b1 --> b2\n  end\n  a1 --> b2'));
     expect(at.get('a1')![1]).toBe(at.get('b1')![1]);
     expect(at.get('a2')![1]).toBe(at.get('b2')![1]);
     expect(at.get('a1')![0]).toBe(at.get('a2')![0]);
@@ -105,67 +100,68 @@ describe('swimlane rendering', () => {
     for (const source of [examples[2], examples[9]]) {
       const model = parse(source) as FlowchartModel;
       const before = JSON.stringify(model);
-      const wide = render(model, options);
-      const narrow = render(model, { ...options, maxWidth: 480 });
+      const wide = draw(model);
+      const narrow = draw(model, { maxWidth: 480 });
       expect(narrow.width).toBeLessThanOrEqual(480);
       expect(narrow.height).toBeGreaterThan(wide.height);
-      expect(narrow.svg).not.toContain('rotate(');
-      expect(narrow.svg).toContain('font:16px');
-      const boxes = lanes(narrow.svg), at = centers(narrow.svg);
-      expect([...boxes.keys()]).toEqual([...lanes(wide.svg).keys()]);
-      expect([...at.keys()]).toEqual([...centers(wide.svg).keys()]);
+      expect(turned(narrow.scene)).toBe(false);
+      const boxes = lanes(narrow.scene), at = centers(narrow.scene);
+      expect([...boxes.keys()]).toEqual([...lanes(wide.scene).keys()]);
+      expect([...at.keys()]).toEqual([...centers(wide.scene).keys()]);
       for (const lane of model.subgraphs) {
         for (const id of lane.nodes) expect(inside(at.get(id)!, boxes.get(lane.id)!)).toBe(true);
       }
-      expect(count(narrow.svg, 'class="pele-edge"')).toBe(count(wide.svg, 'class="pele-edge"'));
-      expect(count(narrow.svg, 'class="pele-marker"')).toBe(count(wide.svg, 'class="pele-marker"'));
-      const labels = (svg: string) => [...svg.matchAll(/<text\b[^>]*>(.*?)<\/text>/g)]
-        .map(match => match[1].replace(/<[^>]+>|\s/g, ''));
-      expect(labels(narrow.svg)).toEqual(labels(wide.svg));
+      const edges = (scene: Scene): SceneItem[] => items(scene, 'pele-edge');
+      expect(edges(narrow.scene).length).toBe(edges(wide.scene).length);
+      // An edge and its arrowhead or cross are shapes of the edge.
+      expect(edges(narrow.scene).map((e) => shapesOf(narrow.scene, e).length)).toEqual(edges(wide.scene).map((e) => shapesOf(wide.scene, e).length));
+      // Narrower lanes wrap their labels in more lines.
+      const text = (scene: Scene): string => lines(scene).join('').replace(/\s/g, '');
+      expect(text(narrow.scene)).toBe(text(wide.scene));
       expect(JSON.stringify(model)).toBe(before);
-      expect(render(model, { ...options, maxWidth: wide.width }).svg).toBe(wide.svg);
-      assertInert(narrow.svg);
+      expect(JSON.stringify(draw(model, { maxWidth: wide.width }).scene)).toBe(JSON.stringify(wide.scene));
+      assertSafe(narrow, source.slice(0, 80));
     }
   });
 
   it('honors autoDirection, the breakpoint and an already vertical direction', () => {
     const source = examples[2];
-    const horizontal = svgOf(source, { maxWidth: 480, autoDirection: false });
-    expect(horizontal).toContain('rotate(-90 ');
-    expect(svgOf(source, { maxWidth: 480, directionBreakpoint: 480 })).toBe(horizontal);
-    expect(svgOf(source, { maxWidth: 700 })).toContain('rotate(-90 ');
-    expect(svgOf(source, { maxWidth: 700, directionBreakpoint: 800 })).not.toContain('rotate(');
-    expect(svgOf(source, { maxWidth: 480 })).toBe(svgOf(source.replace('LR', 'TB'), { maxWidth: 480 }));
-    expect(svgOf(source.replace('LR', 'RL'), { maxWidth: 480 })).toBe(svgOf(source, { maxWidth: 480 }));
-    const up = centers(svgOf(ORDER.replace('LR', 'BT'), { maxWidth: 160 }));
+    const horizontal = drawn(source, { maxWidth: 480, autoDirection: false });
+    expect(turned(sceneOf(source, { maxWidth: 480, autoDirection: false }))).toBe(true);
+    expect(drawn(source, { maxWidth: 480, directionBreakpoint: 480 })).toBe(horizontal);
+    expect(turned(sceneOf(source, { maxWidth: 700 }))).toBe(true);
+    expect(turned(sceneOf(source, { maxWidth: 700, directionBreakpoint: 800 }))).toBe(false);
+    expect(drawn(source, { maxWidth: 480 })).toBe(drawn(source.replace('LR', 'TB'), { maxWidth: 480 }));
+    expect(drawn(source.replace('LR', 'RL'), { maxWidth: 480 })).toBe(drawn(source, { maxWidth: 480 }));
+    const up = centers(sceneOf(ORDER.replace('LR', 'BT'), { maxWidth: 160 }));
     expect(up.get('browse')![1]).toBeGreaterThan(up.get('pay')![1]);
   });
 
   it('keeps a horizontal layout when turning would make it wider', () => {
     const source = 'swimlane-beta LR\n' + Array.from({ length: 5 }, (_, i) =>
       `subgraph L${i}\n a${i} --> b${i}\nend`).join('\n');
-    expect(svgOf(source, { maxWidth: 160 })).toBe(svgOf(source, { maxWidth: 160, autoDirection: false }));
-    expect(svgOf(source, { maxWidth: 160 })).toContain('rotate(-90 ');
+    expect(drawn(source, { maxWidth: 160 })).toBe(drawn(source, { maxWidth: 160, autoDirection: false }));
+    expect(turned(sceneOf(source, { maxWidth: 160 }))).toBe(true);
   });
 
   it('draws the changes branch from a separate side of the approval decision', () => {
     const source = examples[9];
     for (const maxWidth of [undefined, 320]) {
-      const svg = svgOf(source, { maxWidth });
-      const [cx, cy] = centers(svg).get('decide')!;
+      const scene = sceneOf(source, { maxWidth });
+      const [cx, cy] = centers(scene).get('decide')!;
       const start = (id: string): [number, number] => {
-        const m = new RegExp(`data-id="${id}"><path d="M([-\\d.]+),([-\\d.]+)`).exec(svg)!;
-        return [Number(m[1]), Number(m[2])];
+        const line = shapesOf(scene, itemById(scene, id, 'pele-edge')!).find((s) => s.kind === 'stroke')!;
+        return [line.cmds[1], line.cmds[2]];
       };
       const accepted = start('L_decide_create_0'), returned = start('L_decide_apply_0');
       if (maxWidth === undefined) {
-        expect(accepted[0]).toBe(cx);
-        expect(returned[0]).toBe(cx);
+        expect(accepted[0]).toBeCloseTo(cx, 1);
+        expect(returned[0]).toBeCloseTo(cx, 1);
         expect(accepted[1]).toBeGreaterThan(cy);
         expect(returned[1]).toBeLessThan(cy);
       } else {
-        expect(accepted[1]).toBe(cy);
-        expect(returned[1]).toBe(cy);
+        expect(accepted[1]).toBeCloseTo(cy, 1);
+        expect(returned[1]).toBeCloseTo(cy, 1);
         expect(accepted[0]).toBeGreaterThan(cx);
         expect(returned[0]).toBeLessThan(cx);
       }
@@ -173,103 +169,104 @@ describe('swimlane rendering', () => {
   });
 
   it('retains nested groups, unnamed and empty lanes, styled nodes, links and self-loops after turning', () => {
-    const source = '---\ntitle: Delivery\n---\nswimlane-beta LR\naccTitle: Accessible delivery\naccDescr: Delivery process\nstart --> a\nsubgraph Team\n subgraph Inner\n a{Ready?} --> b[(Store)]\n b --> b\n end\n c --> d --> e\nend\nsubgraph Empty\nend\nb --> c\nclick a "https://example.com"\nstyle a fill:#f00\nclassDef hot stroke:#0f0\nclass b hot';
-    const wide = render(source, options), narrow = render(source, { ...options, maxWidth: 320 });
-    expect(narrow.svg).not.toContain('rotate(');
-    expect(lanes(narrow.svg).size).toBe(3);
-    const inner = narrow.svg.match(/class="pele-cluster" data-id="Inner"><rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="([\d.]+)"/)!;
-    const b = { x: Number(inner[1]), y: Number(inner[2]), w: Number(inner[3]), h: Number(inner[4]) };
-    const at = centers(narrow.svg);
-    expect(inside(at.get('a')!, b)).toBe(true);
-    expect(inside(at.get('b')!, b)).toBe(true);
+    const source = '---\ntitle: Delivery\n---\nswimlane-beta LR\nstart --> a\nsubgraph Team\n subgraph Inner\n a{Ready?} --> b[(Store)]\n b --> b\n end\n c --> d --> e\nend\nsubgraph Empty\nend\nb --> c\nclick a "https://example.com"\nstyle a fill:#f00\nclassDef hot stroke:#0f0\nclass b hot';
+    const wide = draw(source), narrow = draw(source, { maxWidth: 320 });
+    const scene = narrow.scene;
+    expect(turned(scene)).toBe(false);
+    expect(lanes(scene).size).toBe(3);
+    const inner = boxOf(itemById(scene, 'Inner', 'pele-cluster')!);
+    const at = centers(scene);
+    expect(inside(at.get('a')!, inner)).toBe(true);
+    expect(inside(at.get('b')!, inner)).toBe(true);
     expect(narrow.links).toEqual(wide.links);
-    for (const value of ['>Delivery<', '<title id="pele-title">Accessible delivery</title>', 'Delivery process', 'fill:#f00', 'stroke:#0f0', 'pele-shape-diam', 'pele-shape-cyl']) expect(narrow.svg).toContain(value);
-    expect(count(narrow.svg, 'class="pele-edge"')).toBe(count(wide.svg, 'class="pele-edge"'));
+    expect(lines(scene)).toContain('Delivery');
+    expect(shapesOf(scene, itemById(scene, 'a', 'pele-node')!)[0].paint).toBe('#f00');
+    expect(shapesOf(scene, itemById(scene, 'b', 'pele-node')!).map((s) => s.paint)).toContain('#0f0');
+    expect(itemById(scene, 'a', 'pele-shape-diam')).toBeDefined();
+    expect(itemById(scene, 'b', 'pele-shape-cyl')).toBeDefined();
+    expect(items(scene, 'pele-edge').length).toBe(items(wide.scene, 'pele-edge').length);
   });
 
   it('follows every direction', () => {
-    const y = (dir: string, id: string): number => centers(svgOf(`swimlane-beta ${dir}\n  subgraph L\n    a --> b\n  end`)).get(id)![1];
-    const x = (dir: string, id: string): number => centers(svgOf(`swimlane-beta ${dir}\n  subgraph L\n    a --> b\n  end`)).get(id)![0];
-    expect(y('TB', 'a')).toBeLessThan(y('TB', 'b'));
-    expect(y('BT', 'a')).toBeGreaterThan(y('BT', 'b'));
-    expect(x('LR', 'a')).toBeLessThan(x('LR', 'b'));
-    expect(x('RL', 'a')).toBeGreaterThan(x('RL', 'b'));
+    const at = (dir: string, id: string): [number, number] => centers(sceneOf(`swimlane-beta ${dir}\n  subgraph L\n    a --> b\n  end`)).get(id)!;
+    expect(at('TB', 'a')[1]).toBeLessThan(at('TB', 'b')[1]);
+    expect(at('BT', 'a')[1]).toBeGreaterThan(at('BT', 'b')[1]);
+    expect(at('LR', 'a')[0]).toBeLessThan(at('LR', 'b')[0]);
+    expect(at('RL', 'a')[0]).toBeGreaterThan(at('RL', 'b')[0]);
   });
 
   it('gives nodes outside every lane a lane of their own', () => {
-    const svg = svgOf('swimlane-beta TD\n  start --> a\n  subgraph Team\n    a --> b\n  end');
-    const boxes = lanes(svg);
+    const scene = sceneOf('swimlane-beta TD\n  start --> a\n  subgraph Team\n    a --> b\n  end');
+    const boxes = lanes(scene);
     expect(boxes.size).toBe(2);
     const loose = [...boxes.keys()].find((id) => id !== 'Team')!;
-    expect(inside(centers(svg).get('start')!, boxes.get(loose)!)).toBe(true);
+    expect(inside(centers(scene).get('start')!, boxes.get(loose)!)).toBe(true);
     expect(boxes.get(loose)!.x).toBeLessThan(boxes.get('Team')!.x);
-    expect(lanes(svgOf('swimlane-beta TD\n  a --> b')).size).toBe(1);
+    expect(lanes(sceneOf('swimlane-beta TD\n  a --> b')).size).toBe(1);
   });
 
   it('draws an empty lane and a group inside a lane', () => {
-    const svg = svgOf('swimlane-beta TD\n  subgraph One\n    subgraph Inner\n      a --> b\n    end\n    c\n  end\n  subgraph Two\n  end\n  b --> c');
-    expect(lanes(svg).size).toBe(2);
-    expect(count(svg, 'class="pele-cluster"')).toBe(1);
-    expect(svg).toContain('>Inner<');
+    const scene = sceneOf('swimlane-beta TD\n  subgraph One\n    subgraph Inner\n      a --> b\n    end\n    c\n  end\n  subgraph Two\n  end\n  b --> c');
+    expect(lanes(scene).size).toBe(2);
+    expect(items(scene, 'pele-cluster').filter((i) => i.kind === 'pele-cluster')).toHaveLength(1);
+    expect(lines(scene)).toContain('Inner');
   });
 
   it('ignores a direction inside a lane', () => {
-    const plain = svgOf('swimlane-beta TD\n  subgraph L\n    a --> b\n  end');
-    const turned = svgOf('swimlane-beta TD\n  subgraph L\n    direction LR\n    a --> b\n  end');
+    const plain = drawn('swimlane-beta TD\n  subgraph L\n    a --> b\n  end');
+    const turned = drawn('swimlane-beta TD\n  subgraph L\n    direction LR\n    a --> b\n  end');
     expect(turned).toBe(plain);
   });
 
-  it('keeps flowchart features: shapes, styles, links, titles and accessible names', () => {
-    const svg = svgOf(
-      '---\ntitle: Orders\n---\nswimlane-beta LR\n  accTitle: Order flow\n  accDescr: Who does what\n  subgraph L[Lane **one**]\n    a{Choice} --> b[(Store)]\n    b --> b\n  end\n  click a "https://example.com" "tip"\n  style a fill:#f00\n  classDef hot stroke:#0f0\n  class b hot\n  style L fill:#00f'
+  it('keeps flowchart features: shapes, styles, links and titles', () => {
+    const { scene, links } = draw(
+      '---\ntitle: Orders\n---\nswimlane-beta LR\n  subgraph L[Lane **one**]\n    a{Choice} --> b[(Store)]\n    b --> b\n  end\n  click a "https://example.com" "tip"\n  style a fill:#f00\n  classDef hot stroke:#0f0\n  class b hot\n  style L fill:#00f'
     );
-    assertWellFormed(svg);
-    expect(svg).toContain('pele-shape-');
-    expect(svg).toContain('>Orders<');
-    expect(svg).toContain('<title id="pele-title">Order flow</title>');
-    expect(svg).toContain('href="https://example.com/"');
-    expect(svg).toContain('fill:#f00');
-    expect(svg).toContain('fill:#00f');
-    expect(render('swimlane-beta LR\n  a\n  click a "https://example.com"', options).links).toEqual([{ id: 'a', href: 'https://example.com/', internal: false }]);
+    expect(items(scene, 'pele-node').every((node) => node.kind.includes('pele-shape-'))).toBe(true);
+    expect(lines(scene)).toContain('Orders');
+    expect(links).toEqual([{ id: 'a', href: 'https://example.com/', internal: false }]);
+    expect(shapesOf(scene, itemById(scene, 'a')!)[0].paint).toBe('#f00');
+    expect(shapesOf(scene, itemById(scene, 'L')!).map((shape) => shape.paint)).toContain('#00f');
+    expect(draw('swimlane-beta LR\n  a\n  click a "https://example.com"').links).toEqual([{ id: 'a', href: 'https://example.com/', internal: false }]);
   });
 
   it('picks a contrasting lane title color on a fill a style sets', () => {
-    const svg = svgOf('swimlane-beta LR\n  subgraph L[Light]\n    a\n  end\n  subgraph D[Dark]\n    b\n  end\n  subgraph P[Plain]\n    c\n  end\n  style L fill:#BBDEFB\n  style D fill:#1f3a5f');
-    expect(svg).toContain('<text class="pele-cluster-label" fill="var(--pele-fg-on-light,#1f1f1f)"');
-    expect(svg).toMatch(/data-id="D">.*?<text class="pele-cluster-label" fill="var\(--pele-fg-on-dark,#fff\)"/);
-    expect(svg).toMatch(/data-id="P">.*?<text class="pele-cluster-label" fill="var\(--_m\)"/);
-    expect(svg).toMatch(/data-id="a"[^>]*><rect [^>]*\/><text class="pele-label" x=/);
+    const scene = sceneOf('swimlane-beta LR\n  subgraph L[Light]\n    a\n  end\n  subgraph D[Dark]\n    b\n  end\n  subgraph P[Plain]\n    c\n  end\n  style L fill:#BBDEFB\n  style D fill:#1f3a5f');
+    const title = (id: string): string => textsOf(scene, itemById(scene, id, 'pele-lane')!)[0].paint;
+    expect(title('L')).toBe('var(--pele-fg-on-light,#1f1f1f)');
+    expect(title('D')).toBe('var(--pele-fg-on-dark,#fff)');
+    expect(title('P')).toBe('var(--_m)');
+    expect(textsOf(scene, itemById(scene, 'a', 'pele-node')!)[0].paint).toBe('var(--_fg)');
   });
 
   it('inks or cases edges on a lane band a style fills', () => {
     const src = 'swimlane-beta TB\nsubgraph S["one<br/>two<br/>three<br/>four<br/>five<br/>six<br/>seven<br/>eight"]\n  A\nend\nS --> S\nstyle S fill:black';
-    expect(svgOf(src)).toMatch(/class="pele-edge[^"]*" data-id="[^"]+" stroke="var\(--pele-fg-on-dark,#fff\)"/);
-    expect(svgOf(src.replace('\nstyle S fill:black', ''))).not.toMatch(/pele-casings|--pele-fg-on/);
+    const scene = sceneOf(src);
+    expect(shapesOf(scene, items(scene, 'pele-edge')[0])[0].paint).toBe('var(--pele-fg-on-dark,#fff)');
+    const plain = sceneOf(src.replace('\nstyle S fill:black', ''));
+    expect(plain.shapes.filter((s) => s.item === -1)).toEqual([]);
+    expect(JSON.stringify(plain)).not.toContain('--pele-fg-on');
   });
 
   it('reads spacing from the swimlane config, then the flowchart config', () => {
     const src = 'swimlane-beta TD\n  subgraph L\n    a --> b\n  end';
-    const plain = render(src, options).height;
-    expect(render(`---\nconfig:\n  swimlane:\n    rankSpacing: 200\n---\n${src}`, options).height).toBeGreaterThan(plain + 100);
-    expect(render(`---\nconfig:\n  flowchart:\n    rankSpacing: 200\n---\n${src}`, options).height).toBeGreaterThan(plain + 100);
+    const plain = draw(src).height;
+    expect(draw(`---\nconfig:\n  swimlane:\n    rankSpacing: 200\n---\n${src}`).height).toBeGreaterThan(plain + 100);
+    expect(draw(`---\nconfig:\n  flowchart:\n    rankSpacing: 200\n---\n${src}`).height).toBeGreaterThan(plain + 100);
   });
 
-  it('shrinks to its container unless told not to', () => {
-    expect(svgOf(ORDER)).toContain('max-width:100%;height:auto;');
-    expect(svgOf(ORDER, { responsive: false })).not.toContain('max-width');
-  });
 
   it('is the same every time', () => {
-    expect(svgOf(ORDER)).toBe(svgOf(ORDER));
+    expect(sceneOf(ORDER)).toEqual(sceneOf(ORDER));
   });
 
   it("renders Mermaid's documentation examples", () => {
     const corpus = loadCorpus('swimlane', /swimlane-beta/);
     expect(corpus.length).toBeGreaterThan(8);
     for (const src of corpus) {
-      const svg = svgOf(src);
-      assertInert(svg, src.slice(0, 80));
-      expect(lanes(svg).size, src.slice(0, 80)).toBeGreaterThan(0);
+      const result = draw(src);
+      assertSafe(result, src.slice(0, 80));
+      expect(lanes(result.scene).size, src.slice(0, 80)).toBeGreaterThan(0);
     }
   });
 });
@@ -285,20 +282,14 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `swimlane-beta RL\n  subgraph L["\`**${p}**\`"]\n    a\n  end\n  accTitle: ${p}\n  accDescr: ${p}`,
 ];
 
-describe('inert swimlane output', () => {
+describe('safe swimlane output', () => {
   it('holds with hostile text in every position', { timeout: 120000 }, () => {
     let rendered = 0;
     for (const template of TEMPLATES) {
       for (const payload of PAYLOADS) {
-        let svg: string;
-        try {
-          svg = svgOf(template(payload));
-        } catch (error) {
-          if (error instanceof PeleError) continue;
-          throw error;
-        }
-        assertInert(svg, JSON.stringify(template(payload)).slice(0, 160));
-        expect(svg).not.toMatch(/NaN|Infinity/);
+        const result = tryDraw(template(payload));
+        if (result === undefined) continue;
+        assertSafe(result, JSON.stringify(template(payload)).slice(0, 160));
         rendered++;
       }
     }
@@ -307,9 +298,9 @@ describe('inert swimlane output', () => {
 
   it('handles lane names that are object keys', () => {
     for (const name of ['__proto__', 'constructor', 'toString', 'hasOwnProperty']) {
-      const svg = svgOf(`swimlane-beta TD\n  subgraph ${name}\n    a --> b\n  end\n  subgraph other\n    c\n  end\n  b --> c`);
-      assertInert(svg, name);
-      expect(lanes(svg).size).toBe(2);
+      const result = draw(`swimlane-beta TD\n  subgraph ${name}\n    a --> b\n  end\n  subgraph other\n    c\n  end\n  b --> c`);
+      assertSafe(result, name);
+      expect(lanes(result.scene).size).toBe(2);
     }
   });
 });

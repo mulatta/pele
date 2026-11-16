@@ -10,7 +10,7 @@ import { classNames, resolveStyle, rounded, seriesColor, setsFill, type Resolved
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
-import { internalLink, linkUrl, relAttr } from '../../util/url.js';
+import { linkUrl } from '../../util/url.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import { canonicalShape } from '../flowchart/shapes.js';
@@ -267,7 +267,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
     heldLabels.push((route[0] + route[3]) / 2, (route[1] + route[4]) / 2);
     const drawnRoute = route.slice();
     insetRoute(drawnRoute, outward ? 0 : 3, views[i], n);
-    heldPaths.push(routePath(drawnRoute, 'linear', 0, markerTrim(edge.arrowTypeEnd), undefined, undefined, !out.numbers));
+    heldPaths.push(routePath(drawnRoute, 'linear', 0, markerTrim(edge.arrowTypeEnd), undefined, undefined, false));
   }
 
   const crossings: Crossings = new Map();
@@ -319,15 +319,13 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
     // The label is a note name, but it still ends up in an href, so it gets the same check as a URL.
     const name = internal && node.label && options.links !== false ? decodeEntities(node.label) : undefined;
     const checked = name !== undefined;
-    const target = esc(name ?? '');
     if (checked) links.push({ id: node.id, href: name, internal: true });
     const href = node.link ? linkUrl(node.link, options) : undefined;
     if (href !== undefined) links.push({ id: node.id, href, internal: false });
 
     out.section('nodes');
     out.group({ cls: `pele-node pele-shape-${view.shape}${kind}${classes}`, id: node.id, source: node.source, x, y });
-    if (href !== undefined) out.link(` href="${esc(href)}"${node.linkTarget ? ` target="${esc(node.linkTarget)}"` : ''}${relAttr(options)}`);
-    if (node.tooltip) out.tooltip(node.tooltip);
+    if (href !== undefined) out.link();
     if (collapsed) {
       const color = seriesColor(node.colorIndex ?? KIND_SLOT.size);
       const line = h / 2 - DOTS - 2;
@@ -338,7 +336,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
     } else {
       drawShape(out, view.shape, w, h, tint(slot, '0.14', view.style) + view.style.shape, ` stroke="${seriesColor(slot)}"` + view.style.line);
     }
-    if (checked) out.link(` class="internal-link"${internalLink(name!, options) ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}"`);
+    if (checked) out.link();
     out.label(view.label, 0, view.dy, ` class="pele-label"${ink}${view.style.text}`, icons);
     if (checked) out.end();
     if (href !== undefined) out.end();
@@ -387,13 +385,14 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
       const route = ce.route.slice();
       insetRoute(route, 0, views[ce.src], cnodes[ce.src]);
       insetRoute(route, route.length - 3, views[ce.dst], cnodes[ce.dst]);
-      path = routePath(route, edge.curve, 0, markerTrim(endType), undefined, undefined, !out.numbers);
+      path = routePath(route, edge.curve, 0, markerTrim(endType), undefined, undefined, false);
     }
     put(edge, label, path, ce.labelX, ce.labelY);
   }
   held.forEach((h, i) => put(h.edge, h.label, heldPaths[i], heldLabels[2 * i], heldLabels[2 * i + 1]));
 
-  return { svg: out.done('agentflow', width, height, size, options, db), width, height, links };
+  out.done(width, height);
+  return { width, height, links };
 }
 
 function dot(pen: Pen, x: number, y: number): Pen {

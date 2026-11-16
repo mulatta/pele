@@ -708,7 +708,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
       const bottom = y + 12;
       if (frame.kind === 'rect') {
         const fill = frame.fill ? resolveStyle([`fill:${frame.fill}`]).shape : '';
-        const item = out.sources ? { cls: 'pele-rect', id: `i${start.id}`, source: start.source } : { cls: 'pele-rect' };
+        const item = { cls: 'pele-rect', id: `i${start.id}`, source: start.source };
         const top = frame.top;
         rectsDraw.push(() => {
           out.section('rects');
@@ -716,7 +716,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
         });
       } else {
         out.section('frames');
-        out.group({ cls: `pele-frame pele-frame-${frame.kind}`, id: out.sources ? `i${start.id}` : undefined, source: start.source });
+        out.group({ cls: `pele-frame pele-frame-${frame.kind}`, id: `i${start.id}`, source: start.source });
         out.rect(frame.x0, frame.top, frame.x1 - frame.x0, bottom - frame.top, ` fill="none"${ROUNDED}`);
         for (let k = 0; k < frame.dividerY.length; k++) {
           const dy = frame.dividerY[k];
@@ -947,5 +947,6 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
   for (const draw of rectsDraw.reverse()) draw();
   for (const draw of activationsDraw.reverse()) draw();
   out.frame(pad - minX, pad - minY);
-  return { svg: out.done('sequence', width, height, size, options, db), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

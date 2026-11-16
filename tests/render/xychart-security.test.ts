@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import type { RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -46,7 +39,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `xychart\n  %% ${p}\n  line [1, 2]`,
 ];
 
-describe('inert XY chart output', () => {
+describe('safe XY chart output', () => {
   const corpus = loadCorpus('xychart', /xychart/i);
 
   it('holds for every corpus input', () => {
@@ -106,8 +99,8 @@ describe('inert XY chart output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('xychart\n  x-axis "__proto__" ["__proto__", "constructor", "toString"]\n  bar "__proto__" [1, 2, 3]\n  line "constructor" [3 "__proto__", 2, 1]', options);
-    render('---\nconfig:\n  xyChart:\n    __proto__:\n      polluted: true\n    constructor: 1\n---\nxychart\n  line [1, 2]', options);
+    draw('xychart\n  x-axis "__proto__" ["__proto__", "constructor", "toString"]\n  bar "__proto__" [1, 2, 3]\n  line "constructor" [3 "__proto__", 2, 1]');
+    draw('---\nconfig:\n  xyChart:\n    __proto__:\n      polluted: true\n    constructor: 1\n---\nxychart\n  line [1, 2]');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

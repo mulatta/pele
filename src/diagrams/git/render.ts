@@ -313,7 +313,6 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
     const merge = commit.type === commitType.MERGE && type !== commitType.MERGE ? ' pele-commit-merge' : '';
     out.group({ cls: `pele-commit pele-commit-${CLASSES[type] ?? CLASSES[0]}${merge}`, id: commit.id, source: commit.source });
     // Merges and cherry-picks carry a message Mermaid makes up; only a written one is worth showing.
-    if (commit.type < commitType.MERGE && commit.message !== '') out.tooltip(commit.message);
     const color = seriesColor(view.lane);
     symbol(out, type, x, y, color);
 
@@ -375,8 +374,8 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
   out.section('main');
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
+  out.done(width, height);
   return {
-    svg: out.done('gitGraph', width, height, size, options, model),
     width,
     height,
     links: [],

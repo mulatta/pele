@@ -6,29 +6,24 @@ import { withMath } from './text/math.js';
 import { cleanupComments, encodeEntities, normalizeLineBreaks, preprocess, type Config } from './preprocess.js';
 import type { DiagramModel } from './models.js';
 import { palette, withPalette } from './svg/palette.js';
-import { mountWith, type MountOptions, type Mounted } from './mount.js';
-import type { Diagram, RenderOptions, RenderResult } from './types.js';
+import type { Diagram, LinkInfo, RenderOptions } from './types.js';
 import { SceneOut, sceneRoot, type Scene } from './draw/scene.js';
-import { SvgOut } from './draw/svg.js';
 
 export { PeleError } from './errors.js';
 export type { PeleErrorCode } from './errors.js';
 export type { DiagramType, MermaidType } from './detect.js';
 export type { TextMeasurer } from './text/measurer.js';
-export type { IconResolver, LinkInfo, MathMarkup, MathResolver, MonospacePart, RenderOptions, RenderResult, SourceInfo } from './types.js';
+export type { IconResolver, LinkInfo, MathMarkup, MathResolver, MonospacePart, RenderOptions, SourceInfo } from './types.js';
 export type { Diagram } from './types.js';
 export { Paint } from './draw/out.js';
 export type { Attrs, Group, Out, Pen } from './draw/out.js';
-export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
-export { enableZoom } from './zoom.js';
 export type { Scene, SceneGradient, SceneShape, SceneSpan, SceneText, SceneItem } from './draw/scene.js';
 export { SCENE_VERSION } from './draw/scene.js';
-export type { Zoom, ZoomOptions } from './zoom.js';
 
 const diagrams = new Map<DiagramType, Diagram<unknown>>();
 
-// Makes diagram types available to render() and parse(). The full entry point registers every
+// Makes diagram types available to renderScene() and parse(). The full entry point registers every
 // type; an app that imports this module picks the ones it needs.
 export function register(...list: Diagram<any>[]): void {
   for (const diagram of list) diagrams.set(diagram.type, diagram as Diagram<unknown>);
@@ -148,7 +143,7 @@ function inSource(text: string, keepComments: boolean): (at: number) => [source:
 function parsedFrom(source: string | DiagramModel, options: ParseOptions): Parsed {
   if (typeof source === 'string') return parseSource(source, options.limit, options.maxEdges, options.config, options.sourceInfo);
   const parsed = parsedModels.get(source);
-  if (parsed === undefined) throw new TypeError('render() takes diagram text or a model that parse() returned.');
+  if (parsed === undefined) throw new TypeError('renderScene() takes diagram text or a model that parse() returned.');
   return parsed;
 }
 
@@ -165,7 +160,7 @@ export function supports(text: string): boolean {
   }
 }
 
-// The options that are read when the text is parsed. A render() that is given a model has
+// The options that are read when the text is parsed. A renderScene() that is given a model has
 // nothing left to do with them.
 export type ParseOptions = Pick<RenderOptions, 'limit' | 'maxEdges' | 'config' | 'sourceInfo'>;
 
@@ -179,41 +174,11 @@ export function parse(text: string, options: ParseOptions = {}): ParsedDiagramMo
   });
 }
 
-export function render(source: string | DiagramModel, options: RenderOptions = {}): RenderResult {
-  return guarded(() => {
-    const { type, mermaidType, diagram, model, config } = parsedFrom(source, options);
-    const section = config[diagram.section ?? type];
-    const fixed = typeof section === 'object' && section !== null && !Array.isArray(section) && section.useMaxWidth === false;
-    const responsive = options.responsive ?? !fixed;
-    // The host's icon resolver and the ids in `links` see names as the author meant them, with
-    // entity codes turned into their characters, as `data-icon` and `data-id` in the SVG do.
-    const resolve = options.icons;
-    const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
-    const drawing = { ...options, responsive, icons };
-    const rendered = tagErrors({ type, mermaidType }, () =>
-      withPalette(palette(type, config), () =>
-        withMath(diagram.math ? options.math : undefined, () =>
-          withIcons(icons, () => diagram.render(model, config, drawing, new SvgOut(drawing)))
-        )
-      )
-    );
-    const outputLimit = options.outputLimit ?? DEFAULT_OUTPUT_LIMIT;
-    if (rendered.svg.length > outputLimit) {
-      throw new PeleError(`Diagram output is longer than the limit of ${outputLimit} characters.`, 'limit', {
-        type,
-        mermaidType,
-      });
-    }
-    for (const link of rendered.links) link.id = decodeEntities(link.id);
-    return { type, mermaidType, ...rendered };
-  });
-}
-
-// Whether renderScene() can draw this text: its type is registered as drawing a scene.
+// Whether renderScene() can draw this text: its type is registered.
 export function sceneSupported(source: string | DiagramModel): boolean {
   try {
     const type = typeof source === 'string' ? detectType(source) : parsedFrom(source, {}).type;
-    return type !== null && diagrams.get(type)?.scene === true;
+    return type !== null && diagrams.has(type);
   } catch {
     return false;
   }
@@ -225,21 +190,16 @@ export interface SceneResult {
   scene: Scene;
   width: number;
   height: number;
-  links: RenderResult['links'];
+  links: LinkInfo[];
 }
 
-// Draws a diagram as a renderer-neutral vector scene instead of SVG text, through the same
-// drawing calls render() turns into SVG.
+// Draws a diagram as a renderer-neutral vector scene.
 export function renderScene(source: string | DiagramModel, options: RenderOptions = {}): SceneResult {
   return guarded(() => {
     const { type, mermaidType, diagram, model, config } = parsedFrom(source, { ...options, sourceInfo: true });
-    if (diagram.scene !== true) throw new PeleError(`${type} is not registered as drawing a scene.`, 'unsupported-diagram', { type, mermaidType });
-    const section = config[diagram.section ?? type];
-    const fixed = typeof section === 'object' && section !== null && !Array.isArray(section) && section.useMaxWidth === false;
-    const responsive = options.responsive ?? !fixed;
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
-    const drawing = { ...options, responsive, icons };
+    const drawing = { ...options, icons };
     const out = new SceneOut(sceneRoot(options.fontSize ?? 16), options.outputLimit ?? DEFAULT_OUTPUT_LIMIT);
     const rendered = tagErrors({ type, mermaidType }, () =>
       withPalette(palette(type, config), () =>
@@ -250,10 +210,4 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     for (const link of rendered.links) link.id = decodeEntities(link.id);
     return { type, mermaidType, scene: out.scene, width: rendered.width, height: rendered.height, links: rendered.links };
   });
-}
-
-// Renders into an element and draws again when the element's width calls for it. Text that
-// cannot be drawn shows its error in the element.
-export function mount(element: HTMLElement, text: string, options: MountOptions = {}): Mounted {
-  return mountWith({ parse, render }, element, text, options);
 }

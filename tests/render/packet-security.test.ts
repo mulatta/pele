@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, lines, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
   return true;
 }
 
@@ -51,9 +44,9 @@ describe('inert packet output', () => {
     expect(rendered).toBeGreaterThan(150);
   });
 
-  it('escapes a label instead of reading it as markup', () => {
-    const { svg } = render('packet\n0-31: "<b>&amp;</b> <script>x</script>"', options);
-    expect(svg).toContain('&lt;b&gt;&amp;&lt;/b&gt; &lt;script&gt;x&lt;/script&gt;');
+  it('shows a label as text instead of reading it as markup', () => {
+    const { scene } = draw('packet\n0-31: "<b>&amp;</b> <script>x</script>"');
+    expect(lines(scene)).toContain('<b>&</b> <script>x</script>');
   });
 
   it('holds for hostile option values', () => {

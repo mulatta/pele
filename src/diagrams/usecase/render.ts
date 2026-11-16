@@ -491,7 +491,7 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       }
     } else {
       if (ce.route.length < 6) continue;
-      path = routePath(ce.route, undefined, trim(startType), trim(endType), undefined, undefined, !out.numbers);
+      path = routePath(ce.route, undefined, trim(startType), trim(endType), undefined, undefined, false);
     }
     const under = fillUnder(path.d, [path.sx, path.sy, path.ex, path.ey], fills, path.tokens);
     const over = under ? edgeInk(under, style?.line) : under;
@@ -544,7 +544,8 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
     }
   }
 
-  return { svg: out.done('usecase', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }
 
 // A boundary's title sits in the middle of its top edge. Where edges enter through that edge it

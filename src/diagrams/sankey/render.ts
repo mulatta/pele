@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { esc, escText, num, sourceAttrsFor } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { resolveStyle, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -58,7 +58,6 @@ export function renderSankey(model: SankeyModel, config: Config, options: Render
 }
 
 function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const size = options.fontSize ?? 16;
   const least = Math.round(size * 0.625);
   // Labels shrink with a chart narrowed to fit, as they would if the whole picture were scaled down.
@@ -162,8 +161,7 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
 
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
   out.frame(ox, oy);
-  // Layers are painted in the order they are made, and the gradients are known only after the links.
-  out.section('defs');
+  // Layers are painted in the order they are made.
   out.section('links', ' class="pele-sankey-links" fill-opacity="0.4"', true);
   out.section('nodes', ' class="pele-sankey-nodes"', true);
   out.section('labels', ` class="pele-labels" font-size="${small}"`, true);
@@ -216,7 +214,6 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
   // themed copy's gradient. Other characters would end the url() and void the whole fill.
   const idPrefix = options.idPrefix ?? '';
   const gradient = linkColor === 'gradient' && /^[\w-]+$/.test(idPrefix);
-  const gradients = new Map<string, string>();
   out.section('links');
   links.forEach((link, k) => {
     const end = linkColor === 'target' ? link.target : link.source;
@@ -231,7 +228,6 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
         `x1="${num(x0)}" x2="${num(x1)}"><stop offset="0" stop-color="${nodeColor(link.source)}"/>` +
         `<stop offset="1" stop-color="${nodeColor(link.target)}"/>`;
       const id = `${idPrefix}-sankey-${contentId(stops)}`;
-      gradients.set(id, `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" ${stops}</linearGradient>`);
       out.gradient(id, x0, 0, x1, 0, [
         [0, nodeColor(link.source)],
         [1, nodeColor(link.target)],
@@ -243,26 +239,11 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
     const to = model.nodes[link.target].id;
     const top = link.sourceY - half;
     const bottom = link.targetY - half;
-    // The SVG has a tooltip inside the path, which a typed path does not write.
-    out.both(
-      () =>
-        `<path class="pele-sankey-link" data-id="${escText(from)}-&gt;${escText(to)}"${srcAttrs(model.links[k].written)} d="M${num(x0)},${num(top)}C${num(mid)},${num(top)} ${num(mid)},${num(bottom)} ${num(x1)},${num(bottom)}L${num(x1)},${num(
-          link.targetY + half
-        )}C${num(mid)},${num(link.targetY + half)} ${num(mid)},${num(link.sourceY + half)} ${num(x0)},${num(
-          link.sourceY + half
-        )}Z" ${paint}>` + `<title>${escText(from)} → ${escText(to)}: ${esc(prefix)}${rounded(link.value)}${esc(suffix)}</title></path>`,
-      () => {
-        const pen = out.pen().M(x0, top).C(mid, top, mid, bottom, x1, bottom).L(x1, link.targetY + half);
-        pen.C(mid, link.targetY + half, mid, link.sourceY + half, x0, link.sourceY + half).Z();
-        out.path(pen, ' ' + paint, undefined, { cls: 'pele-sankey-link', id: `${from}->${to}`, source: model.links[k].written });
-      }
-    );
-  });
-  if (gradients.size > 0) {
-    out.section('defs');
-    // A scene has no use for gradient definitions.
-    out.both(() => `<defs>${[...gradients.values()].join('')}</defs>`, () => {});
-  }
+    const pen = out.pen().M(x0, top).C(mid, top, mid, bottom, x1, bottom).L(x1, link.targetY + half);
+    pen.C(mid, link.targetY + half, mid, link.sourceY + half, x0, link.sourceY + half).Z();
+    out.path(pen, ' ' + paint, undefined, { cls: 'pele-sankey-link', id: `${from}->${to}`, source: model.links[k].written });
 
-  return { svg: out.done('sankey', width, height, size, options, model), width, height, links: [] };
+  });
+  out.done(width, height);
+  return { width, height, links: [] };
 }

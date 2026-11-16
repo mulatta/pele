@@ -21,5 +21,6 @@ export function renderInfo(model: InfoModel, _config: Config, options: RenderOpt
   out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
   out.label(text, width / 2, pad + titleHeight + text.height / 2, ' class="pele-version" fill="var(--_m)"');
 
-  return { svg: out.done('info', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

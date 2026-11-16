@@ -66,7 +66,7 @@ for (const [name, folder] of DIAGRAMS) {
 
 writeFileSync(
   'src/lazy.ts',
-  `import { detectType, mount, register, registered, render, type DiagramType, type MountOptions, type Mounted, type RenderOptions, type RenderResult } from './core.js';
+  `import { detectType, register, registered, renderScene, type DiagramType, type RenderOptions, type SceneResult } from './core.js';
 import type { Diagram } from './types.js';
 
 export * from './core.js';
@@ -102,29 +102,16 @@ export function load(type: DiagramType | null): Promise<boolean> {
   return promise;
 }
 
-// Loads the diagram type that the text needs, then renders it.
-export async function renderAsync(text: string, options: RenderOptions = {}): Promise<RenderResult> {
+// Loads the diagram type that the text needs, then draws it.
+export async function renderSceneAsync(text: string, options: RenderOptions = {}): Promise<SceneResult> {
   let type: DiagramType | null = null;
   try {
     type = detectType(text);
   } catch {
-    // render() reports what is wrong with the text.
+    // renderScene() reports what is wrong with the text.
   }
   await load(type);
-  return render(text, options);
-}
-
-// Loads the diagram type that the text needs, then mounts it. A later update() to another
-// type needs that type loaded first.
-export async function mountAsync(element: HTMLElement, text: string, options: MountOptions = {}): Promise<Mounted> {
-  let type: DiagramType | null = null;
-  try {
-    type = detectType(text);
-  } catch {
-    // mount() reports what is wrong with the text.
-  }
-  await load(type);
-  return mount(element, text, options);
+  return renderScene(text, options);
 }
 `
 );

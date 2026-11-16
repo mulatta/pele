@@ -4,7 +4,6 @@ import { renderRailroad } from './render.js';
 
 export const railroad: Diagram<RailroadDb> = {
   type: 'railroad',
-  scene: true,
   parse: (source, _config, title) => parseRailroad(source, title),
   render: renderRailroad,
 };

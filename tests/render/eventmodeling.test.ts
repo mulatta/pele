@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { PeleError, parse, supports } from '../../src/index.js';
+import { draw, itemById, items, lines, shapesOf, textsOf } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-const count = (svg: string, re: RegExp): number => svg.match(re)?.length ?? 0;
 const relations = (src: string): string[] => {
   const model = parse(src);
   return model.type === 'eventmodeling' ? model.relations.map((r) => `${r.source.id}>${r.target.id}`) : [];
@@ -13,31 +11,30 @@ const BASIC = 'eventmodeling\ntf 01 ui CartUI\ntf 02 cmd AddItem\ntf 03 evt Item
 
 describe('eventmodeling rendering', () => {
   it('draws a lane per kind of entity, a box per frame, and the inferred flow', () => {
-    const { svg, type } = render(BASIC, options);
+    const { scene, type } = draw(BASIC);
     expect(type).toBe('eventmodeling');
     expect(supports(BASIC)).toBe(true);
-    expect(count(svg, /class="pele-cluster pele-em-lane"/g)).toBe(3);
-    for (const label of ['UI/Automation', 'Command/Read Model', 'Events', 'CartUI', 'AddItem', 'ItemAdded']) expect(svg).toContain(`>${label}<`);
-    expect(svg).toContain('class="pele-node pele-em-ui" data-id="01"');
-    expect(svg).toContain('class="pele-node pele-em-command" data-id="02"');
-    expect(svg).toContain('class="pele-node pele-em-event" data-id="03"');
-    expect(count(svg, /class="pele-edge"/g)).toBe(2);
-    expect(count(svg, /class="pele-marker"/g)).toBe(2);
-    expect(svg).toContain('data-id="01-02"');
-    expect(svg).not.toContain('NaN');
+    expect(items(scene, 'pele-em-lane').length).toBe(3);
+    expect(lines(scene)).toEqual(['UI/Automation', 'Command/Read Model', 'Events', 'CartUI', 'AddItem', 'ItemAdded']);
+    expect(itemById(scene, '01', 'pele-em-ui')).toBeDefined();
+    expect(itemById(scene, '02', 'pele-em-command')).toBeDefined();
+    expect(itemById(scene, '03', 'pele-em-event')).toBeDefined();
+    const edges = items(scene, 'pele-edge');
+    expect(edges.map((edge) => edge.id)).toEqual(['01-02', '02-03']);
+    for (const edge of edges) expect(shapesOf(scene, edge).map((shape) => shape.kind)).toEqual(['stroke', 'fill']);
   });
 
   it('colors each kind from its own series slot and leaves a UI plain', () => {
-    const { svg } = render('eventmodeling\ntf 01 ui A\ntf 02 cmd B\ntf 03 evt C\ntf 04 rmo D\ntf 05 pcr E\n', options);
-    for (const slot of [1, 2, 3, 7]) expect(svg).toContain(`var(--pele-series-${slot},`);
-    expect(count(svg, /fill-opacity="0.22"/g)).toBe(4);
+    const { scene } = draw('eventmodeling\ntf 01 ui A\ntf 02 cmd B\ntf 03 evt C\ntf 04 rmo D\ntf 05 pcr E\n');
+    for (const slot of [1, 2, 3, 7]) expect(scene.shapes.some((shape) => shape.paint.startsWith(`var(--pele-series-${slot},`))).toBe(true);
+    expect(scene.shapes.filter((shape) => shape.kind === 'fill' && shape.opacity === 0.22).length).toBe(4);
   });
 
   it('moves time to the right, and keeps frames of a lane from overlapping', () => {
-    const { svg } = render('eventmodeling\ntf 01 cmd A\ntf 02 evt B\ntf 03 cmd C\ntf 04 cmd D\ntf 05 evt E\n', options);
+    const { scene } = draw('eventmodeling\ntf 01 cmd A\ntf 02 evt B\ntf 03 cmd C\ntf 04 cmd D\ntf 05 evt E\n');
     const box = (id: string): [number, number] => {
-      const m = new RegExp(`data-id="${id}"><rect x="([\\d.]+)" y="[\\d.]+" width="([\\d.]+)"`).exec(svg)!;
-      return [Number(m[1]), Number(m[1]) + Number(m[2])];
+      const { box } = itemById(scene, id, 'pele-node')!;
+      return [box!.x0, box!.x1];
     };
     for (const [a, b] of [['01', '02'], ['02', '03'], ['03', '04'], ['04', '05']]) expect(box(b)[0]).toBeGreaterThan(box(a)[0]);
     expect(box('03')[0]).toBeGreaterThan(box('01')[1]);
@@ -69,7 +66,7 @@ describe('eventmodeling rendering', () => {
       [202, 'Stream: Other'],
     ]);
     expect(model.boxes.map((box) => [box.name, box.lane.index])).toEqual([['Add', 101], ['Added', 201], ['Remove', 101], ['Seen', 202], ['Plain', 200], ['a.b.c', 200]]);
-    expect(count(render(src, options).svg, /class="pele-cluster pele-em-lane"/g)).toBe(4);
+    expect(items(draw(src).scene, 'pele-em-lane').length).toBe(4);
   });
 
   it('shows inline data and data blocks, a block winning over inline data', () => {
@@ -79,36 +76,39 @@ describe('eventmodeling rendering', () => {
     const model = parse(src);
     if (model.type !== 'eventmodeling') throw new Error('wrong type');
     expect(model.boxes.map((box) => box.data)).toEqual(['productId: 7', 'description: string\n  nested: true', '"a": 1', undefined, 'x']);
-    const { svg } = render(src, options);
-    expect(svg).toContain('>productId: 7</tspan>');
-    expect(svg).toContain('>  nested: true</tspan>');
-    expect(svg).not.toContain('ignored');
-    expect(count(svg, /class="pele-em-data"/g)).toBe(4);
+    const { scene } = draw(src);
+    const all = lines(scene);
+    expect(all).toContain('productId: 7');
+    expect(all).toContain('  nested: true');
+    expect(all.join('\n')).not.toContain('ignored');
+    const nodes = items(scene, 'pele-node');
+    expect(nodes.filter((node) => textsOf(scene, node).some((t) => t.size === 12)).length).toBe(4);
   });
 
   it('wraps long data lines without splitting emoji', () => {
-    const { svg } = render(`eventmodeling\ntf 01 cmd A {${'a'.repeat(47)}😀Z}`, options);
-    expect(svg).toContain(`>${'a'.repeat(47)}😀</tspan>`);
-    expect(svg).toContain('>Z</tspan>');
+    const all = lines(draw(`eventmodeling\ntf 01 cmd A {${'a'.repeat(47)}😀Z}`).scene);
+    expect(all).toContain(`${'a'.repeat(47)}😀`);
+    expect(all).toContain('Z');
   });
 
   it('keeps comment lines inside data blocks, as Mermaid does', () => {
-    const { svg } = render('eventmodeling\n%% a real comment\ntf 01 evt A [[D]]\ndata D {\n  %% kept\n  a: 1\n}\n', options);
-    expect(svg).toContain('>%% kept</tspan>');
-    expect(svg).not.toContain('a real comment');
+    const all = lines(draw('eventmodeling\n%% a real comment\ntf 01 evt A [[D]]\ndata D {\n  %% kept\n  a: 1\n}\n').scene);
+    expect(all).toContain('%% kept');
+    expect(all.join('\n')).not.toContain('a real comment');
   });
 
   it('lists notes and specifications under the lanes', () => {
     const src =
       'eventmodeling\ntf 01 cmd Update\ntf 02 evt Updated\nentity Updated\nnote 02 `md` {\n  first line\n  second line\n}\n' +
       'gwt 01\n given\n  evt Updated\n  evt Other\n when\n  cmd Update\n then\n  evt Updated\ngwt 02 given evt A then evt B\n';
-    const { svg } = render(src, options);
-    expect(count(svg, /class="pele-em-note"/g)).toBe(1);
-    expect(count(svg, /class="pele-em-specification"/g)).toBe(2);
-    expect(svg).toContain('Note · 02 Updated');
-    expect(svg).toContain('>second line</tspan>');
-    expect(svg).toContain('>Given  Updated, Other</tspan>');
-    expect(svg).toContain('>When  Update</tspan>');
+    const { scene } = draw(src);
+    expect(items(scene, 'pele-em-note').length).toBe(1);
+    expect(items(scene, 'pele-em-specification').length).toBe(2);
+    const all = lines(scene);
+    expect(all).toContain('Note · 02 Updated');
+    expect(all).toContain('second line');
+    expect(all).toContain('Given  Updated, Other');
+    expect(all).toContain('When  Update');
     const model = parse(src);
     if (model.type === 'eventmodeling') {
       expect(model.specifications[1]).toEqual({ frame: '02', given: ['A'], when: [], then: ['B'] });
@@ -117,11 +117,9 @@ describe('eventmodeling rendering', () => {
   });
 
   it('reads titles written the only way the grammar allows, and front matter titles', () => {
-    const { svg } = render('eventmodeling title Checkout\ntf 01 ui A accTitle: Acc\ntf 02 cmd B accDescr: Described\n', options);
-    expect(svg).toContain('>Checkout<');
-    expect(svg).toContain('<title id="pele-title">Acc</title>');
-    expect(svg).toContain('<desc id="pele-desc">Described</desc>');
-    expect(render('---\ntitle: Front\n---\neventmodeling\ntf 01 ui A\n', options).svg).toContain('>Front<');
+    const { scene } = draw('eventmodeling title Checkout\ntf 01 ui A accTitle: Acc\ntf 02 cmd B accDescr: Described\n');
+    expect(lines(scene)).toContain('Checkout');
+    expect(lines(draw('---\ntitle: Front\n---\neventmodeling\ntf 01 ui A\n').scene)).toContain('Front');
   });
 
   it('reads entity names that start with title', () => {
@@ -134,22 +132,22 @@ describe('eventmodeling rendering', () => {
   });
 
   it('draws an empty model and is deterministic', () => {
-    expect(render('eventmodeling', options).svg).toContain('<svg');
-    expect(render(BASIC, options).svg).toBe(render(BASIC, options).svg);
+    expect(draw('eventmodeling').scene.texts).toEqual([]);
+    expect(draw(BASIC).scene).toEqual(draw(BASIC).scene);
   });
 
   it("rejects what Mermaid rejects, with Mermaid's message for a reused frame number", () => {
     try {
-      render('eventmodeling\n  tf 01 ui UI\n  %% a comment line\n  rf 01 evt Event\n', options);
+      draw('eventmodeling\n  tf 01 ui UI\n  %% a comment line\n  rf 01 evt Event\n');
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(PeleError);
       expect((error as PeleError).message).toBe('Duplicate event modeling frame ID "01" on line 4');
       expect((error as PeleError).line).toBe(4);
     }
-    expect(() => render('eventmodeling\ntf 01 cmd\n%% a comment line\n\n', options)).toThrow(expect.objectContaining({ line: 2, column: 10 }));
+    expect(() => draw('eventmodeling\ntf 01 cmd\n%% a comment line\n\n')).toThrow(expect.objectContaining({ line: 2, column: 10 }));
     for (const src of ['eventmodeling\ntitle T\n', 'eventmodeling\ntf 01 evt data\n', 'eventmodeling\ntf 01 evt A {\n', 'eventmodeling\ntf 1234 evt A\n']) {
-      expect(() => render(src, options), src).toThrow(PeleError);
+      expect(() => draw(src), src).toThrow(PeleError);
     }
   });
 });

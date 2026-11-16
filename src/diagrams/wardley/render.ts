@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
-import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -42,37 +42,17 @@ function clamp(value: number, min: number, max: number): number {
 // Draws a label with its lines starting at x and its first baseline at y. The SVG is one <text>
 // with a tspan per line, which no typed call writes; a scene gets a text per line.
 function startLabel(out: Out, label: Label, x: number, y: number, attrs: string): void {
-  out.both(
-    () => startMarkup(label, x, y, attrs),
-    () => {
-      const shared = sharedStyle(label);
-      const look = textStyle(attrs, shared);
-      let baseline = y;
-      for (const line of label.lines) {
-        const runs = line.filter((span) => span.icon === undefined).map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) }));
-        if (runs.length > 0) out.spans(x, baseline, runs, look);
-        baseline += label.lineHeight;
-      }
-    }
-  );
-}
-
-function startMarkup(label: Label, x: number, y: number, attrs: string): string {
   const shared = sharedStyle(label);
-  let body = '';
+  const look = textStyle(attrs, shared);
   let baseline = y;
   for (const line of label.lines) {
-    let first = true;
-    for (const span of line) {
-      if (span.icon !== undefined) continue;
-      const style = spanStyle(span.style & ~shared);
-      body += `<tspan${first ? ` x="${num(x)}" y="${num(baseline)}"` : ''}${style}>${esc(span.text)}</tspan>`;
-      first = false;
-    }
+    const runs = line.filter((span) => span.icon === undefined).map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) }));
+    if (runs.length > 0) out.spans(x, baseline, runs, look);
     baseline += label.lineHeight;
   }
-  return body === '' ? '' : `<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>`;
+
 }
+
 
 function dimension(config: Config, given: number | undefined, key: string, fallback: number): number {
   const value = typeof given === 'number' && Number.isFinite(given) ? given : setting(config, key, fallback, 1, 1e6);
@@ -164,14 +144,10 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
   // The rotation is an attribute of the text itself, which no typed call writes.
   const turn = ` transform="rotate(-90 -16 ${num(plotH / 2)})"`;
   // The scene turns a group around the same label.
-  out.both(
-    () => labelSvg(yTitle, -16, plotH / 2, axisAttrs + turn),
-    () => {
-      out.group({ attrs: turn });
-      out.label(yTitle, -16, plotH / 2, axisAttrs);
-      out.end();
-    }
-  );
+  out.group({ attrs: turn });
+  out.label(yTitle, -16, plotH / 2, axisAttrs);
+  out.end();
+
   grow(-16 - yTitle.height / 2, 0, 0, 0);
   const legendTop = stageBottom + 6 + xTitle.height + 10;
 
@@ -442,8 +418,8 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
   out.section('title');
   out.label(title, tx + plotW / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('wardley', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],

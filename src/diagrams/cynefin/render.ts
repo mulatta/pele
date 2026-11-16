@@ -1,12 +1,11 @@
 import type { Config } from '../../preprocess.js';
 import type { Out, Pen } from '../../draw/out.js';
-import { sourceAttrsFor } from '../../svg/builder.js';
 import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
-import { FOLD, HORIZON, backward, cliff, curvePen, ellipsePath, ellipsePen, forward, resolveSeed, wave } from './boundaries.js';
+import { FOLD, HORIZON, backward, cliff, curvePen, ellipsePen, forward, resolveSeed, wave } from './boundaries.js';
 import type { CynefinModel, DomainName } from './model.js';
 
 // [domain, column, row, series color]
@@ -172,18 +171,9 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
   out.path(curvePen(out.pen(), east), '');
   out.path(curvePen(out.pen(), drop), ' stroke="var(--_l)" stroke-width="2" stroke-dasharray="none" stroke-linecap="round"', undefined, { cls: 'pele-cynefin-cliff' });
   out.section('ellipse');
-  const oval = ellipsePath(cx, cy, rx, ry);
-  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
   const confusionPaint = ` fill="${seriesColor(CONFUSION_COLOR)}" fill-opacity="0.18" stroke="var(--_b)" stroke-dasharray="4 2"`;
-  // The SVG writes the arcs' flags as "1,1", which a pen does not.
-  out.both(
-    () => `<path d="${oval}" fill="var(--_bg)"/>`,
-    () => out.path(ellipsePen(out.pen(), cx, cy, rx, ry), ' fill="var(--_bg)"')
-  );
-  out.both(
-    () => `<path class="pele-cynefin-region" data-id="confusion"${srcAttrs(domainSource('confusion'))} d="${oval}"${confusionPaint}/>`,
-    () => out.path(ellipsePen(out.pen(), cx, cy, rx, ry), confusionPaint, undefined, { cls: 'pele-cynefin-region', id: 'confusion', source: domainSource('confusion') })
-  );
+  out.path(ellipsePen(out.pen(), cx, cy, rx, ry), ' fill="var(--_bg)"');
+  out.path(ellipsePen(out.pen(), cx, cy, rx, ry), confusionPaint, undefined, { cls: 'pele-cynefin-region', id: 'confusion', source: domainSource('confusion') });
   out.section('domains');
 
   const drawBlock = (b: Block): void => {
@@ -299,8 +289,8 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
     out.end();
   }
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('cynefin', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],

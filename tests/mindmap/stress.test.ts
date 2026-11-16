@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
+import { PeleError, parse, renderScene } from '../../src/index.js';
+import { items } from '../support/scene.js';
 import { tokenize } from '../../src/diagrams/mindmap/parser.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
@@ -25,20 +26,20 @@ const CASES: [string, () => unknown][] = [
   ['dashes and brackets', () => tokenize('mindmap\n' + '-)(-'.repeat(N / 4))],
   ['keyword prefixes', () => tokenize('mindma'.repeat(N / 6))],
   ['16,000 nodes on one level, parsed', () => parse('mindmap\nroot\n' + ' a\n'.repeat(16000), big)],
-  ['16,000 nodes on one level, rendered', () => render('mindmap\nroot\n' + ' a\n'.repeat(16000), big)],
-  ['a chain as deep as indentation allows', () => render('mindmap\n' + repeat(310, (i) => ' '.repeat(i) + 'n\n'), big)],
-  ['3,000 levels of nesting', () => render('mindmap\n' + repeat(3000, (i) => ' '.repeat(i) + 'n\n'), big)],
-  ['indentation that rises and falls', () => render('mindmap\nroot\n' + repeat(2400, (i) => ' '.repeat(1 + (i % 40)) + 'n\n'), big)],
-  ['deep branches each followed by a shallow one', () => render('mindmap\nroot\n' + repeat(160, () => repeat(24, (i) => ' '.repeat(1 + i) + 'n\n')), big)],
-  ['5,000 branches with two leaves each', () => render('mindmap\nroot\n' + ' b\n  l\n  l\n'.repeat(5000), big)],
-  ['1,400 shaped nodes with icons and classes', () => render('mindmap\nroot\n' + ' a((b))\n ::icon(fa fa-x)\n :::c d\n'.repeat(1400), big)],
-  ['one 50,000 character label', () => render('mindmap\nroot[' + 'word '.repeat(N / 5) + ']', big)],
-  ['one 50,000 character word', () => render('mindmap\nroot[' + 'w'.repeat(N) + ']', big)],
-  ['label of emphasis markers', () => render('mindmap\nroot["`' + '*a _b '.repeat(N / 6) + '`"]', big)],
-  ['label of line breaks and entities', () => render('mindmap\nroot[' + '#35;&amp;<br>'.repeat(N / 13) + ']', big)],
-  ['a class list of 25,000 names', () => render('mindmap\nroot\n:::' + 'a '.repeat(N / 2), big)],
-  ['an icon name of 50,000 characters', () => render('mindmap\nroot\n::icon(' + 'fa '.repeat(N / 3) + ')', big)],
-  ['a second root after 16,000 nodes', () => render('mindmap\n root\n' + '  a\n'.repeat(16000) + ' b\n', big)],
+  ['16,000 nodes on one level, rendered', () => renderScene('mindmap\nroot\n' + ' a\n'.repeat(16000), big)],
+  ['a chain as deep as indentation allows', () => renderScene('mindmap\n' + repeat(310, (i) => ' '.repeat(i) + 'n\n'), big)],
+  ['3,000 levels of nesting', () => renderScene('mindmap\n' + repeat(3000, (i) => ' '.repeat(i) + 'n\n'), big)],
+  ['indentation that rises and falls', () => renderScene('mindmap\nroot\n' + repeat(2400, (i) => ' '.repeat(1 + (i % 40)) + 'n\n'), big)],
+  ['deep branches each followed by a shallow one', () => renderScene('mindmap\nroot\n' + repeat(160, () => repeat(24, (i) => ' '.repeat(1 + i) + 'n\n')), big)],
+  ['5,000 branches with two leaves each', () => renderScene('mindmap\nroot\n' + ' b\n  l\n  l\n'.repeat(5000), big)],
+  ['1,400 shaped nodes with icons and classes', () => renderScene('mindmap\nroot\n' + ' a((b))\n ::icon(fa fa-x)\n :::c d\n'.repeat(1400), big)],
+  ['one 50,000 character label', () => renderScene('mindmap\nroot[' + 'word '.repeat(N / 5) + ']', big)],
+  ['one 50,000 character word', () => renderScene('mindmap\nroot[' + 'w'.repeat(N) + ']', big)],
+  ['label of emphasis markers', () => renderScene('mindmap\nroot["`' + '*a _b '.repeat(N / 6) + '`"]', big)],
+  ['label of line breaks and entities', () => renderScene('mindmap\nroot[' + '#35;&amp;<br>'.repeat(N / 13) + ']', big)],
+  ['a class list of 25,000 names', () => renderScene('mindmap\nroot\n:::' + 'a '.repeat(N / 2), big)],
+  ['an icon name of 50,000 characters', () => renderScene('mindmap\nroot\n::icon(' + 'fa '.repeat(N / 3) + ')', big)],
+  ['a second root after 16,000 nodes', () => renderScene('mindmap\n root\n' + '  a\n'.repeat(16000) + ' b\n', big)],
 ];
 
 describe('mindmap worst cases', () => {
@@ -55,10 +56,10 @@ describe('mindmap worst cases', () => {
   }
 
   it('lays out wide and deep trees without overflow', () => {
-    const wide = render('mindmap\nroot\n' + ' a\n'.repeat(16000), big);
+    const wide = renderScene('mindmap\nroot\n' + ' a\n'.repeat(16000), big);
     expect(Number.isFinite(wide.height)).toBe(true);
-    expect(wide.svg.match(/class="pele-edge"/g)?.length).toBe(16000);
-    const deep = render('mindmap\n' + repeat(3000, (i) => ' '.repeat(i) + 'n\n'), big);
-    expect(deep.svg.match(/class="pele-node/g)?.length).toBe(3000);
+    expect(items(wide.scene, 'pele-node').length).toBe(16001);
+    const deep = renderScene('mindmap\n' + repeat(3000, (i) => ' '.repeat(i) + 'n\n'), big);
+    expect(items(deep.scene, 'pele-node').length).toBe(3000);
   });
 });

@@ -1,7 +1,7 @@
 import { decodeEntities } from '../text/entities.js';
 import { Style } from '../text/measurer.js';
 import type { Label } from '../text/label.js';
-import type { IconResolver, MathMarkup, SourceInfo } from '../types.js';
+import type { IconResolver, MathMarkup } from '../types.js';
 
 export type { IconResolver };
 
@@ -25,21 +25,6 @@ export function escText(text: string): string {
   return esc(decodeEntities(text));
 }
 
-// The `data-` attributes that say where an element comes from (see SourceInfo).
-export function sourceAttrs(info: SourceInfo | undefined): string {
-  if (info === undefined) return '';
-  let out = info.line !== undefined ? ` data-line="${info.line}"` : '';
-  if (info.end !== undefined) out += ` data-end="${info.end}"`;
-  if (info.symbol !== undefined) out += ` data-symbol="${escText(info.symbol)}"`;
-  if (info.from !== undefined) out += ` data-from="${escText(info.from)}"`;
-  if (info.to !== undefined) out += ` data-to="${escText(info.to)}"`;
-  return out;
-}
-
-// What a renderer adds to an element's `data-id` group: its source when the host asked for it.
-export const sourceAttrsFor = (options: { sourceInfo?: boolean }): ((info: SourceInfo | undefined) => string) =>
-  options.sourceInfo ? sourceAttrs : () => '';
-
 // The two decimals of a coordinate, by hundredths. Building the string from integers is much
 // faster than converting a double.
 const FRACTION: string[] = [];
@@ -59,62 +44,6 @@ export function num(value: number): string {
     return '-' + q + FRACTION[m - q * 100];
   }
   return String(n / 100);
-}
-
-
-// Writes a measured label as SVG text centered on (cx, cy).
-export function labelSvg(label: Label, cx: number, cy: number, attrs: string, icons?: IconResolver): string {
-  const lines = label.lines;
-  if (lines.length === 0) return '';
-  const lh = label.lineHeight;
-  const heights = label.heights;
-  const shift = label.size * 0.35;
-  let top = cy - label.height / 2;
-
-  const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
-  if (only && only.icon === undefined && only.math === undefined && only.style === 0) {
-    return `<text${attrs} x="${num(cx)}" y="${num(top + lh / 2 + shift)}" text-anchor="middle">${esc(only.text)}</text>`;
-  }
-
-  const shared = sharedStyle(label);
-  const given = attrs;
-  attrs = textStyle(attrs, shared);
-  let body = '';
-  let extra = '';
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const h = heights ? heights[i] : lh;
-    const mid = top + h / 2;
-    const y = mid + shift;
-    let placed = false;
-    for (const span of line) if (span.icon !== undefined || span.math) placed = true;
-    if (placed) {
-      let x = cx - label.widths[i] / 2;
-      for (const span of line) {
-        if (span.math) {
-          extra += mathMarkup(span.math, x, mid, label.size, given);
-        } else if (span.icon !== undefined) {
-          const side = label.size * 1.1;
-          const inner = icons?.(span.icon) ?? '';
-          extra += `<svg class="pele-icon" data-icon="${escText(span.icon)}" x="${num(x)}" y="${num(
-            mid - side / 2
-          )}" width="${num(side)}" height="${num(side)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-        } else if (span.text !== '') {
-          body += `<tspan x="${num(x)}" y="${num(y)}" text-anchor="start"${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
-        }
-        x += span.width;
-      }
-    } else {
-      for (let j = 0; j < line.length; j++) {
-        const span = line[j];
-        const pos = j === 0 ? ` x="${num(cx)}" y="${num(y)}"` : '';
-        body += `<tspan${pos}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
-      }
-      if (line.length === 0) body += `<tspan x="${num(cx)}" y="${num(y)}"> </tspan>`;
-    }
-    top += h;
-  }
-  return `<text${attrs} text-anchor="middle" xml:space="preserve">${body}</text>${extra}`;
 }
 
 const RE_FILL = / fill="([^"]*)"/;

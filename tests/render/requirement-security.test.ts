@@ -1,23 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
 import { RequirementDb } from '../../src/diagrams/requirement/db.js';
 import { renderRequirement } from '../../src/diagrams/requirement/render.js';
-import { SvgOut } from '../../src/draw/svg.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { SceneOut, sceneRoot } from '../../src/draw/scene.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, options, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -63,7 +55,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"requirement": {"rect_fill": "${p}"}, "themeVariables": {"fontFamily": "${p}"}}}%%\nrequirementDiagram\n${BODY}`,
 ];
 
-describe('inert requirement output', () => {
+describe('safe requirement scenes', () => {
   const corpus = loadCorpus('requirement', /requirementDiagram/i);
 
   it('holds for every corpus input', () => {
@@ -80,11 +72,9 @@ describe('inert requirement output', () => {
     expect(rendered).toBeGreaterThan(550);
   }, 120_000);
 
-  it('escapes what it shows', () => {
-    const { svg } = render('requirementDiagram\nrequirement "<script>alert(1)</script>" {\ntext: "<img src=x onerror=alert(1)>"\n}\n', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('data-id="&lt;script&gt;alert(1)&lt;/script&gt;"');
+  it('shows markup as text', () => {
+    const { scene } = draw('requirementDiagram\nrequirement "<script>alert(1)</script>" {\ntext: "<img src=x onerror=alert(1)>"\n}\n');
+    expect(scene.items.map((i) => i.id)).toContain('<script>alert(1)</script>');
   });
 
   it('holds for hostile option values', () => {
@@ -113,7 +103,9 @@ describe('inert requirement output', () => {
       db.defineClass([payload], [payload, `fill:${payload}`, `stroke:${payload}`, `color:${payload}`, `font-family:${payload}`]);
       db.setClass([payload, 'e'], [payload]);
       db.setCssStyle(['e'], [`fill:${payload},stroke-dasharray:${payload}`, `font-size:${payload}`, `${payload}:red`]);
-      assertInert(renderRequirement(db, {}, options, new SvgOut(options)).svg, JSON.stringify(payload));
+      const out = new SceneOut(sceneRoot(16));
+      const { width, height, links } = renderRequirement(db, {}, options, out);
+      assertSafe({ type: 'requirement', mermaidType: 'requirementDiagram', scene: out.scene!, width, height, links }, JSON.stringify(payload));
     }
   }, 120_000);
 
@@ -129,7 +121,7 @@ describe('inert requirement output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('requirementDiagram\nrequirement __proto__ {\nid: constructor\n}\nelement constructor {\ntype: toString\n}\n__proto__ - contains -> constructor\nclassDef __proto__ fill:red\nclass __proto__,constructor __proto__,toString\n__proto__:::constructor\nstyle __proto__ fill:red\n', options);
+    draw('requirementDiagram\nrequirement __proto__ {\nid: constructor\n}\nelement constructor {\ntype: toString\n}\n__proto__ - contains -> constructor\nclassDef __proto__ fill:red\nclass __proto__,constructor __proto__,toString\n__proto__:::constructor\nstyle __proto__ fill:red\n');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'default')).toBe(false);
     expect(Object.keys(Object.prototype)).toEqual([]);

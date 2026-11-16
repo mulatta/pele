@@ -1,21 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, items, textOf, tryDraw } from '../support/scene.js';
 
 // A host with an icon for every name, so that each name a diagram gives reaches the output.
-const options = { measurer: metricsMeasurer, icons: () => '<path d="M0,0"/>' };
+const options = { icons: () => '<path d="M0,0"/>' };
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, { ...options, ...extra });
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
   return true;
 }
 
@@ -61,12 +56,10 @@ describe('inert mindmap output', () => {
     expect(rendered).toBeGreaterThan(300);
   });
 
-  it('escapes text, ids, icons and classes', () => {
-    const { svg } = render('mindmap\n  a<b>"&[<i onload=x>"&]\n  ::icon(x" onload="y)\n  :::a"b <c> d=e', options);
-    expect(svg).toContain('data-id="a&lt;b&gt;&quot;&amp;"');
-    expect(svg).toContain('data-icon="x&quot; onload=&quot;y"');
-    expect(svg).toContain('class="pele-node pele-shape-rect pele-root a b c d e"');
-    expect(svg).not.toContain('<i');
+  it('keeps text, ids and classes as given', () => {
+    const { scene } = draw('mindmap\n  a<b>"&[<i onload=x>"&]\n  ::icon(x" onload="y)\n  :::a"b <c> d=e', options);
+    expect(items(scene).map((i) => [i.id, i.kind])).toEqual([['a<b>"&', 'pele-node pele-shape-rect pele-root a b c d e']]);
+    expect(textOf(scene)).not.toContain('<i');
   });
 
   it('holds for hostile option values and icon names', () => {
@@ -87,7 +80,7 @@ describe('inert mindmap output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('mindmap\n  __proto__\n    constructor\n    :::__proto__ constructor\n    ::icon(__proto__)\n    toString[hasOwnProperty]', options);
+    draw('mindmap\n  __proto__\n    constructor\n    :::__proto__ constructor\n    ::icon(__proto__)\n    toString[hasOwnProperty]', options);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

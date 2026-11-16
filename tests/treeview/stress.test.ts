@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
+import { PeleError, renderScene } from '../../src/index.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
 const N = 50000;
@@ -41,7 +41,7 @@ describe('treeView worst cases', () => {
     it(name, () => {
       const started = performance.now();
       try {
-        render(src, big);
+        renderScene(src, big);
       } catch (error) {
         expect(error, (error as Error).message).toBeInstanceOf(PeleError);
       }
@@ -50,6 +50,6 @@ describe('treeView worst cases', () => {
   }
 
   it('refuses source over the default limit', () => {
-    expect(() => render(HEAD + 'a\n'.repeat(30000))).toThrow(/limit of 50000/);
+    expect(() => renderScene(HEAD + 'a\n'.repeat(30000))).toThrow(/limit of 50000/);
   });
 });

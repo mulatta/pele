@@ -5,7 +5,6 @@ import { renderMindmap } from './render.js';
 
 export const mindmap: Diagram<MindmapModel> = {
   type: 'mindmap',
-  scene: true,
   math: true,
   parse(source, _config, title) {
     const db = new MindmapDb();

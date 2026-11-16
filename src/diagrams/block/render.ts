@@ -825,5 +825,6 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
     }
   }
 
-  return { svg: out.done('block', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

@@ -1,5 +1,5 @@
 {
-  description = "pele: Mermaid diagrams to SVG and vector scenes";
+  description = "pele: Mermaid diagrams to vector scenes";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -50,7 +50,7 @@
           default = buildNpmPackage {
             pname = "pele";
             inherit ((lib.importJSON ./package.json)) version;
-            # What the library build and its tests read; the website has dependencies of its own.
+            # What the library build and its tests read.
             src = lib.fileset.toSource {
               root = ./.;
               fileset = lib.fileset.unions [
@@ -60,7 +60,7 @@
                 ./vitest.config.ts
                 ./scripts
                 ./src
-                (lib.fileset.difference ./tests ./tests/website)
+                ./tests
                 ./LICENSE
                 ./README.md
               ];
@@ -76,7 +76,7 @@
               runHook postCheck
             '';
             meta = {
-              description = "Mermaid diagrams to SVG and vector scenes";
+              description = "Mermaid diagrams to vector scenes";
               license = lib.licenses.mit;
             };
           };

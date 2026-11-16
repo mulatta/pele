@@ -182,8 +182,8 @@ function draw(out: Out, model: TreeViewModel, config: Config, options: RenderOpt
     out.end();
   }
 
+  out.done(totalWidth, totalHeight);
   return {
-    svg: out.done('treeView', totalWidth, totalHeight, size, options, model),
     width: totalWidth,
     height: totalHeight,
     links: [],

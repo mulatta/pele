@@ -1,45 +1,40 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { parse, supports } from '../../src/index.js';
+import { draw, lines } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
 const { version } = JSON.parse(readFileSync('package.json', 'utf8')) as { version: string };
 
 describe('info rendering', () => {
   it("draws Pele's version", () => {
-    const { svg, type, width, height } = render('info', options);
+    const { scene, type, width, height } = draw('info');
     expect(type).toBe('info');
     expect(supports('info showInfo')).toBe(true);
-    expect(svg).toContain(`>Pele v${version}<`);
-    expect(svg).toContain('class="pele-version"');
+    expect(lines(scene)).toEqual([`Pele v${version}`]);
     expect(width).toBeLessThan(200);
     expect(height).toBeLessThan(60);
   });
 
   it('draws the same with and without showInfo', () => {
-    expect(render('info\nshowInfo\n', options).svg).toBe(render('info', options).svg);
+    expect(draw('info\nshowInfo\n').scene).toEqual(draw('info').scene);
   });
 
   it('draws a title from the diagram or the front matter', () => {
-    const titled = render('---\ntitle: From front matter\n---\ninfo', options);
-    expect(titled.svg).toContain('>From front matter<');
-    expect(titled.height).toBeGreaterThan(render('info', options).height);
-    const own = render('---\ntitle: From front matter\n---\ninfo\ntitle Own', options).svg;
-    expect(own).toContain('>Own<');
+    const titled = draw('---\ntitle: From front matter\n---\ninfo');
+    expect(lines(titled.scene)).toContain('From front matter');
+    expect(titled.height).toBeGreaterThan(draw('info').height);
+    const own = lines(draw('---\ntitle: From front matter\n---\ninfo\ntitle Own').scene);
+    expect(own).toContain('Own');
     expect(own).not.toContain('From front matter');
   });
 
-  it('writes accessible names and exposes the model', () => {
+  it('exposes the model', () => {
     const src = 'info showInfo\naccTitle: Name\naccDescr: Text';
-    const { svg } = render(src, options);
-    expect(svg).toContain('<title id="pele-title">Name</title>');
-    expect(svg).toContain('<desc id="pele-desc">Text</desc>');
     expect(parse(src)).toEqual({ type: 'info', mermaidType: 'info', title: undefined, accTitle: 'Name', accDescr: 'Text' });
   });
 
   it('rejects anything else after the keyword', () => {
-    expect(() => render('info unsupported', options)).toThrow(/Lexical error on line 1/);
-    expect(() => render('info\ntitle a\nshowInfo', options)).toThrow(/Parse error on line 3/);
+    expect(() => draw('info unsupported')).toThrow(/Lexical error on line 1/);
+    expect(() => draw('info\ntitle a\nshowInfo')).toThrow(/Parse error on line 3/);
   });
 });

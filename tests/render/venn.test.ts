@@ -1,57 +1,62 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, detectType, parse, render, supports } from '../../src/index.js';
+import { PeleError, detectType, parse, supports } from '../../src/index.js';
+import type { Path, Scene } from '../../src/draw/scene.js';
 import { distanceForOverlap, findSpot, layoutCircles, lensArea, regionPath, type Circle } from '../../src/diagrams/venn/layout.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus } from '../support/corpus.js';
-import { assertWellFormed } from '../support/xml.js';
+import { assertSafe, draw, itemById, items, lineOf, lines, shapesOf, textOf, textsOf, tryDraw } from '../support/scene.js';
 
 const corpus = loadCorpus('venn', /venn-beta/);
-const options = { measurer: metricsMeasurer };
 
-function tryRender(src: string): string | undefined {
-  try {
-    return render(src, options).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return undefined;
-    throw error;
-  }
-}
+const sceneOf = (src: string): Scene => draw('venn-beta\n' + src).scene;
 
-const svgOf = (src: string): string => render('venn-beta\n' + src, options).svg;
-const count = (svg: string, needle: string): number => svg.split(needle).length - 1;
-
-function circlesOf(svg: string): Map<string, Circle> {
+// The circle each set is drawn as, from its outline.
+function circlesOf(scene: Scene): Map<string, Circle> {
   const out = new Map<string, Circle>();
-  for (const m of svg.matchAll(/<circle class="pele-venn-set" data-id="([^"]*)" cx="([-\d.]+)" cy="([-\d.]+)" r="([\d.]+)"/g)) {
-    out.set(m[1], { id: m[1], x: Number(m[2]), y: Number(m[3]), r: Number(m[4]) });
+  for (const set of items(scene, 'pele-venn-set')) {
+    const { box } = shapesOf(scene, set)[0];
+    out.set(set.id, { id: set.id, x: (box.x0 + box.x1) / 2, y: (box.y0 + box.y1) / 2, r: (box.x1 - box.x0) / 2 });
   }
   return out;
 }
 
 // Where the first line of a region is written.
-function labelAt(svg: string, id: string): { x: number; y: number; text: string } {
-  const m = new RegExp(`<g class="pele-venn-region" data-id="${id.replace(/\|/g, '\\|')}"><text[^>]* x="([-\\d.]+)" y="([-\\d.]+)"[^>]*>([^<]*)<`).exec(svg);
-  if (!m) throw new Error(`no region ${id}`);
-  return { x: Number(m[1]), y: Number(m[2]), text: m[3] };
+function labelAt(scene: Scene, id: string): { x: number; y: number; text: string } {
+  const region = itemById(scene, id, 'pele-venn-region');
+  if (!region) throw new Error(`no region ${id}`);
+  const [text] = textsOf(scene, region);
+  return { x: text.x, y: text.y, text: lineOf(text) };
+}
+
+// The points a closed path of moves and arcs passes through, and how many arcs it has.
+function corners(cmds: Path): { points: { x: number; y: number }[]; arcs: number } {
+  const argc = [2, 2, 6, 4, 7, 0];
+  const points: { x: number; y: number }[] = [];
+  let arcs = 0;
+  for (let i = 0; i < cmds.length; ) {
+    const op = cmds[i];
+    const end = i + 1 + argc[op];
+    if (op === 0 || op === 4) points.push({ x: cmds[end - 2], y: cmds[end - 1] });
+    if (op === 4) arcs++;
+    i = end;
+  }
+  return { points, arcs };
 }
 
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
 const area = (c: Circle): number => Math.PI * c.r * c.r;
 
 describe('venn diagram rendering', () => {
-  it('renders every corpus input that parses, as well-formed SVG', () => {
+  it('renders every corpus input that parses, the same each time', () => {
     let rendered = 0;
     for (const src of corpus) {
-      const svg = tryRender(src);
-      if (svg === undefined) continue;
+      const result = tryDraw(src);
+      if (result === undefined) continue;
       rendered++;
       const where = JSON.stringify(src).slice(0, 120);
-      expect(() => assertWellFormed(svg), where).not.toThrow();
-      expect(svg, where).not.toMatch(/<script|<style|<foreignObject|<defs|<marker|\son\w+=|javascript:/i);
-      expect(svg, where).not.toContain('NaN');
-      expect(svg, where).not.toContain('undefined');
-      expect(svg, where).not.toContain('Infinity');
-      expect(tryRender(src), where).toBe(svg);
+      assertSafe(result, where);
+      expect(textOf(result.scene), where).not.toMatch(/NaN|undefined|Infinity/);
+      expect(tryDraw(src), where).toEqual(result);
     }
     expect(rendered).toBeGreaterThan(20);
   });
@@ -60,10 +65,7 @@ describe('venn diagram rendering', () => {
     const src = 'venn-beta\n  set A\n  set B\n  union A,B';
     expect(detectType(src)).toBe('venn');
     expect(supports(src)).toBe(true);
-    const result = render(src, options);
-    expect(result.type).toBe('venn');
-    expect(result.svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" class="pele pele-venn"/);
-    expect(result.svg).toContain(`viewBox="0 0 ${result.width} ${result.height}"`);
+    expect(draw(src).type).toBe('venn');
     const model = parse(src);
     expect(model.type).toBe('venn');
     if (model.type === 'venn') {
@@ -76,32 +78,34 @@ describe('venn diagram rendering', () => {
   });
 
   it('draws one set as one circle with its name in the middle', () => {
-    const svg = svgOf('set Only');
-    const circles = circlesOf(svg);
+    const scene = sceneOf('set Only');
+    const circles = circlesOf(scene);
     expect(circles.size).toBe(1);
     const c = circles.get('Only')!;
-    const label = labelAt(svg, 'Only');
+    const label = labelAt(scene, 'Only');
     expect(label.text).toBe('Only');
     expect(label.x).toBeCloseTo(c.x, 0);
     expect(Math.abs(label.y - c.y)).toBeLessThan(8);
-    expect(svg).toContain('fill="var(--pele-series-1,#4c78a8)" fill-opacity="0.2" stroke="var(--pele-series-1,#4c78a8)"');
+    const [fill, stroke] = shapesOf(scene, itemById(scene, 'Only', 'pele-venn-set')!);
+    expect([fill.kind, fill.paint, fill.opacity]).toEqual(['fill', 'var(--pele-series-1,#4c78a8)', 0.2]);
+    expect([stroke.kind, stroke.paint]).toEqual(['stroke', 'var(--pele-series-1,#4c78a8)']);
   });
 
   it('gives each set the next series color', () => {
-    const svg = svgOf('set A\nset B\nset C');
-    expect(svg).toContain('data-id="A" cx');
-    for (const k of [1, 2, 3]) expect(count(svg, `fill="var(--pele-series-${k},`)).toBe(1);
+    const scene = sceneOf('set A\nset B\nset C');
+    expect(items(scene, 'pele-venn-set').map((i) => i.id)).toEqual(['A', 'B', 'C']);
+    for (const [k, set] of items(scene, 'pele-venn-set').entries()) expect(shapesOf(scene, set)[0].paint).toMatch(new RegExp(`^var\\(--pele-series-${k + 1},`));
   });
 
   it('keeps sets that share nothing apart', () => {
-    const { A, B } = Object.fromEntries(circlesOf(svgOf('set A\nset B')));
+    const { A, B } = Object.fromEntries(circlesOf(sceneOf('set A\nset B')));
     expect(distance(A, B)).toBeGreaterThan(A.r + B.r);
     expect(A.y).toBeCloseTo(B.y, 1);
   });
 
   it('sizes two circles by their sets and their overlap by the union', () => {
     for (const [a, b, shared] of [[20, 12, 3], [10, 10, 2.5], [30, 5, 1], [8, 40, 6]]) {
-      const { A, B } = Object.fromEntries(circlesOf(svgOf(`set A:${a}\nset B:${b}\nunion A,B:${shared}`)));
+      const { A, B } = Object.fromEntries(circlesOf(sceneOf(`set A:${a}\nset B:${b}\nunion A,B:${shared}`)));
       expect(area(A) / area(B)).toBeCloseTo(a / b, 1);
       const overlap = lensArea(A.r, B.r, distance(A, B));
       expect(overlap / area(A)).toBeCloseTo(shared / a, 2);
@@ -109,23 +113,23 @@ describe('venn diagram rendering', () => {
   });
 
   it('puts one circle inside the other when the overlap is the whole smaller set', () => {
-    const { A, B } = Object.fromEntries(circlesOf(svgOf('set A:30\nset B:5\nunion A,B:5')));
+    const { A, B } = Object.fromEntries(circlesOf(sceneOf('set A:30\nset B:5\nunion A,B:5')));
     expect(distance(A, B) + B.r).toBeLessThanOrEqual(A.r + 0.02);
-    const tooMuch = Object.fromEntries(circlesOf(svgOf('set A:30\nset B:5\nunion A,B:500')));
+    const tooMuch = Object.fromEntries(circlesOf(sceneOf('set A:30\nset B:5\nunion A,B:500')));
     expect(distance(tooMuch.A, tooMuch.B) + tooMuch.B.r).toBeLessThanOrEqual(tooMuch.A.r + 0.02);
   });
 
   it('lets an overlap of nothing only touch', () => {
-    const { A, B } = Object.fromEntries(circlesOf(svgOf('set A\nset B\nunion A,B:0')));
+    const { A, B } = Object.fromEntries(circlesOf(sceneOf('set A\nset B\nunion A,B:0')));
     expect(distance(A, B)).toBeCloseTo(A.r + B.r, 0);
   });
 
   it('writes each name in the part of its circle the other does not cover', () => {
-    const svg = svgOf('set A["Alpha"]\nset B["Beta"]\nunion A,B["Both"]');
-    const { A, B } = Object.fromEntries(circlesOf(svg));
-    const alpha = labelAt(svg, 'A');
-    const beta = labelAt(svg, 'B');
-    const both = labelAt(svg, 'A|B');
+    const scene = sceneOf('set A["Alpha"]\nset B["Beta"]\nunion A,B["Both"]');
+    const { A, B } = Object.fromEntries(circlesOf(scene));
+    const alpha = labelAt(scene, 'A');
+    const beta = labelAt(scene, 'B');
+    const both = labelAt(scene, 'A|B');
     expect([alpha.text, beta.text, both.text]).toEqual(['Alpha', 'Beta', 'Both']);
     expect(distance(alpha, A)).toBeLessThan(A.r);
     expect(distance(alpha, B)).toBeGreaterThan(B.r);
@@ -139,8 +143,8 @@ describe('venn diagram rendering', () => {
   });
 
   it('arranges three sets in a triangle with each pair as far apart as its union asks', () => {
-    const svg = svgOf('set A:20\nset B:14\nset C:9\nunion A,B:4\nunion B,C:2\nunion A,C:3');
-    const { A, B, C } = Object.fromEntries(circlesOf(svg));
+    const scene = sceneOf('set A:20\nset B:14\nset C:9\nunion A,B:4\nunion B,C:2\nunion A,C:3');
+    const { A, B, C } = Object.fromEntries(circlesOf(scene));
     expect(lensArea(A.r, B.r, distance(A, B)) / area(A)).toBeCloseTo(4 / 20, 2);
     expect(lensArea(B.r, C.r, distance(B, C)) / area(B)).toBeCloseTo(2 / 14, 2);
     expect(lensArea(A.r, C.r, distance(A, C)) / area(A)).toBeCloseTo(3 / 20, 2);
@@ -153,31 +157,31 @@ describe('venn diagram rendering', () => {
   });
 
   it('gives the middle of three sets a region of its own, and each pair one too', () => {
-    const svg = svgOf('set X\nset Y\nset Z\nunion X,Y["xy"]\nunion Y,Z["yz"]\nunion X,Z["xz"]\nunion X,Y,Z["all"]');
-    const { X, Y, Z } = Object.fromEntries(circlesOf(svg));
+    const scene = sceneOf('set X\nset Y\nset Z\nunion X,Y["xy"]\nunion Y,Z["yz"]\nunion X,Z["xz"]\nunion X,Y,Z["all"]');
+    const { X, Y, Z } = Object.fromEntries(circlesOf(scene));
     const inside = (p: { x: number; y: number }, c: Circle): boolean => distance(p, c) < c.r;
-    const all = labelAt(svg, 'X|Y|Z');
+    const all = labelAt(scene, 'X|Y|Z');
     expect(inside(all, X) && inside(all, Y) && inside(all, Z)).toBe(true);
-    const xy = labelAt(svg, 'X|Y');
+    const xy = labelAt(scene, 'X|Y');
     expect(inside(xy, X) && inside(xy, Y) && !inside(xy, Z)).toBe(true);
-    const yz = labelAt(svg, 'Y|Z');
+    const yz = labelAt(scene, 'Y|Z');
     expect(inside(yz, Y) && inside(yz, Z) && !inside(yz, X)).toBe(true);
-    const x = labelAt(svg, 'X');
+    const x = labelAt(scene, 'X');
     expect(inside(x, X) && !inside(x, Y) && !inside(x, Z)).toBe(true);
   });
 
   it('overlaps every pair of a three-way union that states no pairs', () => {
-    const svg = svgOf('set A\nset B\nset C\nunion A,B,C["Innovation"]');
-    const { A, B, C } = Object.fromEntries(circlesOf(svg));
+    const scene = sceneOf('set A\nset B\nset C\nunion A,B,C["Innovation"]');
+    const { A, B, C } = Object.fromEntries(circlesOf(scene));
     for (const [p, q] of [[A, B], [B, C], [A, C]]) expect(distance(p, q)).toBeLessThan(p.r + q.r);
-    const middle = labelAt(svg, 'A|B|C');
+    const middle = labelAt(scene, 'A|B|C');
     for (const c of [A, B, C]) expect(distance(middle, c)).toBeLessThan(c.r);
     expect(middle.text).toBe('Innovation');
   });
 
   it('places more than three sets so that only the stated pairs overlap', () => {
-    const svg = svgOf('set A\nset B\nset C\nset D\nset E\nunion A,B\nunion C,D\nunion D,E');
-    const c = Object.fromEntries(circlesOf(svg));
+    const scene = sceneOf('set A\nset B\nset C\nset D\nset E\nunion A,B\nunion C,D\nunion D,E');
+    const c = Object.fromEntries(circlesOf(scene));
     const overlapping = (p: Circle, q: Circle): boolean => distance(p, q) < p.r + q.r - 0.5;
     expect(overlapping(c.A, c.B)).toBe(true);
     expect(overlapping(c.C, c.D)).toBe(true);
@@ -188,89 +192,95 @@ describe('venn diagram rendering', () => {
   });
 
   it('writes texts under the label of their region, smaller', () => {
-    const svg = svgOf('set A["Frontend"]\n  text A1["React"]\n  text A2\nset B\nunion A,B["Shared"]\n  text AB1["OpenAPI"]');
-    const region = /<g class="pele-venn-region" data-id="A">(.*?)<\/g>/.exec(svg)![1];
-    const ys = [...region.matchAll(/ y="([-\d.]+)"/g)].map((m) => Number(m[1]));
-    expect(ys).toHaveLength(3);
-    expect(ys[0]).toBeLessThan(ys[1]);
-    expect(ys[1]).toBeLessThan(ys[2]);
-    expect(region).toContain('<text class="pele-venn-text" data-id="A1" font-size="13" fill="var(--_m)"');
-    expect(region).toContain('>React</text>');
-    expect(region).toContain('>A2</text>');
-    expect(/<g class="pele-venn-region" data-id="A\|B">(.*?)<\/g>/.exec(svg)![1]).toContain('>OpenAPI</text>');
+    const scene = sceneOf('set A["Frontend"]\n  text A1["React"]\n  text A2\nset B\nunion A,B["Shared"]\n  text AB1["OpenAPI"]');
+    const written = ['Frontend', 'React', 'A2'].map((line) => scene.texts.find((t) => lineOf(t) === line)!);
+    expect(written[0].y).toBeLessThan(written[1].y);
+    expect(written[1].y).toBeLessThan(written[2].y);
+    const react = itemById(scene, 'A1', 'pele-venn-text')!;
+    expect(textsOf(scene, react).map((t) => [lineOf(t), t.size, t.paint])).toEqual([['React', 13, 'var(--_m)']]);
+    expect(itemById(scene, 'A2', 'pele-venn-text')).toBeDefined();
+    // The text of the overlap lies inside both circles.
+    const { A, B } = Object.fromEntries(circlesOf(scene));
+    const [openapi] = textsOf(scene, itemById(scene, 'AB1', 'pele-venn-text')!);
+    expect(lineOf(openapi)).toBe('OpenAPI');
+    expect(distance(openapi, A)).toBeLessThan(A.r);
+    expect(distance(openapi, B)).toBeLessThan(B.r);
   });
 
   it('leaves out a text whose sets were never stated together', () => {
-    const svg = svgOf('set A\nset B\ntext A,B orphan\ntext A kept');
-    expect(svg).not.toContain('orphan');
-    expect(svg).toContain('>kept</text>');
+    const scene = sceneOf('set A\nset B\ntext A,B orphan\ntext A kept');
+    expect(lines(scene)).not.toContain('orphan');
+    expect(lines(scene)).toContain('kept');
   });
 
   it('wraps a label that is wider than its region and keeps it inside the picture', () => {
-    const result = render('venn-beta\nset A["A very long label for a set that goes on and on"]\nset B\nunion A,B["An intersection with a long label"]', options);
-    const region = /<g class="pele-venn-region" data-id="A">(.*?)<\/g>/.exec(result.svg)![1];
-    expect(count(region, '<tspan')).toBeGreaterThan(1);
-    for (const m of result.svg.matchAll(/<tspan x="([-\d.]+)" y="([-\d.]+)"[^>]*>([^<]*)</g)) {
-      const half = metricsMeasurer.width(m[3], 16, 0) / 2;
-      expect(Number(m[1]) - half).toBeGreaterThanOrEqual(0);
-      expect(Number(m[1]) + half).toBeLessThanOrEqual(result.width);
+    const result = draw('venn-beta\nset A["A very long label for a set that goes on and on"]\nset B\nunion A,B["An intersection with a long label"]');
+    expect(textsOf(result.scene, itemById(result.scene, 'A', 'pele-venn-region')!).length).toBeGreaterThan(1);
+    for (const text of result.scene.texts) {
+      const half = metricsMeasurer.width(lineOf(text), text.size, 0) / 2;
+      expect(text.x - half).toBeGreaterThanOrEqual(0);
+      expect(text.x + half).toBeLessThanOrEqual(result.width);
     }
   });
 
   it('applies styles to a set, to an overlap and to a text', () => {
-    const svg = svgOf(
+    const scene = sceneOf(
       'set A\n  text A1["React"]\nset B\nunion A,B["AB"]\nstyle A fill:#ff6b6b, stroke-width:3\nstyle A,B color:#333\nstyle A1 color:red\nstyle B fill-opacity:0.5\nstyle A stroke:black'
     );
-    expect(svg).toMatch(/data-id="A" cx="[-\d.]+" cy="[-\d.]+" r="[\d.]+" fill="[^"]+" fill-opacity="0.2" stroke="[^"]+" style="fill:#ff6b6b;stroke-width:3;stroke:black;"\/>/);
-    expect(svg).toMatch(/data-id="B" [^>]* style="fill-opacity:0.5;"\/>/);
-    expect(svg).toContain('<text class="pele-label" font-size="14" style="fill:#333;"');
-    expect(svg).toContain('data-id="A1" font-size="13" fill="var(--_m)" style="fill:red;"');
+    const [aFill, aStroke] = shapesOf(scene, itemById(scene, 'A', 'pele-venn-set')!);
+    expect([aFill.paint, aFill.opacity]).toEqual(['#ff6b6b', 0.2]);
+    expect([aStroke.paint, aStroke.width]).toEqual(['black', 3]);
+    const [bFill, bStroke] = shapesOf(scene, itemById(scene, 'B', 'pele-venn-set')!);
+    expect([bFill.opacity, bStroke.width]).toEqual([0.5, 1]);
+    const paintOf = (line: string): string => scene.texts.find((t) => lineOf(t) === line)!.paint;
+    expect(paintOf('AB')).toBe('#333');
+    expect(paintOf('React')).toBe('red');
     // A text color on an overlap does not draw the overlap.
-    expect(svg).not.toContain('pele-venn-overlap');
+    expect(items(scene, 'pele-venn-overlap')).toHaveLength(0);
   });
 
   it('picks a contrasting text color on an overlap a style fills', () => {
-    const svg = svgOf('set A\nset B\nset C\nunion A,B["ab"]\n  text T["note"]\nunion B,C["bc"]\nstyle A,B fill:#1f3a5f\nstyle A fill:navy\nstyle B,C fill:#1f3a5f,color:#eee');
-    expect(svg).toMatch(/<text class="pele-label" font-size="\d+" fill="var\(--pele-fg-on-dark,#fff\)"[^>]*>ab</);
-    expect(svg).toMatch(/<text class="pele-venn-text" data-id="T" font-size="\d+" fill="var\(--pele-fg-on-dark,#fff\)"[^>]*>note</);
-    expect(svg).toMatch(/<text class="pele-label" font-size="\d+" style="fill:#eee;"[^>]*>bc</);
+    const scene = sceneOf('set A\nset B\nset C\nunion A,B["ab"]\n  text T["note"]\nunion B,C["bc"]\nstyle A,B fill:#1f3a5f\nstyle A fill:navy\nstyle B,C fill:#1f3a5f,color:#eee');
+    const paintOf = (line: string): string => scene.texts.find((t) => lineOf(t) === line)!.paint;
+    expect(paintOf('ab')).toBe('var(--pele-fg-on-dark,#fff)');
+    expect(paintOf('note')).toBe('var(--pele-fg-on-dark,#fff)');
+    expect(paintOf('bc')).toBe('#eee');
     // A set's own fill is drawn faint, so its label keeps the theme's color.
-    expect(svg).toMatch(/<text class="pele-label" x=[^>]*>A</);
+    expect(paintOf('A')).toBe('var(--_fg)');
   });
 
   it('reads the fill under the text from what is drawn last there', () => {
-    const covered = svgOf(
-      'set A: 100\nset B: 100\nset C: 100\nunion A,B,C["triple"]: 50\nunion A,B["ab"]: 70\nunion A,C["ac"]: 70\nunion B,C["bc"]: 70\nstyle A,B,C fill:black\nstyle A,B fill:white'
-    );
-    expect(covered).toMatch(/fill="var\(--pele-fg-on-light,#1f1f1f\)"[^>]*>triple</);
-    expect(svgOf('set A\nstyle A fill:black,fill-opacity:1')).toMatch(/fill="var\(--pele-fg-on-dark,#fff\)"[^>]*>A</);
-    expect(svgOf('set A: 100\nset B: 100\nunion A,B["x"]: 5\nstyle A,B fill:black')).toMatch(/fill="var\(--pele-fg-on-dark,#fff\)"[^>]*>x</);
+    const paintOf = (src: string, line: string): string => sceneOf(src).texts.find((t) => lineOf(t) === line)!.paint;
+    expect(
+      paintOf('set A: 100\nset B: 100\nset C: 100\nunion A,B,C["triple"]: 50\nunion A,B["ab"]: 70\nunion A,C["ac"]: 70\nunion B,C["bc"]: 70\nstyle A,B,C fill:black\nstyle A,B fill:white', 'triple')
+    ).toBe('var(--pele-fg-on-light,#1f1f1f)');
+    expect(paintOf('set A\nstyle A fill:black,fill-opacity:1', 'A')).toBe('var(--pele-fg-on-dark,#fff)');
+    expect(paintOf('set A: 100\nset B: 100\nunion A,B["x"]: 5\nstyle A,B fill:black', 'x')).toBe('var(--pele-fg-on-dark,#fff)');
   });
 
   it('draws an overlap that is given a fill as the shape the circles share', () => {
-    const svg = svgOf('set A\nset B\nset C\nunion A,B["ab"]\nunion A,B,C["abc"]\nstyle A,B fill:gold\nstyle A,B,C fill:#333');
-    const circles = [...circlesOf(svg).values()];
-    const paths = [...svg.matchAll(/<path class="pele-venn-overlap" data-id="([^"]*)" d="([^"]+)" fill="none" style="([^"]*)"\/>/g)];
-    expect(paths.map((m) => [m[1], m[3]])).toEqual([['A|B', 'fill:gold;'], ['A|B|C', 'fill:#333;']]);
+    const scene = sceneOf('set A\nset B\nset C\nunion A,B["ab"]\nunion A,B,C["abc"]\nstyle A,B fill:gold\nstyle A,B,C fill:#333');
+    const circles = [...circlesOf(scene).values()];
+    const overlaps = items(scene, 'pele-venn-overlap');
+    expect(overlaps.map((o) => [o.id, shapesOf(scene, o)[0].paint])).toEqual([['A|B', 'gold'], ['A|B|C', '#333']]);
+    const [lens, middle] = overlaps.map((o) => corners(shapesOf(scene, o)[0].cmds));
     // A lens has two corners and two arcs; the middle of three circles has three of each.
-    expect(count(paths[0][2], 'A')).toBe(2);
-    expect(count(paths[1][2], 'A')).toBe(3);
+    expect([lens.points.length, lens.arcs]).toEqual([2 + 1, 2]);
+    expect([middle.points.length, middle.arcs]).toEqual([3 + 1, 3]);
     // Every corner lies on or inside every circle of its overlap.
-    const corners = (d: string): { x: number; y: number }[] =>
-      [...d.matchAll(/(?:M| 0 [01] 1 )([-\d.]+),([-\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
-    for (const p of corners(paths[0][2])) for (const c of circles.slice(0, 2)) expect(distance(p, c)).toBeLessThan(c.r + 0.1);
-    for (const p of corners(paths[1][2])) for (const c of circles) expect(distance(p, c)).toBeLessThan(c.r + 0.1);
+    for (const p of lens.points) for (const c of circles.slice(0, 2)) expect(distance(p, c)).toBeLessThan(c.r + 0.1);
+    for (const p of middle.points) for (const c of circles) expect(distance(p, c)).toBeLessThan(c.r + 0.1);
   });
 
   it('draws the title above, without the quotes it may be written in', () => {
-    const quoted = render('venn-beta\ntitle "Team overlap"\nset A', options).svg;
-    expect(quoted).toContain('<text class="pele-title" font-weight="var(--_tw)"');
-    expect(quoted).toContain('>Team overlap</tspan>');
-    const front = render('---\ntitle: From the front matter\n---\nvenn-beta\nset A', options).svg;
-    expect(front).toContain('>From the front matter</tspan>');
-    const both = render('---\ntitle: Front\n---\nvenn-beta\ntitle Inside\nset A', options).svg;
-    expect(both).toContain('>Inside</tspan>');
-    expect(both).not.toContain('Front');
+    const title = (src: string) => draw(src).scene.texts.find((t) => t.weight === 700);
+    const quoted = title('venn-beta\ntitle "Team overlap"\nset A')!;
+    expect(lineOf(quoted)).toBe('Team overlap');
+    expect(quoted.item).toBe(-1);
+    expect(lineOf(title('---\ntitle: From the front matter\n---\nvenn-beta\nset A')!)).toBe('From the front matter');
+    const both = draw('---\ntitle: Front\n---\nvenn-beta\ntitle Inside\nset A').scene;
+    expect(lines(both)).toContain('Inside');
+    expect(textOf(both)).not.toContain('Front');
   });
 
   it('keeps the character before a comment', () => {
@@ -298,26 +308,28 @@ describe('venn diagram rendering', () => {
   });
 
   it('uses the last statement about a set or an overlap', () => {
-    const svg = svgOf('set A["first"]:10\nset B:10\nset A["second"]:40');
-    const circles = circlesOf(svg);
+    const scene = sceneOf('set A["first"]:10\nset B:10\nset A["second"]:40');
+    const circles = circlesOf(scene);
     expect(circles.size).toBe(2);
     expect(area(circles.get('A')!) / area(circles.get('B')!)).toBeCloseTo(4, 1);
-    expect(svg).toContain('>second</text>');
-    expect(svg).not.toContain('>first</text>');
+    expect(lines(scene)).toContain('second');
+    expect(lines(scene)).not.toContain('first');
   });
 
   it('draws sets with no size, or a negative one, small rather than not at all', () => {
-    const svg = svgOf('set A:0\nset B:-5\nset C:100');
-    const { A, B, C } = Object.fromEntries(circlesOf(svg));
+    const result = draw('venn-beta\nset A:0\nset B:-5\nset C:100');
+    const { A, B, C } = Object.fromEntries(circlesOf(result.scene));
     expect(A.r).toBeGreaterThan(20);
     expect(B.r).toBeGreaterThan(20);
     expect(C.r).toBeGreaterThan(A.r);
-    expect(svg).not.toContain('NaN');
+    assertSafe(result, 'sets with no size');
   });
 
   it('draws nothing but the frame when there are no sets', () => {
-    const result = render('venn-beta\n', options);
-    expect(result.svg).toContain('<g class="pele-venn-sets"></g>');
+    const result = draw('venn-beta\n');
+    expect(result.scene.items).toEqual([]);
+    expect(result.scene.shapes).toEqual([]);
+    expect(result.scene.texts).toEqual([]);
     expect(result.width).toBeGreaterThan(0);
     expect(result.height).toBeGreaterThan(0);
   });
@@ -325,7 +337,7 @@ describe('venn diagram rendering', () => {
   it('rejects what Mermaid rejects', () => {
     const message = (src: string): string => {
       try {
-        render(src, options);
+        draw(src);
       } catch (error) {
         expect(error).toBeInstanceOf(PeleError);
         return (error as Error).message;

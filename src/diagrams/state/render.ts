@@ -1,15 +1,14 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
 import type { Config } from '../../preprocess.js';
-import { esc, num } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { CASINGS_ATTRS, drawMarker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { endSide } from '../../svg/shapes.js';
 import { titleAbove } from '../../svg/title.js';
 import { classNames, resolveStyle, setsFill, type ResolvedStyle } from '../../svg/theme.js';
-import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
-import { linkUrl, relAttr, safeUrl } from '../../util/url.js';
+import { linkUrl, safeUrl } from '../../util/url.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { StateDb } from './db.js';
@@ -505,9 +504,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
     const link = db.links.get(node.id);
     // Entity codes are resolved first, so the URL is checked in the form a browser would follow.
     const href = link ? linkUrl(safeUrl(unquote(link.url)), options) : undefined;
-    if (href !== undefined) out.link(` href="${esc(href)}" target="_blank"${relAttr(options)}`);
-    const tooltip = link ? decodeEntities(unquote(link.tooltip)) : '';
-    if (tooltip) out.raw(`<title>${esc(tooltip)}</title>`);
+    if (href !== undefined) out.link();
 
     switch (view.kind) {
       case K.Composite: {
@@ -541,7 +538,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
         const b = h / 2;
         const fold = w / 2 - FOLD;
         const corner = FOLD - h / 2;
-        // The SVG writes these as `-` and the rounded number, which a half cent rounds apart from num(-x).
+        // Rounded before negating: Math.round takes halves up, so -x could land a cent off from x.
         const nr = -Math.round(r * 100) / 100;
         const nb = -Math.round(b * 100) / 100;
         out.path(out.pen().M(nr, nb).H(fold).L(r, corner).V(b).H(nr).Z(), FOLDED);
@@ -673,7 +670,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
           : [g.x + pad + (near ? -g.w / 2 : g.w / 2), route[at + 1], 1];
         route = inward ? point.concat(route) : route.concat(point);
       }
-      path = routePath(route, typeof curve === 'string' ? curve : undefined, 0, markerTrim(endType), leaves, arrives, !out.numbers);
+      path = routePath(route, typeof curve === 'string' ? curve : undefined, 0, markerTrim(endType), leaves, arrives, false);
     }
     const over = overFills(path.d, [path.ex, path.ey], fills, '', path.tokens);
     if (over === '') {
@@ -704,7 +701,8 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
     }
   }
 
-  return { svg: out.done('state', framed.width, framed.height, size, options, db), width: framed.width, height: framed.height, links };
+  out.done(framed.width, framed.height);
+  return { width: framed.width, height: framed.height, links };
 }
 
 // Picks where a composite's title sits in its title bar so that edges entering from above do not cross it.

@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -90,19 +82,18 @@ describe('inert output', () => {
     }
   }, 600_000);
 
-  it('never gives an unsafe href to an internal link', () => {
-    const { svg } = render('flowchart TD\n  A["javascript:alert(1)"]:::internal-link', options);
-    expect(svg).toContain('<a class="internal-link" data-href="javascript:alert(1)">');
+  it('reports an internal link as written, for the host to look up', () => {
+    expect(draw('flowchart TD\n  A["javascript:alert(1)"]:::internal-link').links).toEqual([{ id: 'A', href: 'javascript:alert(1)', internal: true }]);
     for (const type of ['flowchart TD', 'agentflow-beta TB', 'erDiagram']) {
-      const allowed = render(`${type}\n  A["javascript:alert(1)"]:::internal-link`, { ...options, linkSchemes: ['about'] }).svg;
-      expect(allowed).not.toContain(' href=');
+      const { links } = draw(`${type}\n  A["javascript:alert(1)"]:::internal-link`, { linkSchemes: ['about'] });
+      expect(links.map((link) => link.internal)).toEqual([true]);
     }
   });
 
   it('does not pollute prototypes', () => {
-    render('flowchart TD\n  A@{ __proto__: [polluted], constructor: 1, label: x } --> B', options);
-    render('flowchart TD\n  __proto__ --> constructor --> toString\n  class __proto__ constructor', options);
-    render('flowchart TD\n  A[|__proto__:x|text] --> B', options);
+    draw('flowchart TD\n  A@{ __proto__: [polluted], constructor: 1, label: x } --> B');
+    draw('flowchart TD\n  __proto__ --> constructor --> toString\n  class __proto__ constructor');
+    draw('flowchart TD\n  A[|__proto__:x|text] --> B');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'x')).toBe(false);
   });

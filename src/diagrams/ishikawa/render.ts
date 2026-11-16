@@ -241,7 +241,8 @@ function draw(out: Out, model: IshikawaModel, _config: Config, options: RenderOp
   if (root) out.frame(ox, oy);
   out.section('main');
   out.label(title, width / 2, pad + title.height / 2, TITLE);
-  return { svg: out.done('ishikawa', width, height, size, options, {}), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }
 
 function verticalCauses(out: Out, model: IshikawaModel, options: RenderOptions): Rendered {
@@ -294,5 +295,6 @@ function verticalCauses(out: Out, model: IshikawaModel, options: RenderOptions):
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(Math.max(pad + title.height, y - 12) + pad);
   out.section('main');
   out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
-  return { svg: out.done('ishikawa', totalWidth, height, size, options, {}), width: totalWidth, height, links: [] };
+  out.done(totalWidth, height);
+  return { width: totalWidth, height, links: [] };
 }

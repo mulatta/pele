@@ -433,5 +433,6 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
     ly += row;
   }
 
-  return { svg: out.done('xychart', width, height, size, options, model), width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../../src/index.js';
+import { PeleError, parse, renderScene } from '../../src/index.js';
+import { sceneProblem } from '../support/scene.js';
 import { tokenize } from '../../src/diagrams/block/lexer.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
@@ -8,44 +9,44 @@ const big = { measurer: metricsMeasurer, limit: Infinity };
 const repeat = (count: number, line: (i: number) => string): string => Array.from({ length: count }, (_, i) => line(i)).join('');
 
 const CASES: [string, () => unknown][] = [
-  ['one row of 16,000 blocks', () => render('block\n' + repeat(16000, (i) => `b${i} `), big)],
-  ['one column of 10,000 blocks', () => render('block\ncolumns 1\n' + repeat(10000, (i) => `b${i}\n`), big)],
-  ['grid of 10,000 labelled blocks', () => render('block\ncolumns 100\n' + repeat(8000, (i) => `b${i}["x"] `), big)],
-  ['8,000 nested composites', () => render('block\n' + 'block\n'.repeat(8000) + 'a\n' + 'end\n'.repeat(8000), big)],
-  ['5,000 nested titled composites', () => render('block\n' + repeat(5000, (i) => `block:g${i}\n`) + 'a\n' + 'end\n'.repeat(5000), big)],
+  ['one row of 16,000 blocks', () => renderScene('block\n' + repeat(16000, (i) => `b${i} `), big)],
+  ['one column of 10,000 blocks', () => renderScene('block\ncolumns 1\n' + repeat(10000, (i) => `b${i}\n`), big)],
+  ['grid of 10,000 labelled blocks', () => renderScene('block\ncolumns 100\n' + repeat(8000, (i) => `b${i}["x"] `), big)],
+  ['8,000 nested composites', () => renderScene('block\n' + 'block\n'.repeat(8000) + 'a\n' + 'end\n'.repeat(8000), big)],
+  ['5,000 nested titled composites', () => renderScene('block\n' + repeat(5000, (i) => `block:g${i}\n`) + 'a\n' + 'end\n'.repeat(5000), big)],
   ['12,000 unclosed composites', () => parse('block\n' + 'block\n'.repeat(12000) + 'a', big)],
   ['12,000 stray ends', () => parse('block\na\n' + 'end\n'.repeat(12000), big)],
-  ['5,000 sibling composites', () => render('block\ncolumns 50\n' + repeat(5000, (i) => `block\nn${i}\nend\n`), big)],
-  ['one statement of 8,000 links', () => render('block\na0' + repeat(8000, (i) => `-->a${i + 1}`), big)],
-  ['4,000 edges across a grid', () => render('block\ncolumns 20\n' + repeat(400, (i) => `n${i} `) + '\n' + repeat(4000, (i) => `n${i % 400} --> n${(i * 37 + 11) % 400}\n`), big)],
+  ['5,000 sibling composites', () => renderScene('block\ncolumns 50\n' + repeat(5000, (i) => `block\nn${i}\nend\n`), big)],
+  ['one statement of 8,000 links', () => renderScene('block\na0' + repeat(8000, (i) => `-->a${i + 1}`), big)],
+  ['4,000 edges across a grid', () => renderScene('block\ncolumns 20\n' + repeat(400, (i) => `n${i} `) + '\n' + repeat(4000, (i) => `n${i % 400} --> n${(i * 37 + 11) % 400}\n`), big)],
   ['complete graph of 70', () => {
     let s = 'block\ncolumns 9\n';
     for (let i = 0; i < 70; i++) for (let j = i + 1; j < 70; j++) s += `n${i}-->n${j}\n`;
-    return render(s, big);
+    return renderScene(s, big);
   }],
-  ['4,000 parallel edges and 4,000 self loops', () => render('block\nA space B\n' + 'A-->B\n'.repeat(4000) + 'A-->A\n'.repeat(4000), big)],
-  ['3,000 labelled edges', () => render('block\nA space:3 B\n' + 'A -- "label text" --> B\n'.repeat(2500), big)],
-  ['more space than allowed', () => render('block\n' + 'space:99999 '.repeat(4000), big)],
-  ['space count of 400 digits', () => render('block\na space:' + '9'.repeat(400) + ' b', big)],
-  ['99,999 spaces in one row', () => render('block\na space:99999 b', big)],
-  ['block width of 400 digits', () => render('block\ncolumns 3\na:' + '9'.repeat(400) + ' b c', big)],
-  ['column count of 400 digits', () => render('block\ncolumns ' + '9'.repeat(400) + '\na b', big)],
-  ['many wide blocks', () => render('block\n' + repeat(5000, (i) => `b${i}:999 `), big)],
-  ['one 50,000 character label', () => render('block\nA["' + 'word '.repeat(N / 5) + '"]', big)],
-  ['label of entities and line breaks', () => render('block\nA["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
+  ['4,000 parallel edges and 4,000 self loops', () => renderScene('block\nA space B\n' + 'A-->B\n'.repeat(4000) + 'A-->A\n'.repeat(4000), big)],
+  ['3,000 labelled edges', () => renderScene('block\nA space:3 B\n' + 'A -- "label text" --> B\n'.repeat(2500), big)],
+  ['more space than allowed', () => renderScene('block\n' + 'space:99999 '.repeat(4000), big)],
+  ['space count of 400 digits', () => renderScene('block\na space:' + '9'.repeat(400) + ' b', big)],
+  ['99,999 spaces in one row', () => renderScene('block\na space:99999 b', big)],
+  ['block width of 400 digits', () => renderScene('block\ncolumns 3\na:' + '9'.repeat(400) + ' b c', big)],
+  ['column count of 400 digits', () => renderScene('block\ncolumns ' + '9'.repeat(400) + '\na b', big)],
+  ['many wide blocks', () => renderScene('block\n' + repeat(5000, (i) => `b${i}:999 `), big)],
+  ['one 50,000 character label', () => renderScene('block\nA["' + 'word '.repeat(N / 5) + '"]', big)],
+  ['label of entities and line breaks', () => renderScene('block\nA["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
   ['unclosed label', () => parse('block\nA["' + 'x'.repeat(N), big)],
   ['unclosed markdown label', () => parse('block\nA["`' + 'x`'.repeat(N / 2), big)],
   ['arrow label then nothing', () => parse('block\nA<["' + 'x'.repeat(N) + '"]>', big)],
-  ['arrow with 10,000 directions', () => render('block\nA<["x"]>(' + 'up, down , x,y '.repeat(2500) + ')', big)],
+  ['arrow with 10,000 directions', () => renderScene('block\nA<["x"]>(' + 'up, down , x,y '.repeat(2500) + ')', big)],
   ['arrow directions made of spaces', () => parse('block\nA<["x"]>(' + ' '.repeat(N) + 'sideways)', big)],
   ['arrow close then spaces', () => parse('block\nA<["x"]>' + ' '.repeat(N) + 'x', big)],
-  ['class list of 25,000 ids', () => render('block\nA\nclass ' + 'A,'.repeat(25000) + 'A hot\nclassDef hot fill:#f96', big)],
+  ['class list of 25,000 ids', () => renderScene('block\nA\nclass ' + 'A,'.repeat(25000) + 'A hot\nclassDef hot fill:#f96', big)],
   ['class list with spaces after each comma', () => parse('block\nA\nclass A' + (',' + ' '.repeat(40)).repeat(1200) + ' x', big)],
-  ['style list of commas', () => render('block\nA\nstyle A ' + ','.repeat(N), big)],
-  ['style of semicolons', () => render('block\nA\nstyle A ' + 'fill:red;'.repeat(N / 9), big)],
-  ['classDef with no semicolon', () => render('block\nA\nclassDef c ' + 'x'.repeat(N) + '\nclass A c', big)],
-  ['classDef of 10,000 entries', () => render('block\nA\nclassDef c ' + 'fill:red,'.repeat(10000) + 'x\nclass A c', big)],
-  ['5,000 classes on one block', () => render('block\nA\n' + repeat(2500, (i) => `classDef c${i} fill:red\nclass A c${i}\n`), big)],
+  ['style list of commas', () => renderScene('block\nA\nstyle A ' + ','.repeat(N), big)],
+  ['style of semicolons', () => renderScene('block\nA\nstyle A ' + 'fill:red;'.repeat(N / 9), big)],
+  ['classDef with no semicolon', () => renderScene('block\nA\nclassDef c ' + 'x'.repeat(N) + '\nclass A c', big)],
+  ['classDef of 10,000 entries', () => renderScene('block\nA\nclassDef c ' + 'fill:red,'.repeat(10000) + 'x\nclass A c', big)],
+  ['5,000 classes on one block', () => renderScene('block\nA\n' + repeat(2500, (i) => `classDef c${i} fill:red\nclass A c${i}\n`), big)],
   ['classDef id then spaces', () => parse('block\nclassDef ' + 'a'.repeat(N / 2) + ' '.repeat(N / 2), big)],
   ['columns then spaces', () => tokenize('block\n' + ('columns' + ' '.repeat(40) + 'x ').repeat(1000))],
   ['accTitle then spaces', () => tokenize('block\n' + ('accTitle' + ' '.repeat(40) + 'x ').repeat(1000))],
@@ -54,10 +55,10 @@ const CASES: [string, () => unknown][] = [
   ['dotted link that never ends', () => tokenize('block\nA -' + '.'.repeat(N) + 'x')],
   ['link label then spaces', () => tokenize('block\nA -- "x"' + ' '.repeat(N) + 'y')],
   ['links without blocks', () => parse('block\n' + '--> '.repeat(N / 4), big)],
-  ['one id of 50,000 characters', () => render('block\n' + 'a'.repeat(N), big)],
+  ['one id of 50,000 characters', () => renderScene('block\n' + 'a'.repeat(N), big)],
   ['25,000 one-letter statements on one line', () => parse('block ' + 'a;'.repeat(N / 2), big)],
   ['brackets only', () => tokenize('block\n' + '(([[{{'.repeat(N / 6))],
-  ['prototype names', () => render('block\n__proto__ constructor toString\nclassDef __proto__ fill:red\nclass constructor,toString __proto__\nstyle __proto__ fill:blue\n__proto__ --> constructor', big)],
+  ['prototype names', () => renderScene('block\n__proto__ constructor toString\nclassDef __proto__ fill:red\nclass constructor,toString __proto__\nstyle __proto__ fill:blue\n__proto__ --> constructor', big)],
 ];
 
 describe('block worst cases', () => {
@@ -88,9 +89,10 @@ describe('block worst cases', () => {
       'block\ncolumns 99999999999999999999\na b',
       'block\nblock:g:99999999\na\nend\nb',
     ]) {
-      const { svg, width, height } = render(src, big);
+      const result = renderScene(src, big);
+      const { width, height } = result;
       expect(Number.isFinite(width) && Number.isFinite(height), src.slice(0, 40)).toBe(true);
-      expect(svg, src.slice(0, 40)).not.toMatch(/NaN|Infinity/);
+      expect(sceneProblem(result), src.slice(0, 40)).toBeUndefined();
     }
   });
 });

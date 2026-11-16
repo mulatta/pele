@@ -13,7 +13,7 @@ import { hasMath, layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, tighten, turnToFit } from '../common/fit-width.js';
-import { linkUrl, relAttr } from '../../util/url.js';
+import { linkUrl } from '../../util/url.js';
 import type { ClassDb } from './db.js';
 import { buildClassGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { classMarkerTrim, drawClassMarker } from './markers.js';
@@ -34,7 +34,6 @@ const EMPTY_SECTION = 10;
 const MIN_WIDTH = 64;
 const FOLD = 8;
 const LINE = 'var(--_l)';
-const TARGETS = new Set(['_self', '_blank', '_parent', '_top']);
 
 function numberOption(config: Config, key: string, fallback: number): number {
   const value = config[key];
@@ -550,10 +549,9 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     out.group({ cls: `pele-node pele-class${classNames(cls.cssClasses.replace(/^default\s?/, ''))}`, id: cls.id, source: cls.source, x, y });
     const href = cls.link ? linkUrl(cls.link, options) : undefined;
     if (href !== undefined) {
-      out.link(` href="${esc(href)}"${cls.linkTarget && TARGETS.has(cls.linkTarget) ? ` target="${cls.linkTarget}"` : ''}${relAttr(options)}`);
+      out.link();
       links.push({ id: cls.id, href, internal: false });
     }
-    if (cls.tooltip) out.tooltip(cls.tooltip);
     out.rect(left, top, w, h, shapeAttrs);
     const ink = inkFill(style);
     const first = top + view.titleH;
@@ -634,7 +632,7 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
         route[k] += ox;
         route[k + 1] += oy;
       }
-      path = routePath(route, undefined, startTrim, endTrim, undefined, undefined, !out.numbers);
+      path = routePath(route, undefined, startTrim, endTrim, undefined, undefined, false);
     }
     const attrs = edge.pattern === 'dashed' ? ' stroke-dasharray="6 4"' : edge.pattern === 'dotted' ? ' stroke-dasharray="2 4"' : '';
     out.section('edges');
@@ -660,5 +658,6 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     else out.text(item.x + ox, item.y + oy + tiny * 0.35, item.text, ' class="pele-cardinality"', ' text-anchor="middle"');
   }
 
-  return { svg: out.done('class', framed.width, framed.height, size, options, db), width: framed.width, height: framed.height, links };
+  out.done(framed.width, framed.height);
+  return { width: framed.width, height: framed.height, links };
 }

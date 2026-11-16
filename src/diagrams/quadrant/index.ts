@@ -5,7 +5,6 @@ import { renderQuadrant } from './render.js';
 
 export const quadrantChart: Diagram<QuadrantDb> = {
   type: 'quadrantChart',
-  scene: true,
   parse(source, _config, title) {
     const db = new QuadrantDb();
     db.title = title;
