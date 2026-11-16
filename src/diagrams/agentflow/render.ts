@@ -1,9 +1,9 @@
 import { cnode, compoundLayout, direction, inheritCrossedDirections, shiftLayout, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
-import type { Out } from '../../draw/out.js';
+import type { Out, Pen } from '../../draw/out.js';
 import type { Config } from '../../preprocess.js';
-import { esc, num } from '../../svg/builder.js';
+import { esc } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, drawMarker, edgeCasing, loopPath, markerTrim, overFills, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, drawCasing, drawMarker, loopPath, markerTrim, overFills, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { PAD_X, PAD_Y, drawShape, insetRoute, shapeFilled, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -334,7 +334,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
       const dots = line + (DOTS + 2) / 2;
       out.rect(-w / 2, -h / 2, w, h, rounded(tint(node.colorIndex ?? KIND_SLOT.size, '0.06', view.style) + view.style.shape));
       out.path(out.pen().M(-w / 2 + 10, line).H(w / 2 - 10), ` fill="none" stroke="${color}" stroke-dasharray="3 3"${view.style.line}`);
-      out.path(`${dot(-9, dots)}${dot(0, dots)}${dot(9, dots)}`, ` fill="${color}" stroke="none"`, undefined, { cls: 'pele-collapsed-mark' });
+      out.path(dot(dot(dot(out.pen(), -9, dots), 0, dots), 9, dots), ` fill="${color}" stroke="none"`, undefined, { cls: 'pele-collapsed-mark' });
     } else {
       drawShape(out, view.shape, w, h, tint(slot, '0.14', view.style) + view.style.shape, ` stroke="${seriesColor(slot)}"` + view.style.line);
     }
@@ -355,10 +355,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
     const color = over || (style?.stroke ? esc(style.stroke) : 'var(--_l)');
     const kind = edge.thickness === 'dotted' ? 'reference' : endType === 'arrow_cross' ? 'failure' : 'sequence';
     const classes = classNames(edge.classes.replace(/edge-thickness-normal|edge-pattern-solid|flowchart-link/g, ''));
-    if (over === '') {
-      const casing = edgeCasing(path, 'none', endType, style?.line);
-      if (casing) out.into('casings', '', () => out.fragment(casing));
-    }
+    if (over === '') out.into('casings', '', () => drawCasing(out, path, 'none', endType, style?.line));
     out.section('edges');
     out.group({ cls: `pele-edge pele-edge-${kind}${classes}`, id: edge.id, source: edge.source, attrs: (over ? ` stroke="${over}"` : '') + (style?.line ?? '') });
     out.path(path.d, edge.thickness === 'dotted' ? ' stroke-dasharray="3 4"' : '', path.tokens);
@@ -399,6 +396,6 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
   return { svg: out.done('agentflow', width, height, size, options, db), width, height, links };
 }
 
-function dot(x: number, y: number): string {
-  return `M${num(x - 1.75)},${num(y)}a1.75,1.75 0 1 0 3.5,0a1.75,1.75 0 1 0 -3.5,0Z`;
+function dot(pen: Pen, x: number, y: number): Pen {
+  return pen.M(x - 1.75, y).a(1.75, 1.75, 0, 1, 0, 3.5, 0).a(1.75, 1.75, 0, 1, 0, -3.5, 0).Z();
 }
