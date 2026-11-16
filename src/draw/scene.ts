@@ -17,7 +17,11 @@ import { iconSvg } from '../diagrams/common/icon.js';
 import type { IconResolver, SourceInfo } from '../types.js';
 import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
-export const SCENE_VERSION = 2;
+// Raised when what a scene means changes, so a host can tell scenes apart.
+//   2  shapes, texts and items as an SVG reader saw them.
+//   3  runs carry their own paint and monospace; item ids are decoded like their sources;
+//      icons are drawn as shapes; a section made within another is painted just after it.
+export const SCENE_VERSION = 3;
 
 // A path is one flat array of numbers: an op code, then that op's arguments, command after
 // command. One array per shape keeps a diagram's heap (and every walk over it) to a few objects
@@ -42,17 +46,24 @@ export interface Box {
   y1: number;
 }
 
+// One paint of a path: its inside, or its outline. A shape with both is two, inside first.
+// Shapes are listed in the order they are painted; a later one covers an earlier one.
 export interface SceneShape {
   kind: 'fill' | 'stroke';
+  // A colour or a CSS variable of the theme (`var(--_s)`), as the SVG would paint it.
   paint: string;
   opacity: number;
+  // Outline width and dash lengths, in scene units; strokes only.
   width?: number;
   dash?: number[] | null;
   cmds: Path;
+  // The path's bounds (a stroke's grown by half its width).
   box: Box;
+  // Index into `items` of the part this belongs to, or -1.
   item: number;
 }
 
+// A run of text in one style. A style the run leaves unset is its text's.
 export interface SceneSpan {
   text: string;
   weight?: number;
@@ -61,6 +72,7 @@ export interface SceneSpan {
   paint?: string;
 }
 
+// A line of text: runs placed one after another from (x, y), y being the baseline.
 export interface SceneText {
   x: number;
   y: number;
@@ -73,13 +85,17 @@ export interface SceneText {
   item: number;
 }
 
+// A part of the diagram a host can point at: a node, an edge, a label. `kind` is the part's
+// class list in the SVG; where the source wrote it comes from SourceInfo.
 export interface SceneItem extends SourceInfo {
   id: string;
   kind: string;
+  // What its shapes and texts cover (a text by an estimate of its width), or null when empty.
   box: Box | null;
 }
 
 export interface Scene {
+  // SCENE_VERSION when drawn.
   version: number;
   x: number;
   y: number;
@@ -88,7 +104,10 @@ export interface Scene {
   baseline: number | null;
   shapes: SceneShape[];
   texts: SceneText[];
+  // In the SVG's document order: where two overlap, the later one is on top.
   items: SceneItem[];
+  // What could not be drawn, by kind (`transform` for a rotated group, `math`, `text` in an
+  // icon), and how often.
   skipped: Record<string, number>;
 }
 

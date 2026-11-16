@@ -231,7 +231,7 @@ function points(list: number[], close: boolean): Path {
 export function svgToScene(svg: string): Scene {
   const root = parseXml(svg);
   const vb = (root.attrs.viewBox ?? '').split(/[\s,]+/).map(Number);
-  const scene: Scene = { version: 2, x: 0, y: 0, w: vb[2] ?? 0, h: vb[3] ?? 0, baseline: null, shapes: [], texts: [], items: [], skipped: {} };
+  const scene: Scene = { version: 3, x: 0, y: 0, w: vb[2] ?? 0, h: vb[3] ?? 0, baseline: null, shapes: [], texts: [], items: [], skipped: {} };
   const items: number[] = [-1];
   const skip = (what: string) => (scene.skipped[what] = (scene.skipped[what] ?? 0) + 1);
   const touch = (box: Box) => {
