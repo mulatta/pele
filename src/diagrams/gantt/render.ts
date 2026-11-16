@@ -71,6 +71,17 @@ interface Bar {
 
 export function renderGantt(model: GanttDb, config: Config, options: RenderOptions, out: Out): Rendered {
   const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
+  // A label that is an item itself, which a typed label is not: a scene gets it as a group.
+  const itemLabel = (o: Out, label: Label, cx: number, cy: number, cls: string, id: string, source: SourceInfo | undefined, icons?: RenderOptions['icons']): void =>
+    o.both(
+      () => labelSvg(label, cx, cy, ` class="${cls}" data-id="${escText(id)}"${srcAttrs(source)}`, icons),
+      () => {
+        // An empty data-id makes no item.
+        o.group(id === '' ? {} : { cls, id, source });
+        o.label(label, cx, cy, '', icons);
+        o.end();
+      }
+    );
   const size = options.fontSize ?? 16;
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
@@ -275,8 +286,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
     }
     const label = sectionLabels.get(section)!;
     out.section('section-labels');
-    // A label that is an item itself: a typed label has no data-id.
-    out.fragment(labelSvg(label, pad + 8 + label.width / 2, y + h / 2, ` class="pele-section-label" data-id="${escText(section)}"${srcAttrs(rowSource[row])}`, options.icons));
+    itemLabel(out, label, pad + 8 + label.width / 2, y + h / 2, 'pele-section-label', section, rowSource[row], options.icons);
     row = end;
   }
 
@@ -382,7 +392,7 @@ export function renderGantt(model: GanttDb, config: Config, options: RenderOptio
   for (const [tx, ty, label] of axisTop) out.text(tx, ty, label, '', ' text-anchor="middle"');
   out.section('vert-labels');
   for (const [task, label, , cx, cy] of verticals) {
-    out.fragment(labelSvg(label, cx, cy, ` class="pele-vert-label" data-id="${escText(task.id)}"${srcAttrs(task.source)}`));
+    itemLabel(out, label, cx, cy, 'pele-vert-label', task.id, task.source);
   }
 
   return { svg: out.done('gantt', width, height, size, options, model), width, height, links };
