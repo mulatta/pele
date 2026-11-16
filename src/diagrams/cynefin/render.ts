@@ -1,12 +1,12 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
-import { num } from '../../svg/builder.js';
+import type { Out, Pen } from '../../draw/out.js';
+import { sourceAttrsFor } from '../../svg/builder.js';
 import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
-import { FOLD, HORIZON, backward, cliff, curvePath, ellipsePath, forward, resolveSeed, wave } from './boundaries.js';
+import { FOLD, HORIZON, backward, cliff, curvePen, ellipsePath, ellipsePen, forward, resolveSeed, wave } from './boundaries.js';
 import type { CynefinModel, DomainName } from './model.js';
 
 // [domain, column, row, series color]
@@ -144,14 +144,14 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
   const west = wave(x0, cx, cy, seed + 100, amplitude, { ...HORIZON, segments: 4, pinEnd: true });
   const east = wave(cx, right, cy, seed + 200, amplitude, { ...HORIZON, segments: 4, pinStart: true });
   const drop = cliff(cx, cy, bottom, width * 0.03);
-  const at = (curve: number[], end: boolean): string =>
-    end ? `${num(curve[curve.length - 2])},${num(curve[curve.length - 1])}` : `${num(curve[0])},${num(curve[1])}`;
+  const startOf = (pen: Pen, curve: number[], move: boolean): Pen => (move ? pen.M(curve[0], curve[1]) : pen.L(curve[0], curve[1]));
+  const endOf = (pen: Pen, curve: number[]): Pen => pen.L(curve[curve.length - 2], curve[curve.length - 1]);
 
-  const regions = new Map<DomainName, string>([
-    ['complex', `M${num(x0)},${num(y0)}L${at(fold, false)}${forward(fold)}${backward(west)}Z`],
-    ['complicated', `M${at(fold, false)}L${num(right)},${num(y0)}L${at(east, true)}${backward(east)}${backward(fold)}Z`],
-    ['chaotic', `M${at(west, false)}${forward(west)}${forward(drop)}L${num(x0)},${num(bottom)}Z`],
-    ['clear', `M${at(east, false)}${forward(east)}L${num(right)},${num(bottom)}L${at(drop, true)}${backward(drop)}Z`],
+  const regions = new Map<DomainName, Pen>([
+    ['complex', backward(forward(startOf(out.pen().M(x0, y0), fold, false), fold), west).Z()],
+    ['complicated', backward(backward(endOf(startOf(out.pen(), fold, true).L(right, y0), east), east), fold).Z()],
+    ['chaotic', forward(forward(startOf(out.pen(), west, true), west), drop).L(x0, bottom).Z()],
+    ['clear', backward(endOf(forward(startOf(out.pen(), east, true), east).L(right, bottom), drop), drop).Z()],
   ]);
 
   const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
@@ -167,18 +167,23 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
     });
   }
   out.section('boundaries', ' class="pele-cynefin-boundaries" fill="none" stroke="var(--_b)" stroke-dasharray="6 3"');
-  out.path(curvePath(fold), '');
-  out.path(curvePath(west), '');
-  out.path(curvePath(east), '');
-  out.path(curvePath(drop), ' stroke="var(--_l)" stroke-width="2" stroke-dasharray="none" stroke-linecap="round"', undefined, { cls: 'pele-cynefin-cliff' });
+  out.path(curvePen(out.pen(), fold), '');
+  out.path(curvePen(out.pen(), west), '');
+  out.path(curvePen(out.pen(), east), '');
+  out.path(curvePen(out.pen(), drop), ' stroke="var(--_l)" stroke-width="2" stroke-dasharray="none" stroke-linecap="round"', undefined, { cls: 'pele-cynefin-cliff' });
   out.section('ellipse');
   const oval = ellipsePath(cx, cy, rx, ry);
-  out.path(oval, ' fill="var(--_bg)"');
-  out.path(oval, ` fill="${seriesColor(CONFUSION_COLOR)}" fill-opacity="0.18" stroke="var(--_b)" stroke-dasharray="4 2"`, undefined, {
-    cls: 'pele-cynefin-region',
-    id: 'confusion',
-    source: domainSource('confusion'),
-  });
+  const srcAttrs = sourceAttrsFor({ sourceInfo: out.sources });
+  const confusionPaint = ` fill="${seriesColor(CONFUSION_COLOR)}" fill-opacity="0.18" stroke="var(--_b)" stroke-dasharray="4 2"`;
+  // The SVG writes the arcs' flags as "1,1", which a pen does not.
+  out.both(
+    () => `<path d="${oval}" fill="var(--_bg)"/>`,
+    () => out.path(ellipsePen(out.pen(), cx, cy, rx, ry), ' fill="var(--_bg)"')
+  );
+  out.both(
+    () => `<path class="pele-cynefin-region" data-id="confusion"${srcAttrs(domainSource('confusion'))} d="${oval}"${confusionPaint}/>`,
+    () => out.path(ellipsePen(out.pen(), cx, cy, rx, ry), confusionPaint, undefined, { cls: 'pele-cynefin-region', id: 'confusion', source: domainSource('confusion') })
+  );
   out.section('domains');
 
   const drawBlock = (b: Block): void => {

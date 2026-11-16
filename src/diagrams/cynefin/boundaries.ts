@@ -1,3 +1,4 @@
+import type { Pen } from '../../draw/out.js';
 import { num } from '../../svg/builder.js';
 
 // The geometry of Mermaid's Cynefin boundaries: seeded wavy lines between the domains and the
@@ -72,29 +73,37 @@ export function cliff(cx: number, top: number, bottom: number, amplitude: number
   ];
 }
 
-// Path commands that continue from the curve's start point to its end.
-export function forward(curve: number[]): string {
-  let d = '';
+// Continues the pen from the curve's start point to its end.
+export function forward(pen: Pen, curve: number[]): Pen {
+  for (let i = 2; i < curve.length; i += 6) pen.C(curve[i], curve[i + 1], curve[i + 2], curve[i + 3], curve[i + 4], curve[i + 5]);
+  return pen;
+}
+
+// Continues the pen from the curve's end point back to its start.
+export function backward(pen: Pen, curve: number[]): Pen {
+  for (let i = curve.length - 6; i >= 2; i -= 6) pen.C(curve[i + 2], curve[i + 3], curve[i], curve[i + 1], curve[i - 2], curve[i - 1]);
+  return pen;
+}
+
+export function curvePen(pen: Pen, curve: number[]): Pen {
+  return forward(pen.M(curve[0], curve[1]), curve);
+}
+
+// The same curve as text, which the SVG writers of the reference tests compare against.
+export function curvePath(curve: number[]): string {
+  let d = `M${num(curve[0])},${num(curve[1])}`;
   for (let i = 2; i < curve.length; i += 6) {
     d += `C${num(curve[i])},${num(curve[i + 1])} ${num(curve[i + 2])},${num(curve[i + 3])} ${num(curve[i + 4])},${num(curve[i + 5])}`;
   }
   return d;
 }
 
-// Path commands that continue from the curve's end point back to its start.
-export function backward(curve: number[]): string {
-  let d = '';
-  for (let i = curve.length - 6; i >= 2; i -= 6) {
-    d += `C${num(curve[i + 2])},${num(curve[i + 3])} ${num(curve[i])},${num(curve[i + 1])} ${num(curve[i - 2])},${num(curve[i - 1])}`;
-  }
-  return d;
-}
-
-export function curvePath(curve: number[]): string {
-  return `M${num(curve[0])},${num(curve[1])}${forward(curve)}`;
-}
-
 export function ellipsePath(cx: number, cy: number, rx: number, ry: number): string {
   const r = `${num(rx)},${num(ry)}`;
   return `M${num(cx - rx)},${num(cy)}A${r} 0 1,1 ${num(cx + rx)},${num(cy)}A${r} 0 1,1 ${num(cx - rx)},${num(cy)}Z`;
+}
+
+// The same ellipse as numbers, for a scene; ellipsePath writes the arc flags the SVG way.
+export function ellipsePen(pen: Pen, cx: number, cy: number, rx: number, ry: number): Pen {
+  return pen.M(cx - rx, cy).A(rx, ry, 0, 1, 1, cx + rx, cy).A(rx, ry, 0, 1, 1, cx - rx, cy).Z();
 }
