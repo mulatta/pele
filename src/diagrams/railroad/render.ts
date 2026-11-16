@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import { Paint, type Out } from '../../draw/out.js';
-import { esc, num } from '../../svg/builder.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
+import { num } from '../../svg/builder.js';
 import { FONT_MONO, ROUNDED } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -233,13 +233,15 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
   const { arc } = m;
 
   const A = num(arc);
-  const turn = (sweep: number, dx: string, dy: string): string => `a${A},${A} 0 0 ${sweep} ${dx}${A},${dy}${A}`;
-  const eastToSouth = turn(1, '', '');
-  const southToEast = turn(0, '', '');
-  const eastToNorth = turn(0, '', '-');
-  const northToEast = turn(1, '', '-');
-  const loopDown = turn(0, '-', '');
-  const loopUp = turn(0, '-', '-');
+  // The SVG writes a turn's signs apart from the radius, so a zero radius reads `-0`.
+  const turn = (pen: Pen, sweep: 0 | 1, dx: number, dy: number): Pen =>
+    pen.both(`a${A},${A} 0 0 ${sweep} ${dx < 0 ? '-' : ''}${A},${dy < 0 ? '-' : ''}${A}`, (p) => p.a(arc, arc, 0, 0, sweep, dx * arc, dy * arc));
+  const eastToSouth = (pen: Pen): Pen => turn(pen, 1, 1, 1);
+  const southToEast = (pen: Pen): Pen => turn(pen, 0, 1, 1);
+  const eastToNorth = (pen: Pen): Pen => turn(pen, 0, 1, -1);
+  const northToEast = (pen: Pen): Pen => turn(pen, 1, 1, -1);
+  const loopDown = (pen: Pen): Pen => turn(pen, 0, -1, 1);
+  const loopUp = (pen: Pen): Pen => turn(pen, 0, -1, -1);
 
   const title = layoutLabel(model.title, false, m.measurer, base, tight ? titleRoom(options) : 4000, Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 16 : 0;
@@ -247,8 +249,9 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
   const textShift = size * 0.35;
   const boxTop = m.height / 2;
 
-  let track = '';
-  let arrows = '';
+  let track = out.pen();
+  let arrows = out.pen();
+  let arrowed = false;
   // Drawn after a rule's track, which is known only once its elements are placed.
   let nodes: (() => void)[] = [];
   const TRACK = new Paint(` fill="none" stroke="var(--_l)"${stroke}`);
@@ -257,7 +260,7 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
   const SPECIAL = new Paint(` fill="var(--_bg)" stroke="var(--_b)" stroke-dasharray="4 3"${stroke}${ROUNDED}`);
 
   const line = (x1: number, y: number, x2: number): void => {
-    if (x2 > x1) track += `M${num(x1)},${num(y)}H${num(x2)}`;
+    if (x2 > x1) track.M(x1, y).H(x2);
   };
 
   const place = (root: Box, left: number, baseline: number): void => {
@@ -294,11 +297,12 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
               const next = kids[i + 1];
               const nextOffset = offset + kid.down + Math.max(m.sep, 2 * arc) + next.up;
               const mid = y + offset + kid.down + Math.max(m.sep, 2 * arc) / 2;
-              track += `M${num(start + kid.width)},${num(ky)}H${num(right - 2 * arc)}V${num(mid)}H${num(x + arc)}V${num(y + nextOffset)}H${num(start)}`;
-              arrows += `M${num(start - ARROW)},${num(y + nextOffset - ARROW / 2)}l${ARROW},${ARROW / 2}l${-ARROW},${ARROW / 2}z`;
+              track.M(start + kid.width, ky).H(right - 2 * arc).V(mid).H(x + arc).V(y + nextOffset).H(start);
+              arrows.M(start - ARROW, y + nextOffset - ARROW / 2).l(ARROW, ARROW / 2).l(-ARROW, ARROW / 2).z();
+              arrowed = true;
               offset = nextOffset;
             } else {
-              track += `M${num(start + kid.width)},${num(ky)}H${num(right - arc)}V${num(y)}H${num(right)}`;
+              track.M(start + kid.width, ky).H(right - arc).V(y).H(right);
             }
           }
           reverse(boxes, from);
@@ -321,14 +325,14 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
               line(x, y, kx);
               line(kx + kid.width, y, right);
             } else {
-              track +=
-                (last ? `M${num(x)},${num(y)}${eastToSouth}V${num(ky - arc)}` : `M${num(railIn)},${num(ky - arc)}`) +
-                southToEast +
-                (kx > railIn + arc ? `H${num(kx)}` : '') +
-                `M${num(kx + kid.width)},${num(ky)}` +
-                (kx > railIn + arc ? `H${num(railOut - arc)}` : '') +
-                eastToNorth +
-                (last ? `V${num(y + arc)}${northToEast}` : '');
+              if (last) eastToSouth(track.M(x, y)).V(ky - arc);
+              else track.M(railIn, ky - arc);
+              southToEast(track);
+              if (kx > railIn + arc) track.H(kx);
+              track.M(kx + kid.width, ky);
+              if (kx > railIn + arc) track.H(railOut - arc);
+              eastToNorth(track);
+              if (last) northToEast(track.V(y + arc));
             }
             boxes.push(kid);
             at.push(ky, kx);
@@ -343,9 +347,10 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
           const kx = x + 2 * arc;
           line(x, y, kx);
           line(kx + kid.width, y, right);
-          track +=
-            `M${num(x)},${num(y)}${eastToNorth}V${num(y - box.reach + arc)}${northToEast}H${num(right - 2 * arc)}` +
-            `${eastToSouth}V${num(y - arc)}${southToEast}`;
+          eastToNorth(track.M(x, y)).V(y - box.reach + arc);
+          northToEast(track).H(right - 2 * arc);
+          eastToSouth(track).V(y - arc);
+          southToEast(track);
           boxes.push(kid);
           at.push(kx, y);
           break;
@@ -357,10 +362,12 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
           const middle = x + box.width / 2;
           line(x, y, kx);
           line(kx + kid.width, y, right);
-          track +=
-            `M${num(x + arc)},${num(y)}${loopDown}V${num(loopY - arc)}${southToEast}H${num(right - arc)}` +
-            `${eastToNorth}V${num(y + arc)}${loopUp}`;
-          arrows += `M${num(middle - ARROW / 2)},${num(loopY)}l${ARROW},${-ARROW / 2}v${ARROW}z`;
+          loopDown(track.M(x + arc, y)).V(loopY - arc);
+          southToEast(track).H(right - arc);
+          eastToNorth(track).V(y + arc);
+          loopUp(track);
+          arrows.M(middle - ARROW / 2, loopY).l(ARROW, -ARROW / 2).v(ARROW).z();
+          arrowed = true;
           if (box.text !== '') {
             const label = box.text;
             nodes.push(() => out.text(middle, loopY + COUNT_SIZE + 3, label, ' class="pele-edge-label pele-count"', ` font-size="${COUNT_SIZE}" fill="var(--_m)"`));
@@ -386,8 +393,7 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
             } else {
               out.group({ cls: 'pele-node pele-special' });
               out.rect(x, y - boxTop, box.width, m.height, SPECIAL);
-              // Two spans of a color of their own, which a text call does not write.
-              out.fragment(`<text x="${num(tx)}" y="${num(ty)}"${space} font-style="italic"><tspan fill="var(--_m)">? </tspan>${esc(text.slice(2, -2))}<tspan fill="var(--_m)"> ?</tspan></text>`);
+              out.spans(tx, ty, [{ text: '? ', attrs: ' fill="var(--_m)"' }, { text: text.slice(2, -2) }, { text: ' ?', attrs: ' fill="var(--_m)"' }], '', `${space} font-style="italic"`);
             }
             out.end();
           });
@@ -408,8 +414,9 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
     const start = pad + 2 * radius;
     const left = start + LEAD;
     const end = left + box.width + LEAD;
-    track = '';
-    arrows = '';
+    track = out.pen();
+    arrows = out.pen();
+    arrowed = false;
     nodes = [];
     line(start, baseline, left);
     line(left + box.width, baseline, end);
@@ -417,7 +424,7 @@ function draw(out: Out, model: RailroadModel, config: Config, options: RenderOpt
     out.group({ cls: 'pele-rule', id: rule.name, source: rule.source });
     out.text(pad, top + headHeight / 2 + headSize * 0.35, name, ' class="pele-rule-name"', ` font-size="${num(headSize)}" font-weight="var(--_hw)" text-anchor="start"`);
     out.path(track, TRACK, undefined, { cls: 'pele-edge pele-track' });
-    if (arrows) out.path(arrows, ARROWS, undefined, { cls: 'pele-marker' });
+    if (arrowed) out.path(arrows, ARROWS, undefined, { cls: 'pele-marker' });
     if (radius > 0) {
       out.circle(pad + radius, baseline, radius, ARROWS, { cls: 'pele-marker pele-start' });
       out.circle(end + radius, baseline, radius, ARROWS, { cls: 'pele-marker pele-end' });
