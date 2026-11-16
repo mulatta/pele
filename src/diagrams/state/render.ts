@@ -14,7 +14,7 @@ import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { StateDb } from './db.js';
 import type { StateEdge, StateNode } from './graph.js';
-import type { Out } from '../../draw/out.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;
@@ -30,6 +30,23 @@ const CORNER = 10;
 const BAR = 8;
 const SURFACE = ' fill="var(--_s)" stroke="var(--_b)"';
 const RULE = ' fill="none" stroke="var(--_b)"';
+// What most pseudo-states and rules look like, read once; a style of their own is a string.
+const START = new Paint(' fill="var(--_l)"');
+const END_RING = new Paint(' fill="var(--_bg)" stroke="var(--_l)"');
+const RULED = new Paint(RULE);
+const FOLDED = new Paint(' fill="var(--_bg)" stroke="var(--_b)"');
+// A state's outline, made once per corner and style: a scene reads each only once.
+const surfaces = new Map<string, Paint>();
+function surface(rx: string, shape: string): Paint {
+  const key = rx + shape;
+  let paint = surfaces.get(key);
+  if (!paint) {
+    paint = new Paint(` rx="${rx}"${SURFACE}${shape}`);
+    if (surfaces.size > 200) surfaces.clear();
+    surfaces.set(key, paint);
+  }
+  return paint;
+}
 const MERMAID_CLASSES = /(?:^| )statediagram-(?:state|cluster-alt|cluster|note)(?= |$)/g;
 
 const enum K {
@@ -450,8 +467,8 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       for (let k = 1; k < sorted.length; k++) if (hi(sorted[k - 1], x) > lo(sorted[k], x) + 0.5) apart = false;
       if (!apart) continue;
       for (let k = 1; k < sorted.length; k++) {
-        const at = num((hi(sorted[k - 1], x) + lo(sorted[k], x)) / 2 + pad);
-        out.into('dividers', '', () => out.fragment(`<path class="pele-divider" d="M${x ? `${at},${num(top)}V${num(bottom)}` : `${num(left)},${at}H${num(right)}`}"/>`));
+        const at = (hi(sorted[k - 1], x) + lo(sorted[k], x)) / 2 + pad;
+        out.into('dividers', '', () => out.path(x ? out.pen().M(at, top).V(bottom) : out.pen().M(left, at).H(right), '', undefined, { cls: 'pele-divider' }));
       }
       return;
     }
@@ -499,42 +516,47 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
         if (paints(style.shape)) fills.push({ box: [left, top, left + c.w, top + c.h], shape: style.shape });
         out.rect(left, top, c.w, c.h, ` rx="${CORNER}" fill="var(--_a)"${setsFill(style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${style.shape}`);
         if (view.titleH > 0) {
-          out.fragment(`<path d="M${num(left)},${num(top + view.titleH)}H${num(left + c.w)}"${RULE}${style.line}/>`);
+          out.path(out.pen().M(left, top + view.titleH).H(left + c.w), style.line ? RULE + style.line : RULED);
           out.label(view.label, titleX(c, view.label.width, crossings) + pad, top + view.titleH / 2, ` class="pele-cluster-label"${ink}${style.text}`, icons);
         }
         divide(children[i], left, top + view.titleH, left + c.w, top + c.h);
         break;
       }
       case K.Start:
-        out.fragment(`<circle r="7" fill="var(--_l)"${style.shape}/>`);
+        out.circle(null, null, 7, style.shape ? ` fill="var(--_l)"${style.shape}` : START);
         break;
       case K.End:
-        out.fragment(`<circle r="8.5" fill="var(--_bg)" stroke="var(--_l)"${style.line}/><circle r="5" fill="var(--_l)"${style.shape}/>`);
+        out.circle(null, null, 8.5, style.line ? ` fill="var(--_bg)" stroke="var(--_l)"${style.line}` : END_RING);
+        out.circle(null, null, 5, style.shape ? ` fill="var(--_l)"${style.shape}` : START);
         break;
       case K.Choice:
-        out.fragment(`<polygon points="0,${num(-h / 2)} ${num(w / 2)},0 0,${num(h / 2)} ${num(-w / 2)},0"${SURFACE}${style.shape}/>`);
+        out.polygon([0, -h / 2, w / 2, 0, 0, h / 2, -w / 2, 0], SURFACE + style.shape);
         break;
       case K.Fork:
       case K.Join:
         out.rect(-w / 2, -h / 2, w, h, ` rx="2" fill="var(--_l)"${style.shape}`);
         break;
       case K.Note: {
-        const r = num(w / 2);
-        const b = num(h / 2);
-        const fold = num(w / 2 - FOLD);
-        const corner = num(FOLD - h / 2);
-        out.fragment(`<path d="M-${r},-${b}H${fold}L${r},${corner}V${b}H-${r}Z" fill="var(--_bg)" stroke="var(--_b)"/>` + `<path d="M${fold},-${b}V${corner}H${r}"${RULE}/>`);
+        const r = w / 2;
+        const b = h / 2;
+        const fold = w / 2 - FOLD;
+        const corner = FOLD - h / 2;
+        // The SVG writes these as `-` and the rounded number, which a half cent rounds apart from num(-x).
+        const nr = -Math.round(r * 100) / 100;
+        const nb = -Math.round(b * 100) / 100;
+        out.path(out.pen().M(nr, nb).H(fold).L(r, corner).V(b).H(nr).Z(), FOLDED);
+        out.path(out.pen().M(fold, nb).V(corner).H(r), RULED);
         out.label(view.label, 0, 0, ` class="pele-label" font-size="${small}" fill="var(--_m)"`, icons);
         break;
       }
       default: {
-        out.rect(-w / 2, -h / 2, w, h, ` rx="${num(Math.min(CORNER, h / 2))}"${SURFACE}${style.shape}`);
+        out.rect(-w / 2, -h / 2, w, h, surface(num(Math.min(CORNER, h / 2)), style.shape));
         if (view.kind === K.State) {
           out.label(view.label, 0, 0, labelAttrs, icons);
           break;
         }
         let at = PAD_Y - h / 2 + view.label.height;
-        out.fragment(`<path d="M${num(-w / 2)},${num(at + 6)}H${num(w / 2)}"${RULE}${style.line}/>`);
+        out.path(out.pen().M(-w / 2, at + 6).H(w / 2), style.line ? RULE + style.line : RULED);
         out.label(view.label, 0, at - view.label.height / 2, labelAttrs, icons);
         at += 14;
         for (const line of view.lines) {
@@ -590,6 +612,8 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
     const note = edge.pattern === 'dashed';
     const endType = note ? 'none' : 'arrow_point';
     let path: EdgePath;
+    // A self-loop is drawn from numbers; its path text is only for finding the fill it lies on.
+    let loop: Pen | undefined;
     if (ce.src === ce.dst) {
       const a = cnodes[ce.src];
       const view = views[ce.src];
@@ -598,16 +622,18 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       const side = across(ce.src);
       const w = a.isGroup ? a.w : view.w;
       const h = a.isGroup ? a.h : view.h;
-      const out = (side ? w : h) / 2;
+      const away = (side ? w : h) / 2;
       const spread = Math.max(Math.min((side ? h : w) / 2 - 4, 8 + k * 6), 2);
       const reach = LOOP + k * 8;
       const trim = markerTrim(endType) / (Math.hypot(reach, spread) || 1);
       // Offsets are given for a loop on the right and turned a quarter for one below.
-      const px = (dx: number, dy: number): number => a.x + pad + (side ? out + dx : -dy);
-      const py = (dx: number, dy: number): number => a.y + pad + (side ? dy : out + dx);
+      const px = (dx: number, dy: number): number => a.x + pad + (side ? away + dx : -dy);
+      const py = (dx: number, dy: number): number => a.y + pad + (side ? dy : away + dx);
       const at = (dx: number, dy: number): string => `${num(px(dx, dy))},${num(py(dx, dy))}`;
+      const bend = spread + spread * trim;
+      loop = out.pen().M(px(0, -spread), py(0, -spread)).C(px(reach, -2 * spread), py(reach, -2 * spread), px(reach, 2 * spread), py(reach, 2 * spread), px(reach * trim, bend), py(reach * trim, bend));
       path = {
-        d: `M${at(0, -spread)}C${at(reach, -2 * spread)} ${at(reach, 2 * spread)} ${at(reach * trim, spread + spread * trim)}`,
+        d: fills.length > 0 ? `M${at(0, -spread)}C${at(reach, -2 * spread)} ${at(reach, 2 * spread)} ${at(reach * trim, bend)}` : '',
         sx: 0,
         sy: 0,
         sdx: 0,
@@ -624,8 +650,8 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       const furthest = LOOP + (loopCount[ce.src] - 1) * 8;
       const below = loopText[ce.src] + label.height / 2;
       loopText[ce.src] += label.height;
-      ce.labelX = side ? a.x + out + furthest + 4 + ce.labelW / 2 : a.x;
-      ce.labelY = side ? a.y - loopHeight[ce.src] / 2 + below : a.y + out + furthest * 0.75 + 4 + below;
+      ce.labelX = side ? a.x + away + furthest + 4 + ce.labelW / 2 : a.x;
+      ce.labelY = side ? a.y - loopHeight[ce.src] / 2 + below : a.y + away + furthest * 0.75 + 4 + below;
     } else {
       let route = ce.route.slice();
       const leaves = reach.of(ce.src, endSide(route, 0, cnodes[ce.src]));
@@ -653,7 +679,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
     if (over === '') {
       // A wider page-colored stroke under the transition; its marker drops its class so marker styles skip it.
       out.into('casings', '', () => {
-        out.path(path.d, '', path.tokens);
+        out.path(loop ?? path.d, '', path.tokens);
         drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)', false);
       });
     }
@@ -664,7 +690,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       id: edge.id,
       source: edge.written,
     });
-    out.path(path.d, '', path.tokens);
+    out.path(loop ?? path.d, '', path.tokens);
     drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)');
     out.end();
     if (label.width > 0) {
