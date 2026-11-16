@@ -86,6 +86,9 @@ export interface SceneText {
   item: number;
   // Degrees the line is turned about (x, y), clockwise as the y axis runs down; absent when level.
   angle?: number;
+  // An outline drawn around the letters (a halo where `paint` is 'none'), and its width.
+  stroke?: string;
+  strokeWidth?: number;
 }
 
 // A part of the diagram a host can point at: a node, an edge, a label. `kind` is the part's
@@ -1293,6 +1296,10 @@ export class SceneOut implements Out {
     const t: SceneText = m
       ? { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5], size: base.size * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])), weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item }
       : { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
+    if (base.stroke !== null) {
+      t.stroke = base.stroke;
+      t.strokeWidth = base.strokeWidth * (m ? Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) : 1);
+    }
     (this.current.texts ??= []).push(t);
     const chars = spans.reduce((n, s) => n + s.text.length, 0);
     this.grow(chars);
@@ -1459,6 +1466,8 @@ interface TextBase {
   italic: boolean;
   paint: string;
   mono: boolean;
+  stroke: string | null;
+  strokeWidth: number;
 }
 
 const MONO = 'var(--_fm)';
@@ -1469,12 +1478,16 @@ const bases = new WeakMap<Look, TextBase>();
 function textBase(look: Look): TextBase {
   let base = bases.get(look);
   if (base) return base;
+  const ink = inkOf(look);
   base = {
     size: len(look['font-size'], 16),
     weight: weight(look['font-weight'], 400),
     italic: look['font-style'] === 'italic',
-    paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
+    // Letters with no fill show only their outline, if they have one.
+    paint: look.fill === undefined ? 'var(--_fg)' : (ink.fill ?? 'none'),
     mono: look['font-family'] === MONO,
+    stroke: ink.stroke,
+    strokeWidth: ink.width,
   };
   bases.set(look, base);
   return base;

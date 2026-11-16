@@ -358,7 +358,10 @@ export function svgToScene(svg: string): Scene {
   let inIcon = 0;
   const text = (el: Node, look: Look, m: Affine) => {
     const size = len(look['font-size'], 16) * scaleOf(m);
-    const base = { size, weight: weight(look['font-weight'], 400), italic: look['font-style'] === 'italic', paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)' };
+    const filled = look.fill !== undefined && look.fill !== 'none' && look.fill !== 'transparent';
+    const base = { size, weight: weight(look['font-weight'], 400), italic: look['font-style'] === 'italic', paint: look.fill === undefined ? 'var(--_fg)' : filled ? look.fill : 'none' };
+    const width = len(look['stroke-width'], 1);
+    const outline = look.stroke && look.stroke !== 'none' && look.stroke !== 'transparent' && width > 0 ? { stroke: look.stroke, strokeWidth: width * scaleOf(m) } : {};
     let x = len(el.attrs.x, 0);
     let y = len(el.attrs.y, 0);
     let anchor = (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end';
@@ -379,7 +382,7 @@ export function svgToScene(svg: string): Scene {
         else {
           const px = m[0] * x + m[2] * y + m[4];
           const py = m[1] * x + m[3] * y + m[5];
-          const t: SceneText = { x: px, y: py, ...base, anchor, spans, item: items[items.length - 1] };
+          const t: SceneText = { x: px, y: py, ...base, anchor, spans, item: items[items.length - 1], ...outline };
           const angle = angleOf(m);
           const w = spans.reduce((n, s) => n + s.text.length, 0) * size * 0.55;
           const left = anchor === 'middle' ? -w / 2 : anchor === 'end' ? -w : 0;
