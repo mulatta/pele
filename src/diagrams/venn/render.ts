@@ -204,13 +204,21 @@ export function renderVenn(model: VennModel, _config: Config, options: RenderOpt
     for (const line of region.lines) {
       const own = line.id === undefined ? region.style.text : styleOf(line.id).text;
       const color = ink(fill, own);
-      const attrs =
-        line.id === undefined
-          ? ` class="pele-label"${line.size === size ? '' : ` font-size="${line.size}"`}${color ? ` fill="${color}"` : ''}${own}`
-          : ` class="pele-venn-text" data-id="${escText(line.id)}"${srcAttrs(line.source)} font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
-      // A text with its own data-id is an item, which only a fragment can make from attributes.
-      if (line.id === undefined) out.label(line.label, x, y + line.label.height / 2, attrs);
-      else out.fragment(labelSvg(line.label, x, y + line.label.height / 2, attrs));
+      const cy = y + line.label.height / 2;
+      if (line.id === undefined) {
+        out.label(line.label, x, cy, ` class="pele-label"${line.size === size ? '' : ` font-size="${line.size}"`}${color ? ` fill="${color}"` : ''}${own}`);
+      } else {
+        const paint = ` font-size="${tiny}" fill="${color ?? 'var(--_m)'}"${own}`;
+        // The SVG writes the item's attributes on the text itself; a scene gets a group for it.
+        out.both(
+          () => labelSvg(line.label, x, cy, ` class="pele-venn-text" data-id="${escText(line.id!)}"${srcAttrs(line.source)}${paint}`),
+          () => {
+            out.group({ cls: 'pele-venn-text', id: line.id, source: line.source, attrs: paint });
+            out.label(line.label, x, cy, '');
+            out.end();
+          }
+        );
+      }
       y += line.label.height;
     }
     out.end();
