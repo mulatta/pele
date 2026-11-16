@@ -233,19 +233,6 @@ function markerShape(type: string, x: number, y: number, dx: number, dy: number)
   return undefined;
 }
 
-// Draws a marker whose tip is at (x, y), pointing along (dx, dy).
-export function marker(type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): string {
-  const m = markerShape(type, x, y, dx, dy);
-  if (!m) return '';
-  if (m.kind === 'point') {
-    return `<path class="pele-marker" d="M${num(m.x)},${num(m.y)}L${num(m.ax)},${num(m.ay)}L${num(m.bx)},${num(m.by)}Z" fill="${color}" stroke="${stroke}"/>`;
-  }
-  if (m.kind === 'circle') {
-    return `<circle class="pele-marker" cx="${num(m.cx)}" cy="${num(m.cy)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
-  }
-  return `<path class="pele-marker" d="M${num(m.x0)},${num(m.y0)}L${num(m.x1)},${num(m.y1)}M${num(m.x2)},${num(m.y2)}L${num(m.x3)},${num(m.y3)}"/>`;
-}
-
 const MARKER = { cls: 'pele-marker' };
 
 // A marker's paint, by fill and stroke, made once: a scene reads each only once.
@@ -261,8 +248,8 @@ function markerPaint(color: string, stroke: string): Paint {
   return paint;
 }
 
-// The same marker drawn through an output, so a scene gets its geometry. Without `cls` it is drawn
-// without its class, for a casing that marker styles must skip.
+// Draws a marker whose tip is at (x, y), pointing along (dx, dy). Without `cls` it is drawn without
+// its class, for a casing that marker styles must skip.
 export function drawMarker(o: Out, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none', cls = true): void {
   const m = markerShape(type, x, y, dx, dy);
   if (!m) return;
@@ -519,25 +506,7 @@ export function casingAttrs(line = '', thick = false): string | undefined {
   return attrs + (style ? ` style="${style}"` : '');
 }
 
-// A wider page-colored stroke under an edge, as faint as it; markers drop their class so marker styles skip it.
-export function casing(d: string, markers: string, line = '', thick = false): string {
-  const attrs = casingAttrs(line, thick);
-  if (attrs === undefined) return '';
-  const body = `<path d="${d}"/>` + markers.replace(/ class="pele-marker"/g, '');
-  return attrs ? `<g${attrs}>${body}</g>` : body;
-}
-
-export function edgeCasing(path: EdgePath, startType: string, endType: string, line = '', thick = false): string {
-  return casing(
-    path.d,
-    marker(startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)') +
-      marker(endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)'),
-    line,
-    thick
-  );
-}
-
-// edgeCasing drawn through an output.
+// A wider page-colored stroke under an edge, as faint as it, with its markers.
 export function drawCasing(o: Out, path: EdgePath, startType: string, endType: string, line = '', thick = false): void {
   const attrs = casingAttrs(line, thick);
   if (attrs === undefined) return;
