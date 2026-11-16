@@ -155,7 +155,8 @@ const NO_LOOK: Look = {};
 const NO_FILL: Look = { fill: 'none' };
 
 // A Paint keeps what it was read as, so it is read once however often it is drawn.
-const lookAt = (a: Attrs): Look => (typeof a === 'string' ? parseLook(a) : ((a.look as Look | undefined) ?? (a.look = parseLook(a.attrs)) as Look));
+const lookAt = (a: Attrs): Look =>
+  typeof a === 'string' ? (a === '' ? NO_LOOK : parseLook(a)) : ((a.look as Look | undefined) ?? (a.look = parseLook(a.attrs)) as Look);
 
 class ScenePen implements Pen {
   cmds: Path = [];
@@ -168,22 +169,21 @@ class ScenePen implements Pen {
   private cy = 0;
   private qx: number | null = null;
   private qy = 0;
-  private to(x: number, y: number): this {
-    this.x = x;
-    this.y = y;
-    return this;
-  }
+  // The commands set the current point themselves: a helper call per command costs an interpreter
+  // as much as the command.
   M(x: number, y: number): this {
     this.cmds.push(M, x, y);
-    this.sx = x;
-    this.sy = y;
+    this.x = this.sx = x;
+    this.y = this.sy = y;
     this.cx = this.qx = null;
-    return this.to(x, y);
+    return this;
   }
   L(x: number, y: number): this {
     this.cmds.push(L, x, y);
+    this.x = x;
+    this.y = y;
     this.cx = this.qx = null;
-    return this.to(x, y);
+    return this;
   }
   H(x: number): this {
     return this.L(x, this.y);
@@ -196,7 +196,9 @@ class ScenePen implements Pen {
     this.cx = x2;
     this.cy = y2;
     this.qx = null;
-    return this.to(x, y);
+    this.x = x;
+    this.y = y;
+    return this;
   }
   S(x2: number, y2: number, x: number, y: number): this {
     const x1 = this.cx === null ? this.x : 2 * this.x - this.cx;
@@ -208,7 +210,9 @@ class ScenePen implements Pen {
     this.qx = x1;
     this.qy = y1;
     this.cx = null;
-    return this.to(x, y);
+    this.x = x;
+    this.y = y;
+    return this;
   }
   T(x: number, y: number): this {
     const x1 = this.qx === null ? this.x : 2 * this.x - this.qx;
@@ -218,12 +222,16 @@ class ScenePen implements Pen {
   A(rx: number, ry: number, rotation: number, large: 0 | 1, sweep: 0 | 1, x: number, y: number): this {
     this.cmds.push(A, Math.abs(rx), Math.abs(ry), rotation, large, sweep, x, y);
     this.cx = this.qx = null;
-    return this.to(x, y);
+    this.x = x;
+    this.y = y;
+    return this;
   }
   Z(): this {
     this.cmds.push(Z);
     this.cx = this.qx = null;
-    return this.to(this.sx, this.sy);
+    this.x = this.sx;
+    this.y = this.sy;
+    return this;
   }
   m(dx: number, dy: number): this {
     return this.M(this.x + dx, this.y + dy);
@@ -280,6 +288,37 @@ function merge(base: Look, own: Look): Look {
     made.set(own, look);
   }
   return look;
+}
+
+// What a look paints with, read from its attribute text once: looks are shared and never change.
+interface Ink {
+  fill: string | null;
+  fillOpacity: number;
+  stroke: string | null;
+  strokeOpacity: number;
+  width: number;
+  dash: number[] | null;
+}
+const inks = new WeakMap<Look, Ink>();
+
+function inkOf(look: Look): Ink {
+  let ink = inks.get(look);
+  if (ink) return ink;
+  const opacity = len(look.opacity, 1);
+  const fill = look.fill;
+  const stroke = look.stroke;
+  const width = len(look['stroke-width'], 1);
+  const dashed = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : null;
+  ink = {
+    fill: fill && fill !== 'none' && fill !== 'transparent' ? fill : null,
+    fillOpacity: opacity * len(look['fill-opacity'], 1),
+    stroke: stroke && stroke !== 'none' && stroke !== 'transparent' && width > 0 ? stroke : null,
+    strokeOpacity: opacity * len(look['stroke-opacity'], 1),
+    width,
+    dash: dashed?.length ? dashed : null,
+  };
+  inks.set(look, ink);
+  return ink;
 }
 
 const roots = new Map<number, Look>();
@@ -680,7 +719,10 @@ function parseFragment(svg: string): Op[] {
 // ---------------------------------------------------------------- sink
 
 interface Section {
-  look: Look;
+  // Read from `attrs` over the outer section's look when first drawn in: many sections stay empty.
+  look: Look | null;
+  attrs: string;
+  outer: Section | undefined;
   // Inside the frame, and the frame's move when the section was made.
   framed: boolean;
   dx: number;
@@ -689,7 +731,8 @@ interface Section {
   shapes: SceneShape[] | null;
   texts: SceneText[] | null;
   items: number[] | null;
-  // The frames of the section with no group open, kept for each switch back to it.
+  // The frames of the section with no group open, kept for each switch back to it; empty until
+  // the section is first drawn in.
   base: Frame[];
 }
 
@@ -723,14 +766,13 @@ export class SceneOut implements Out {
   // Switches to a named layer of the picture, creating it with the given inherited attributes.
   section(name: string, attrs = '', _always = false, within?: string): void {
     // Already there, with no group open: nothing to switch.
-    if (this.frames.length === 1 && this.currentName === name) return;
+    if (this.frames.length <= 1 && this.currentName === name) return;
     this.currentName = name;
     let s = this.sections.get(name);
     if (!s) {
       const outer = within === undefined ? undefined : this.sections.get(within);
       const f = this.framing;
-      s = { look: attrs ? merge(outer ? outer.look : this.rootLook, parseLook(attrs)) : outer ? outer.look : this.rootLook, framed: f !== null, dx: f ? f.x : 0, dy: f ? f.y : 0, shapes: null, texts: null, items: null, base: [] };
-      s.base.push({ item: -1, dx: s.dx, dy: s.dy, look: s.look });
+      s = { look: null, attrs, outer, framed: f !== null, dx: f ? f.x : 0, dy: f ? f.y : 0, shapes: null, texts: null, items: null, base: [] };
       this.sections.set(name, s);
     }
     this.current = s;
@@ -750,7 +792,20 @@ export class SceneOut implements Out {
   }
 
   private get top(): Frame {
-    return this.frames[this.frames.length - 1];
+    const frames = this.frames;
+    if (frames.length === 0) {
+      const s = this.current;
+      frames.push({ item: -1, dx: s.dx, dy: s.dy, look: this.lookOf(s) });
+    }
+    return frames[frames.length - 1];
+  }
+
+  private lookOf(s: Section): Look {
+    if (s.look === null) {
+      const outer = s.outer ? this.lookOf(s.outer) : this.rootLook;
+      s.look = s.attrs ? merge(outer, parseLook(s.attrs)) : outer;
+    }
+    return s.look;
   }
 
   // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
@@ -803,21 +858,16 @@ export class SceneOut implements Out {
   shape(cmds: Path, own: Look = NO_LOOK): void {
     const f = this.top;
     if (!cmds.length || f.hidden) return;
-    const look = merge(f.look, own);
+    const ink = inkOf(merge(f.look, own));
     const placed = shift(cmds, f.dx, f.dy);
     const box = cmdsBox(placed);
-    const opacity = len(look.opacity, 1);
-    const fill = look.fill;
-    if (fill && fill !== 'none' && fill !== 'transparent') {
-      (this.current.shapes ??= []).push({ kind: 'fill', paint: fill, opacity: opacity * len(look['fill-opacity'], 1), cmds: placed, box, item: f.item });
+    if (ink.fill !== null) {
+      (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds: placed, box, item: f.item });
     }
-    const stroke = look.stroke;
-    const width = len(look['stroke-width'], 1);
-    if (stroke && stroke !== 'none' && stroke !== 'transparent' && width > 0) {
-      const dash = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : null;
-      const p = width / 2;
+    if (ink.stroke !== null) {
+      const p = ink.width / 2;
       (this.current.shapes ??= []).push({
-        kind: 'stroke', paint: stroke, opacity: opacity * len(look['stroke-opacity'], 1), width, dash: dash?.length ? dash : null,
+        kind: 'stroke', paint: ink.stroke, opacity: ink.strokeOpacity, width: ink.width, dash: ink.dash === null ? null : ink.dash.slice(),
         cmds: placed, box: { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p }, item: f.item,
       });
     }
