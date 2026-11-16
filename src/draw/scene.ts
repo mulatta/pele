@@ -340,6 +340,8 @@ export function sceneRoot(size: number): Look {
   let look = roots.get(size);
   if (!look) {
     look = { fill: 'var(--_fg)', 'font-size': String(size) };
+    // Font sizes come from callers; keep the cache bounded as the other caches are.
+    if (roots.size > 50) roots.clear();
     roots.set(size, look);
   }
   return look;

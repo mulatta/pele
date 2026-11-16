@@ -1,8 +1,6 @@
 import { Paint, type Out } from '../draw/out.js';
 import { ease } from '../layout/layered.js';
-import type { Label } from '../text/label.js';
-import type { IconResolver } from '../types.js';
-import { escText, labelSvg, num } from './builder.js';
+import { num } from './builder.js';
 import { ink } from './ink.js';
 
 export const ARROW = 8;
@@ -519,22 +517,6 @@ export function drawCasing(o: Out, path: EdgePath, startType: string, endType: s
 
 // The attributes of the group that holds the casings.
 export const CASINGS_ATTRS = ` class="pele-casings" fill="none" stroke="var(--_bg)" stroke-width="${1 + CASE}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"`;
-
-export function casingsSvg(casings: string): string {
-  return casings ? `<g${CASINGS_ATTRS}>${casings}</g>` : '';
-}
-
-// An edge label on a patch of the background, so the line does not run through the text.
-export function edgeLabelSvg(id: string, label: Label, x: number, y: number, attrs: string, icons?: IconResolver): string {
-  const w = label.width + 8;
-  const h = label.height;
-  return (
-    `<g class="pele-edge-label" data-id="${escText(id)}">` +
-    `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>` +
-    labelSvg(label, x, y, attrs, icons) +
-    '</g>'
-  );
-}
 
 // A self-loop beside a node of drawn size w by h: out of the side that lies across the flow and
 // back in. `k` counts the loops already on the node, so each one reaches a little further.
