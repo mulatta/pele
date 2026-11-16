@@ -160,12 +160,13 @@ function draw(out: Out, model: TreeViewModel, config: Config, options: RenderOpt
       const name = row.icon.startsWith(BUILTIN_PACK + ':') ? row.icon.slice(BUILTIN_PACK.length + 1) : '';
       const glyph = GLYPHS.get(name) ?? GLYPHS.get(directory ? 'folder' : 'file')!;
       const drawn = options.icons?.(row.icon) ?? `<path d="${glyph}" stroke="var(--_m)" stroke-width="1.5"/>`;
-      out.fragment(
+      out.opaque(
         `<svg class="pele-icon" data-icon="${escText(row.icon)}" x="${num(inset + row.x)}" y="${num(
           cy - iconSize / 2
         )}" width="${num(iconSize)}" height="${num(
           iconSize
-        )}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${drawn}</svg>`
+        )}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${drawn}</svg>`,
+        'icon'
       );
     }
     if (row.label) {
