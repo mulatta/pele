@@ -73,12 +73,20 @@ function hardWrap(text: string, columns: number): string[] {
   return out;
 }
 
-function lines(rows: string[], x: number, y: number, step: number, attrs: string): string {
-  let body = '';
-  for (let i = 0; i < rows.length; i++) {
-    if (rows[i] !== '') body += `<tspan x="${num(x)}" y="${num(y + i * step)}">${esc(rows[i])}</tspan>`;
-  }
-  return body === '' ? '' : `<text${attrs} xml:space="preserve">${body}</text>`;
+// Each row is a tspan with its own position, which only the SVG writes; a scene gets one text per row.
+function drawLines(out: Out, rows: string[], x: number, y: number, step: number, attrs: string): void {
+  out.both(
+    () => {
+      let body = '';
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i] !== '') body += `<tspan x="${num(x)}" y="${num(y + i * step)}">${esc(rows[i])}</tspan>`;
+      }
+      return body === '' ? '' : `<text${attrs} xml:space="preserve">${body}</text>`;
+    },
+    () => {
+      for (let i = 0; i < rows.length; i++) if (rows[i] !== '') out.text(x, y + i * step, rows[i], attrs, ' xml:space="preserve"');
+    }
+  );
 }
 
 export function renderEventModel(model: EventModelingModel, _config: Config, options: RenderOptions, out: Out): Rendered {
@@ -172,15 +180,13 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
     }
     const nameY = item.y + BOX_PAD_Y + item.name.height / 2;
     out.label(item.name, item.x + item.w / 2, nameY, ` class="pele-label" font-size="${nameSize}" font-weight="var(--_hw)"`);
-    // Rows are tspans placed one by one, which no typed call writes.
-    out.fragment(
-      lines(
-        item.data,
-        item.x + BOX_PAD_X,
-        item.y + BOX_PAD_Y + item.name.height + 6 + monoStep / 2 + mono * 0.35,
-        monoStep,
-        ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`
-      )
+    drawLines(
+      out,
+      item.data,
+      item.x + BOX_PAD_X,
+      item.y + BOX_PAD_Y + item.name.height + 6 + monoStep / 2 + mono * 0.35,
+      monoStep,
+      ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`
     );
     out.end();
   }
@@ -239,7 +245,7 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
     out.group({ cls: `pele-em-${kind}`, id: frame, source: written });
     out.rect(left, cy, w, h, OUTLINE);
     out.label(head, left + BOX_PAD_X + head.width / 2, cy + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`);
-    out.fragment(lines(rows, left + BOX_PAD_X, cy + BOX_PAD_Y + head.height + smallStep / 2 + small * 0.35, smallStep, ` font-size="${small}"`));
+    drawLines(out, rows, left + BOX_PAD_X, cy + BOX_PAD_Y + head.height + smallStep / 2 + small * 0.35, smallStep, ` font-size="${small}"`);
     out.end();
     bottom = cy + h;
     cardsRight = Math.max(cardsRight, w);
@@ -332,7 +338,7 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
     if (series !== undefined) out.rect(pad, cy, w, h, tint(seriesColor(series)));
     out.label(name, pad + BOX_PAD_X + name.width / 2, cy + BOX_PAD_Y + name.height / 2, ` class="pele-label" font-size="${small}" font-weight="var(--_hw)"`);
     out.text(pad + w - BOX_PAD_X, cy + BOX_PAD_Y + small, box.id, ' class="pele-em-frame"', ` text-anchor="end" font-size="${mono}" fill="var(--_m)"`);
-    if (data) out.fragment(lines(data.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, cy + BOX_PAD_Y + name.height + 6 + data.lineHeight / 2 + mono * 0.35, data.lineHeight, ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`));
+    if (data) drawLines(out, data.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, cy + BOX_PAD_Y + name.height + 6 + data.lineHeight / 2 + mono * 0.35, data.lineHeight, ` class="pele-em-data" font-family="${FONT_MONO}" font-size="${mono}"`);
     out.end();
     out.end();
     placed.set(box, { y: cy, h, w, index, lane: lane.width });
@@ -376,7 +382,7 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
     out.group({ cls: `pele-em-${kind}`, id: frame, source: written });
     out.rect(pad, y, w, h, OUTLINE);
     out.label(head, pad + BOX_PAD_X + head.width / 2, y + BOX_PAD_Y + head.height / 2, ` font-size="${small}" font-weight="var(--_hw)"`);
-    out.fragment(lines(body.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, y + BOX_PAD_Y + head.height + body.lineHeight / 2 + small * 0.35, body.lineHeight, ` font-size="${small}"`));
+    drawLines(out, body.lines.map(line => line.map(span => span.text).join('')), pad + BOX_PAD_X, y + BOX_PAD_Y + head.height + body.lineHeight / 2 + small * 0.35, body.lineHeight, ` font-size="${small}"`);
     out.end();
     bottom = y + h;
     y = bottom + CARD_GAP;
