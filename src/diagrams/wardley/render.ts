@@ -1,7 +1,7 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
 import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
-import { marker, markerTrim } from '../../svg/edges.js';
+import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -202,7 +202,7 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
   };
 
   const head = (x: number, y: number, ux: number, uy: number, color: string): void =>
-    out.at(x, y, (px, py) => marker('arrow_point', px, py, ux, uy, color));
+    drawMarker(out, 'arrow_point', x, y, ux, uy, color);
 
   for (const link of model.links) {
     const from = positions.get(link.source);

@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode, type Dir } from '../../layout/compound.js';
 import type { Config } from '../../preprocess.js';
 import { esc, num } from '../../svg/builder.js';
-import { CASINGS_ATTRS, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, drawMarker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { endSide } from '../../svg/shapes.js';
 import { titleAbove } from '../../svg/title.js';
@@ -654,7 +654,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       // A wider page-colored stroke under the transition; its marker drops its class so marker styles skip it.
       out.into('casings', '', () => {
         out.path(path.d, '', path.tokens);
-        out.fragment(marker(endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)').replace(/ class="pele-marker"/g, ''));
+        drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)', false);
       });
     }
     out.section('edges');
@@ -665,7 +665,7 @@ function draw(out: Out, db: StateDb, config: Config, options: RenderOptions, tur
       source: edge.written,
     });
     out.path(path.d, '', path.tokens);
-    out.fragment(marker(endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)'));
+    drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, over || 'var(--_l)');
     out.end();
     if (label.width > 0) {
       const x = ce.labelX + pad;

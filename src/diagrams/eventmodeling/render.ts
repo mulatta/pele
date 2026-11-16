@@ -1,7 +1,7 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out, type Pen } from '../../draw/out.js';
 import { esc, num } from '../../svg/builder.js';
-import { marker, markerTrim } from '../../svg/edges.js';
+import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { FONT_MONO, ROUNDED, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { breakLabel, literalLabel } from '../common/literal-label.js';
@@ -203,7 +203,7 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
       const ty = t.y + t.h / 2;
       const dir = tx >= sx ? 1 : -1;
       d = out.pen().M(sx, sy).L(tx - dir * trim, ty);
-      head = () => out.at(tx, ty, (x, y) => marker('arrow_point', x, y, dir, 0, 'var(--_l)'));
+      head = () => drawMarker(out, 'arrow_point', tx, ty, dir, 0, 'var(--_l)');
     } else {
       // Between lanes, straight down or up where the boxes overlap, else in an S.
       const down = t.y > s.y;
@@ -218,7 +218,7 @@ function draw(out: Out, model: EventModelingModel, _config: Config, options: Ren
       const end = ty - dir * trim;
       const mid = (sy + end) / 2;
       d = sx === tx ? out.pen().M(sx, sy).V(end) : out.pen().M(sx, sy).C(sx, mid, tx, mid, tx, end);
-      head = () => out.at(tx, ty, (x, y) => marker('arrow_point', x, y, 0, dir, 'var(--_l)'));
+      head = () => drawMarker(out, 'arrow_point', tx, ty, 0, dir, 'var(--_l)');
     }
     out.group({ cls: 'pele-edge', id: `${relation.source.id}-${relation.target.id}`, source: relation.written });
     out.path(d, EDGE_LINE);
@@ -354,13 +354,13 @@ function verticalEventModel(out: Out, model: EventModelingModel, options: Render
       // The lower card's lane heading sits in the gap, and wraps to leave the arrow room beside it.
       const cx = pad + Math.max(Math.min(s.w, t.w) / 2, BOX_PAD_X + (down ? t : s).lane + 16);
       d = out.pen().M(cx, sy).V(ty - dir * markerTrim('arrow_point'));
-      head = () => out.at(cx, ty, (x, y) => marker('arrow_point', x, y, 0, dir, 'var(--_l)'));
+      head = () => drawMarker(out, 'arrow_point', cx, ty, 0, dir, 'var(--_l)');
     } else {
       const rail = pad + width - gutter + 12 + RAIL_GAP * (railOf.get(relation.target) ?? 0);
       // A card can send one relation and receive another: they leave above and arrive below its middle.
       const from = s.y + s.h / 2 - 5, to = t.y + t.h / 2 + 5;
       d = out.pen().M(pad + s.w, from).H(rail).V(to).H(pad + t.w + markerTrim('arrow_point'));
-      head = () => out.at(pad + t.w, to, (x, y) => marker('arrow_point', x, y, -1, 0, 'var(--_l)'));
+      head = () => drawMarker(out, 'arrow_point', pad + t.w, to, -1, 0, 'var(--_l)');
     }
     out.group({ cls: 'pele-edge', id: `${relation.source.id}-${relation.target.id}`, source: relation.written });
     out.path(d, EDGE_LINE);

@@ -3,7 +3,7 @@ import type { Out } from '../../draw/out.js';
 import type { Config } from '../../preprocess.js';
 import { esc, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, edgeCasing, loopPath, marker, markerTrim, overFills, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, drawMarker, edgeCasing, loopPath, markerTrim, overFills, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { PAD_X, PAD_Y, drawShape, insetRoute, shapeFilled, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, seriesColor, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -362,7 +362,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
     out.section('edges');
     out.group({ cls: `pele-edge pele-edge-${kind}${classes}`, id: edge.id, source: edge.source, attrs: (over ? ` stroke="${over}"` : '') + (style?.line ?? '') });
     out.path(path.d, edge.thickness === 'dotted' ? ' stroke-dasharray="3 4"' : '', path.tokens);
-    out.at(path.ex, path.ey, (mx, my) => marker(endType, mx, my, path.edx, path.edy, color));
+    drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, color);
     out.end();
     if (label.width > 0) {
       const w = label.width + 8;

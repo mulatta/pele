@@ -1,7 +1,7 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
 import { num } from '../../svg/builder.js';
-import { marker, markerTrim } from '../../svg/edges.js';
+import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -282,7 +282,7 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
 
     out.group({ cls: 'pele-edge', id: `${transition.from}-${transition.to}`, source: transition.source });
     out.path(out.pen().M(sx, sy).Q(qx, qy, ex, ey), ' fill="none" stroke="var(--_l)"');
-    out.at(hx, hy, (x, y) => marker('arrow_point', x, y, ux, uy, 'var(--_l)'));
+    drawMarker(out, 'arrow_point', hx, hy, ux, uy, 'var(--_l)');
     if (transition.label) {
       const label = layoutLabel(transition.label, false, measurer, small, ITEM_MAX_WIDTH);
       const [lx, ly] = point((t0 + t1) / 2);

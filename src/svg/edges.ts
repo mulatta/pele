@@ -1,3 +1,4 @@
+import { Paint, type Out } from '../draw/out.js';
 import { ease } from '../layout/layered.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver } from '../types.js';
@@ -243,6 +244,32 @@ export function marker(type: string, x: number, y: number, dx: number, dy: numbe
     return `<circle class="pele-marker" cx="${num(m.cx)}" cy="${num(m.cy)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
   }
   return `<path class="pele-marker" d="M${num(m.x0)},${num(m.y0)}L${num(m.x1)},${num(m.y1)}M${num(m.x2)},${num(m.y2)}L${num(m.x3)},${num(m.y3)}"/>`;
+}
+
+const MARKER = { cls: 'pele-marker' };
+
+// A marker's paint, by fill and stroke, made once: a scene reads each only once.
+const markerPaints = new Map<string, Map<string, Paint>>();
+function markerPaint(color: string, stroke: string): Paint {
+  let byStroke = markerPaints.get(color);
+  if (!byStroke) {
+    if (markerPaints.size > 100) markerPaints.clear();
+    markerPaints.set(color, (byStroke = new Map()));
+  }
+  let paint = byStroke.get(stroke);
+  if (!paint) byStroke.set(stroke, (paint = new Paint(` fill="${color}" stroke="${stroke}"`)));
+  return paint;
+}
+
+// The same marker drawn through an output, so a scene gets its geometry. Without `cls` it is drawn
+// without its class, for a casing that marker styles must skip.
+export function drawMarker(o: Out, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none', cls = true): void {
+  const m = markerShape(type, x, y, dx, dy);
+  if (!m) return;
+  const item = cls ? MARKER : undefined;
+  if (m.kind === 'point') o.path(o.pen().M(m.x, m.y).L(m.ax, m.ay).L(m.bx, m.by).Z(), markerPaint(color, stroke), undefined, item);
+  else if (m.kind === 'circle') o.circle(m.cx, m.cy, 3.5, markerPaint(color, stroke), item);
+  else o.path(o.pen().M(m.x0, m.y0).L(m.x1, m.y1).M(m.x2, m.y2).L(m.x3, m.y3), '', undefined, item);
 }
 
 const TENS = Array.from({ length: 23 }, (_, i) => Number(`1e${i}`));
@@ -508,6 +535,17 @@ export function edgeCasing(path: EdgePath, startType: string, endType: string, l
     line,
     thick
   );
+}
+
+// edgeCasing drawn through an output.
+export function drawCasing(o: Out, path: EdgePath, startType: string, endType: string, line = '', thick = false): void {
+  const attrs = casingAttrs(line, thick);
+  if (attrs === undefined) return;
+  if (attrs) o.group({ attrs });
+  o.path(path.d, '', path.tokens);
+  drawMarker(o, startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)', false);
+  drawMarker(o, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)', false);
+  if (attrs) o.end();
 }
 
 // The attributes of the group that holds the casings.

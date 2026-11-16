@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { ARROW, marker } from '../../svg/edges.js';
+import { ARROW, drawMarker } from '../../svg/edges.js';
 import { seriesInkFill } from '../../svg/palette.js';
 import { rounded, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
@@ -178,7 +178,7 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
       const tip = y + TAIL + ARROW;
       out.section('axis');
       out.path(out.pen().M(axisX, top).V(tip - ARROW + 1), AXIS_LINE, undefined, { cls: 'pele-axis' });
-      out.at(axisX, tip, (x, yy) => marker('arrow_point', x, yy, 0, 1, 'var(--_l)'));
+      drawMarker(out, 'arrow_point', axisX, tip, 0, 1, 'var(--_l)');
       y = tip;
     }
     height = y + pad;
@@ -231,7 +231,7 @@ function draw(out: Out, model: TimelineModel, config: Config, options: RenderOpt
       const tip = left + bodyW;
       out.section('axis');
       out.path(out.pen().M(left, axisY).H(tip - ARROW + 1), AXIS_LINE, undefined, { cls: 'pele-axis' });
-      out.at(tip, axisY, (x, yy) => marker('arrow_point', x, yy, 1, 0, 'var(--_l)'));
+      drawMarker(out, 'arrow_point', tip, axisY, 1, 0, 'var(--_l)');
     }
     height = bottom + pad;
   }

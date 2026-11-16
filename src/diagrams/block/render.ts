@@ -2,7 +2,7 @@ import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
 import { num } from '../../svg/builder.js';
-import { ARROW, CASINGS_ATTRS, casingAttrs, marker, markerTrim, overFills, type EdgePath, type Fill } from '../../svg/edges.js';
+import { ARROW, CASINGS_ATTRS, casingAttrs, drawMarker, markerTrim, overFills, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { drawShape, shapeFilled, shapeInset, shapeSize } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -795,18 +795,9 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
     }
     const thick = edge.thickness === 'thick';
     const over = overFills(path.d, [path.sx, path.sy, path.ex, path.ey], fills, '', path.tokens);
-    // A marker is the same drawing wherever its tip is, so a scene reads it once per direction.
     const marks = (fill: string, stroke: string | undefined, plain: boolean): void => {
-      for (const [type, x, y, dx, dy] of [
-        [startType, path.sx, path.sy, path.sdx, path.sdy],
-        [endType, path.ex, path.ey, path.edx, path.edy],
-      ] as const) {
-        if (!MARKED.has(type)) continue;
-        out.at(x, y, (px, py) => {
-          const m = marker(type, px, py, dx, dy, fill, stroke);
-          return plain ? m.replace(/ class="pele-marker"/g, '') : m;
-        });
-      }
+      if (MARKED.has(startType)) drawMarker(out, startType, path.sx, path.sy, path.sdx, path.sdy, fill, stroke, !plain);
+      if (MARKED.has(endType)) drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, fill, stroke, !plain);
     };
     const caseAttrs = over === '' ? casingAttrs('', thick) : undefined;
     if (caseAttrs !== undefined) {

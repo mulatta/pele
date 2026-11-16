@@ -4,7 +4,7 @@ import type { LayeredOptions } from '../../layout/layered.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, casingAttrs, loopPath, marker, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, drawCasing, drawMarker, loopPath, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { drawShape, endSide, insetRoute, shapeFilled, shapeHasLabel, shapeSize, shapeSpan } from '../../svg/shapes.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
@@ -367,25 +367,13 @@ function drawEdges(
       if (edge.thickness === 'thick') attrs += ' stroke-width="2.5"';
       else if (edge.thickness === 'dotted') attrs += ' stroke-dasharray="3 4"';
       const classes = classNames(edge.classes.replace(/edge-thickness-normal|edge-pattern-solid|flowchart-link/g, ''));
-      const caseAttrs = over === '' ? casingAttrs(style?.line, edge.thickness === 'thick') : undefined;
-      if (caseAttrs !== undefined) {
-        // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
-        out.into('casings', '', () => {
-          if (caseAttrs) out.group({ attrs: caseAttrs });
-          out.path(path.d, '', path.tokens);
-          out.fragment(
-            (
-              marker(startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)') +
-              marker(endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)')
-            ).replace(/ class="pele-marker"/g, '')
-          );
-          if (caseAttrs) out.end();
-        });
-      }
+      // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
+      if (over === '') out.into('casings', '', () => drawCasing(out, path, startType, endType, style?.line, edge.thickness === 'thick'));
       out.section('edges');
       out.group({ cls: `pele-edge${classes}`, id: edge.id, source: edge.source, attrs: `${over ? ` stroke="${over}"` : ''}${style?.line ?? ''}` });
       out.path(path.d, attrs, path.tokens);
-      out.fragment(marker(startType, path.sx, path.sy, path.sdx, path.sdy, color) + marker(endType, path.ex, path.ey, path.edx, path.edy, color));
+      drawMarker(out, startType, path.sx, path.sy, path.sdx, path.sdy, color);
+      drawMarker(out, endType, path.ex, path.ey, path.edx, path.edy, color);
       out.end();
     }
     if (label.width > 0) {

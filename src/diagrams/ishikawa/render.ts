@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out } from '../../draw/out.js';
-import { ARROW, marker } from '../../svg/edges.js';
+import { ARROW, drawMarker } from '../../svg/edges.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { breakLabel } from '../common/literal-label.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -185,7 +185,7 @@ function draw(out: Out, model: IshikawaModel, _config: Config, options: RenderOp
     out.frame(0, 0);
     out.section('body');
     out.path(out.pen().M(tail, 0).H(-(ARROW - 1)), BONES, undefined, { cls: 'pele-ishikawa-spine' });
-    out.at(0, 0, (x, y) => marker('arrow_point', x, y, 1, 0, 'var(--_l)'));
+    drawMarker(out, 'arrow_point', 0, 0, 1, 0, 'var(--_l)');
     categories.forEach((category, i) => {
       const sign = i % 2 === 0 ? -1 : 1;
       const ax = xs[i];
@@ -215,7 +215,7 @@ function draw(out: Out, model: IshikawaModel, _config: Config, options: RenderOp
       maxY = Math.max(maxY, boxY + category.boxH / 2);
       out.group({ cls: 'pele-ishikawa-category', id: category.node.text, source: category.node.source });
       out.path(d, BONES, undefined, { cls: 'pele-ishikawa-bones' });
-      out.at(ax, 0, (x, y) => marker('arrow_point', x, y, SLANT / LENGTH, -sign / LENGTH, 'var(--_l)'));
+      drawMarker(out, 'arrow_point', ax, 0, SLANT / LENGTH, -sign / LENGTH, 'var(--_l)');
       out.rect(endX - category.boxW / 2, boxY - category.boxH / 2, category.boxW, category.boxH, CATEGORY_BOX);
       out.label(category.label, endX, boxY, ' class="pele-label"');
       if (texts.length > 0) {
