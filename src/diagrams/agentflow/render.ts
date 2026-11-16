@@ -336,8 +336,7 @@ function draw(out: Out, db: AgentflowDb, config: Config, options: RenderOptions,
       out.path(out.pen().M(-w / 2 + 10, line).H(w / 2 - 10), ` fill="none" stroke="${color}" stroke-dasharray="3 3"${view.style.line}`);
       out.path(`${dot(-9, dots)}${dot(0, dots)}${dot(9, dots)}`, ` fill="${color}" stroke="none"`, undefined, { cls: 'pele-collapsed-mark' });
     } else {
-      // The outline comes from a shared helper that only returns markup.
-      out.fragment(drawShape(view.shape, w, h, tint(slot, '0.14', view.style) + view.style.shape, ` stroke="${seriesColor(slot)}"` + view.style.line));
+      drawShape(out, view.shape, w, h, tint(slot, '0.14', view.style) + view.style.shape, ` stroke="${seriesColor(slot)}"` + view.style.line);
     }
     if (checked) out.link(` class="internal-link"${internalLink(name!, options) ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}"`);
     out.label(view.label, 0, view.dy, ` class="pele-label"${ink}${view.style.text}`, icons);

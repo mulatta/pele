@@ -285,8 +285,7 @@ function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight
         y: node.y + h / 2,
       });
       const linked = openLink(out, shape.link, shape.alias, links, options);
-      // The outline comes from a shared helper that only returns markup.
-      out.fragment(drawShape(form, w, h, ` fill="var(${external ? '--_bg' : '--_s'})"${stroke}${style.shape}`, stroke + style.line));
+      drawShape(out, form, w, h, ` fill="var(${external ? '--_bg' : '--_s'})"${stroke}${style.shape}`, stroke + style.line);
       out.label(labels[0], dx, y + labels[0].height / 2, ` class="pele-c4-type" font-size="${small - 1}"${muted}`);
       y += labels[0].height;
       out.label(labels[1], dx, y + labels[1].height / 2, ` class="pele-label" font-weight="var(--_hw)"${color}`);

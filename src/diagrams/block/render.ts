@@ -774,7 +774,7 @@ function draw(out: Out, model: BlockModel, config: Config, options: RenderOption
       out.rect(-v.bw / 2, -v.bh / 2, v.bw, v.bh, paint(rounded(attrs)));
       out.path(out.pen().M(-x, -v.bh / 2).V(v.bh / 2).M(x, -v.bh / 2).V(v.bh / 2), paint(` fill="none"${LINE_ATTRS + v.style.line}`));
     } else if (v.shape === 'diam') out.polygon([0, -v.bh / 2, v.bw / 2, 0, 0, v.bh / 2, -v.bw / 2, 0], paint(attrs));
-    else out.fragment(drawShape(v.shape, v.bw, v.bh, attrs, LINE_ATTRS + v.style.line));
+    else drawShape(out, v.shape, v.bw, v.bh, attrs, LINE_ATTRS + v.style.line);
     out.label(label, v.dx, v.dy, paint(` class="pele-label"${arrow || shapeFilled(v.shape) ? inkFill(v.style) : ''}${v.style.text}`), icons);
     out.end();
   }

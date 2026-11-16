@@ -18,6 +18,7 @@ import type { FlowDb } from './db.js';
 import { buildFlowGraph, type FlowGraph, type GraphEdge, type GraphNode } from './graph.js';
 import { canonicalShape } from './shapes.js';
 import type { Out } from '../../draw/out.js';
+import { iconSvg } from '../common/icon.js';
 
 const NODE_SEP = 40;
 const EDGE_SEP = 16;
@@ -272,43 +273,31 @@ function drawNodes(
     const href = node.link ? linkUrl(node.link, options) : undefined;
     if (href !== undefined) out.link(` href="${esc(href)}"${node.linkTarget ? ` target="${esc(node.linkTarget)}"` : ''}${relAttr(options)}`);
     if (node.tooltip) out.tooltip(node.tooltip);
-    let inner: string;
     let ink = '';
     if (node.img) {
       const aw = assetSize(node.assetWidth, 80);
       const ah = assetSize(node.assetHeight, 80);
       const top = view.label.height > 0 ? (node.pos === 't' ? h / 2 - ah : -h / 2) : -ah / 2;
       const src = imageUrl(safeUrl(node.img), options);
-      inner =
-        src === undefined
-          ? ''
-          : `<image href="${esc(src)}" x="${num(-aw / 2)}" y="${num(top)}" width="${num(aw)}" height="${num(ah)}" preserveAspectRatio="${
-              node.constraint === 'on' ? 'xMidYMid meet' : 'none'
-            }"/>`;
+      if (src !== undefined) {
+        out.opaque(
+          `<image href="${esc(src)}" x="${num(-aw / 2)}" y="${num(top)}" width="${num(aw)}" height="${num(ah)}" preserveAspectRatio="${
+            node.constraint === 'on' ? 'xMidYMid meet' : 'none'
+          }"/>`,
+          'image'
+        );
+      }
     } else if (node.icon) {
       const box = assetSize(node.assetHeight, 48);
       const top = view.label.height > 0 ? (node.pos === 't' ? h / 2 - box : -h / 2) : -box / 2;
-      const frame =
-        node.shape === 'icon'
-          ? ''
-          : node.shape === 'iconCircle'
-            ? `<circle cy="${num(top + box / 2)}" r="${num(box / 2)}"${SHAPE_ATTRS}${view.style.shape}/>`
-            : `<rect x="${num(-box / 2)}" y="${num(top)}" width="${num(box)}" height="${num(box)}" rx="${
-                node.shape === 'iconRounded' ? 8 : 0
-              }"${SHAPE_ATTRS}${view.style.shape}/>`;
+      if (node.shape === 'iconCircle') out.circle(null, top + box / 2, box / 2, SHAPE_ATTRS + view.style.shape);
+      else if (node.shape !== 'icon') out.rect(-box / 2, top, box, box, ` rx="${node.shape === 'iconRounded' ? 8 : 0}"${SHAPE_ATTRS}${view.style.shape}`);
       const glyph = box * 0.6;
-      inner =
-        frame +
-        `<svg class="pele-icon" data-icon="${escText(node.icon)}" x="${num(-glyph / 2)}" y="${num(
-          top + (box - glyph) / 2
-        )}" width="${num(glyph)}" height="${num(glyph)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-          icons?.(node.icon) ?? ''
-        }</svg>`;
+      out.opaque(iconSvg(node.icon, -glyph / 2, top + (box - glyph) / 2, glyph, icons), 'icon');
     } else {
-      inner = drawShape(view.shape, w, h, SHAPE_ATTRS + view.style.shape, LINE_ATTRS + view.style.line);
+      drawShape(out, view.shape, w, h, SHAPE_ATTRS + view.style.shape, LINE_ATTRS + view.style.line);
       if (shapeFilled(view.shape)) ink = inkFill(view.style);
     }
-    out.fragment(inner);
     const textAttrs = ` class="pele-label"${ink}${view.style.text}`;
     const internal = / internal-link(?: |$)/.test(classes + ' ');
     if (internal && node.label && options.links !== false) {
