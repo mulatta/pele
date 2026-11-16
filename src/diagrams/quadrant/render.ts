@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import type { Out } from '../../draw/out.js';
-import { labelSvg, num } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { ROUNDED, classNames, resolveStyle, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -127,14 +127,9 @@ export function renderQuadrant(model: QuadrantModel, config: Config, options: Re
     const turned = (text: Label, y: number): void => {
       if (text.height === 0) return;
       const turn = ` transform="translate(${num(x)},${num(y)}) rotate(-90)"${sizeAttr(yAxisSize, xAxisSize)}`;
-      // A scene hides what a rotation holds, so it is not drawn.
-      out.both(
-        () => `<g${turn}>${labelSvg(text, 0, 0, '')}</g>`,
-        () => {
-          out.group({ attrs: turn });
-          out.end();
-        }
-      );
+      out.group({ attrs: turn });
+      out.label(text, 0, 0, '');
+      out.end();
     };
     turned(yBottom, yTop.height > 0 ? top + (h * 3) / 4 : top + h - yBottom.width / 2);
     turned(yTop, top + h / 4);

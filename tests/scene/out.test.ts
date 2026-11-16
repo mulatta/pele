@@ -49,20 +49,37 @@ describe('drawing outputs', () => {
     expect(scene.texts.map((t) => t.spans.map((s) => s.text).join(''))).toEqual(['on edge', 'Two words']);
   });
 
-  it('leave out a group the scene cannot turn, and empty layers', () => {
+  it('turn what a turned group holds, and leave out empty layers and unknown transforms', () => {
     const { svg, scene } = both((out) => {
       out.section('labels', ' class="pele-labels"');
       out.section('main');
-      out.group({ cls: 'pele-axis', id: 'y', attrs: ' transform="rotate(-90)"' });
+      out.group({ cls: 'pele-axis', id: 'y', attrs: ' transform="translate(20,40) rotate(-90)"' });
       out.fragment('<text x="0" y="0">turned</text>');
+      out.rect(0, 0, 10, 4, ' fill="var(--_s)" stroke="var(--_b)" stroke-width="2"');
+      out.group({ attrs: ' transform="scale(2)"' });
+      out.circle(5, 0, 1, ' fill="var(--_c)"');
+      out.end();
       out.end();
       out.group({ cls: 'pele-axis', id: 'x', attrs: ' transform="translate(5,6)"' });
       out.fragment('<text x="0" y="0">moved</text>');
       out.end();
+      out.group({ cls: 'pele-axis', id: 'z', attrs: ' transform="perspective(2)"' });
+      out.fragment('<text x="0" y="0">unread</text>');
+      out.end();
     });
     expect(svg).not.toContain('pele-labels');
     expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
-    expect(scene.items.map((i) => i.id)).toEqual(['x']);
+    expect(scene.items.map((i) => i.id)).toEqual(['y', 'x']);
+    expect(scene.texts.map((t) => [t.spans[0].text, t.x, t.y, t.angle])).toEqual([
+      ['turned', 20, 40, -90],
+      ['moved', 5, 6, undefined],
+    ]);
+    // The rect runs up from (20, 40); the scaled circle sits 10 above it, at twice the size.
+    const [fill, stroke, dot] = scene.shapes;
+    expect(fill.box).toMatchObject({ x0: 20, y0: 30, x1: 24, y1: 40 });
+    expect(stroke.width).toBe(2);
+    expect(dot.box.x0).toBeCloseTo(20, 9);
+    expect(dot.box.y1).toBeCloseTo(32, 9);
     expect(scene.skipped).toEqual({ transform: 1 });
   });
 

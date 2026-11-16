@@ -163,11 +163,12 @@ function draw(out: Out, model: WardleyModel, config: Config, options: RenderOpti
   centered(xTitle, plotW / 2, stageBottom + 6 + xTitle.height / 2, axisAttrs);
   // The rotation is an attribute of the text itself, which no typed call writes.
   const turn = ` transform="rotate(-90 -16 ${num(plotH / 2)})"`;
-  // A scene hides what a rotation holds, so it draws only the group.
+  // The scene turns a group around the same label.
   out.both(
     () => labelSvg(yTitle, -16, plotH / 2, axisAttrs + turn),
     () => {
       out.group({ attrs: turn });
+      out.label(yTitle, -16, plotH / 2, axisAttrs);
       out.end();
     }
   );

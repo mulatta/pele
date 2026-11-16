@@ -84,6 +84,8 @@ export interface SceneText {
   paint: string;
   spans: SceneSpan[];
   item: number;
+  // Degrees the line is turned about (x, y), clockwise as the y axis runs down; absent when level.
+  angle?: number;
 }
 
 // A part of the diagram a host can point at: a node, an edge, a label. `kind` is the part's
@@ -391,6 +393,20 @@ function arcNumbers(s: string): number[] {
   return out;
 }
 
+// Path tokens as routePath keeps them (command code, argument count, arguments; absolute M, L, C,
+// Q) -> commands.
+function tokenCmds(tokens: number[]): Path {
+  const out: Path = [];
+  for (let i = 0; i < tokens.length; ) {
+    const code = tokens[i];
+    const n = tokens[i + 1];
+    out.push(code === 77 ? M : code === 76 ? L : code === 67 ? C : Q);
+    for (let k = 0; k < n; k++) out.push(tokens[i + 2 + k]);
+    i += 2 + n;
+  }
+  return out;
+}
+
 // Path data -> absolute commands.
 function parsePathData(d: string): Path {
   const out: Path = [];
@@ -530,14 +546,91 @@ function cmdsBox(cmds: Path): Box {
 // What a fragment draws, in the fragment's own coordinates, to be replayed into the group it is
 // drawn in: a group opens (an item when it has an id) and closes, a shape, a run of text.
 type Op =
-  | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look; source: SourceInfo | undefined }
+  | { op: 'begin'; id: string | undefined; kind: string; dx: number; dy: number; look: Look; source: SourceInfo | undefined; turn?: Matrix }
   | { op: 'end' }
   | { op: 'shape'; cmds: Path; look: Look; scale?: number }
   | { op: 'text'; x: number; y: number; anchor: string | undefined; spans: SceneSpan[]; look: Look }
   | { op: 'skip'; what: string };
 
 const RE_TAG = /<\/([\w:-]+)\s*>|<([\w:-]+)((?:\s+[\w:-]+\s*=\s*"[^"]*")*)\s*(\/?)>|([^<]+)/g;
-const RE_TRANSLATE = /^\s*translate\(\s*([-\d.e+]+)(?:[\s,]+([-\d.e+]+))?\s*\)\s*$/;
+
+// An affine map [a, b, c, d, e, f]: x' = a x + c y + e, y' = b x + d y + f.
+type Matrix = [number, number, number, number, number, number];
+
+// m after n: what n moves, m moves again.
+const times = (m: Matrix, n: Matrix): Matrix => [
+  m[0] * n[0] + m[2] * n[1],
+  m[1] * n[0] + m[3] * n[1],
+  m[0] * n[2] + m[2] * n[3],
+  m[1] * n[2] + m[3] * n[3],
+  m[0] * n[4] + m[2] * n[5] + m[4],
+  m[1] * n[4] + m[3] * n[5] + m[5],
+];
+
+const RE_FN = /([a-zA-Z]+)\s*\(([^)]*)\)/g;
+const transforms = new Map<string, Matrix | null>();
+
+// A transform attribute as one map, or null for one the scene does not read.
+function transformOf(text: string): Matrix | null {
+  let m = transforms.get(text);
+  if (m !== undefined) return m;
+  m = [1, 0, 0, 1, 0, 0];
+  let read = 0;
+  for (const [all, fn, args] of text.matchAll(RE_FN)) {
+    read += all.length;
+    const v = numbers(args);
+    let t: Matrix | null = null;
+    if (fn === 'translate' && v.length >= 1) t = [1, 0, 0, 1, v[0], v[1] ?? 0];
+    else if (fn === 'scale' && v.length >= 1) t = [v[0], 0, 0, v[1] ?? v[0], 0, 0];
+    else if (fn === 'matrix' && v.length === 6) t = v as Matrix;
+    else if (fn === 'rotate' && v.length >= 1) {
+      const r = (v[0] * Math.PI) / 180;
+      const cos = Math.cos(r);
+      const sin = Math.sin(r);
+      const cx = v[1] ?? 0;
+      const cy = v[2] ?? 0;
+      t = [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy];
+    } else if (fn === 'skewX' && v.length === 1) t = [1, 0, Math.tan((v[0] * Math.PI) / 180), 1, 0, 0];
+    else if (fn === 'skewY' && v.length === 1) t = [1, Math.tan((v[0] * Math.PI) / 180), 0, 1, 0, 0];
+    if (!t) {
+      m = null;
+      break;
+    }
+    m = times(m, t);
+  }
+  // Anything left but separators is not a transform the scene reads.
+  if (m && text.replace(RE_FN, '').replace(/[\s,]/g, '') !== '') m = null;
+  if (transforms.size > 500) transforms.clear();
+  transforms.set(text, m);
+  return m;
+}
+
+// A copy of the path mapped by m: points moved, arcs turned and scaled with them.
+function mapped(cmds: Path, m: Matrix): Path {
+  const o = cmds.slice();
+  const sx = Math.hypot(m[0], m[1]);
+  const sy = Math.hypot(m[2], m[3]);
+  const turn = (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+  const flip = m[0] * m[3] - m[1] * m[2] < 0;
+  for (let i = 0; i < o.length; ) {
+    const op = o[i];
+    const end = i + 1 + ARGC[op];
+    if (op === A) {
+      o[i + 1] *= sx;
+      o[i + 2] *= sy;
+      o[i + 3] += turn;
+      if (flip) o[i + 5] = 1 - o[i + 5];
+    }
+    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
+      const x = o[k];
+      const y = o[k + 1];
+      o[k] = m[0] * x + m[2] * y + m[4];
+      o[k + 1] = m[1] * x + m[3] * y + m[5];
+    }
+    i = end;
+  }
+  return o;
+}
 const fragmentCache = new Map<string, Op[]>();
 
 // An element's own presentation attributes; declarations in style win, as in CSS.
@@ -656,21 +749,23 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
     const a = el.a;
     let dx = 0;
     let dy = 0;
+    let turn: Matrix | undefined;
     if (a.transform !== undefined) {
-      const t = RE_TRANSLATE.exec(a.transform);
+      const t = transformOf(a.transform);
       if (!t) {
         ops.push({ op: 'skip', what: 'transform' });
         continue;
       }
-      dx = Number(t[1]);
-      dy = Number(t[2] ?? 0);
+      dx = t[4];
+      dy = t[5];
+      if (t[0] !== 1 || t[1] !== 0 || t[2] !== 0 || t[3] !== 1) turn = t;
     }
     const look = lookOf(a);
     const id = a['data-id'] === undefined ? undefined : unescape(a['data-id']);
     const group = el.tag === 'g' || el.tag === 'a';
     // A group, or an element that is an item or moved: what is in it is drawn in its frame.
-    const framed = group || id !== undefined || dx !== 0 || dy !== 0;
-    if (framed) ops.push({ op: 'begin', id, kind: a.class ?? el.tag, dx, dy, look: group ? look : {}, source: id === undefined ? undefined : sourceOf(a) });
+    const framed = group || id !== undefined || dx !== 0 || dy !== 0 || turn !== undefined;
+    if (framed) ops.push({ op: 'begin', id, kind: a.class ?? el.tag, dx, dy, look: group ? look : {}, source: id === undefined ? undefined : sourceOf(a), turn });
     let cmds: Path | null = null;
     let own = look;
     switch (el.tag) {
@@ -802,8 +897,11 @@ interface Section {
 
 interface Frame {
   item: number;
+  // Where the frame's origin is in the scene, and, when it is turned or scaled, how its axes lie
+  // there (a map whose own move is (dx, dy)).
   dx: number;
   dy: number;
+  m?: Matrix;
   look: Look;
   // Inside a group the scene cannot show (one turned or scaled): nothing in it is drawn.
   hidden?: boolean;
@@ -893,7 +991,7 @@ export class SceneOut implements Out {
 
   // Opens a group: an item when `id` is given, moved by (dx, dy), with inherited attributes, and
   // where it comes from in the text, read as `data-` attributes would be (see sourceAttrs).
-  private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo): void {
+  private open(id: string | undefined, kind: string, dx: number, dy: number, own: Look | null, source?: SourceInfo, turn?: Matrix): void {
     const f = this.top;
     if (f.hidden) {
       this.frames.push(f);
@@ -914,7 +1012,16 @@ export class SceneOut implements Out {
       item = this.items.length - 1;
       (this.current.items ??= []).push(item);
     }
-    this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look: own ? merge(f.look, own) : f.look });
+    const look = own ? merge(f.look, own) : f.look;
+    const m = f.m;
+    if (m === undefined && turn === undefined) {
+      this.frames.push({ item, dx: f.dx + dx, dy: f.dy + dy, look });
+      return;
+    }
+    // The frame is moved by (dx, dy), then turned, in the outer frame's axes.
+    const c = times(times(m ?? [1, 0, 0, 1, f.dx, f.dy], [1, 0, 0, 1, dx, dy]), turn ?? [1, 0, 0, 1, 0, 0]);
+    const linear = c[0] !== 1 || c[1] !== 0 || c[2] !== 0 || c[3] !== 1;
+    this.frames.push({ item, dx: c[4], dy: c[5], m: linear ? c : undefined, look });
   }
 
   end(): void {
@@ -946,14 +1053,15 @@ export class SceneOut implements Out {
     const f = this.top;
     if (!cmds.length || f.hidden) return;
     const ink = inkOf(merge(f.look, own));
-    if (!placed) cmds = shift(cmds, f.dx, f.dy);
+    // Geometry is placed by the caller only in a frame that is not turned.
+    if (!placed) cmds = f.m ? mapped(cmds, f.m) : shift(cmds, f.dx, f.dy);
     this.grow(cmds.length * 8);
     const box = known ?? cmdsBox(cmds);
     if (ink.fill !== null) {
       (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item });
     }
     if (ink.stroke !== null) {
-      const width = ink.width * scale;
+      const width = ink.width * scale * (f.m ? Math.sqrt(Math.abs(f.m[0] * f.m[3] - f.m[1] * f.m[2])) : 1);
       const p = width / 2;
       (this.current.shapes ??= []).push({
         kind: 'stroke', paint: ink.stroke, opacity: ink.strokeOpacity, width, dash: ink.dash === null ? null : ink.dash.map((d) => d * scale),
@@ -973,8 +1081,9 @@ export class SceneOut implements Out {
 
   rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs = '', item?: Item): void {
     const look = lookAt(attrs);
-    if (w > 0 && h > 0) {
-      const f = this.top;
+    const f = this.top;
+    if (w > 0 && h > 0 && f.m) this.part(roundRect(x ?? 0, y ?? 0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect');
+    else if (w > 0 && h > 0) {
       const x0 = (x ?? 0) + f.dx;
       const y0 = (y ?? 0) + f.dy;
       this.part(roundRect(x0, y0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect', true, { x0, y0, x1: x0 + w, y1: y0 + h });
@@ -983,7 +1092,8 @@ export class SceneOut implements Out {
 
   circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
     const f = this.top;
-    this.part(r > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, r, r) : [], lookAt(attrs), item, 'circle', true);
+    if (f.m) this.part(r > 0 ? ellipse(cx ?? 0, cy ?? 0, r, r) : [], lookAt(attrs), item, 'circle');
+    else this.part(r > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, r, r) : [], lookAt(attrs), item, 'circle', true);
   }
 
   spans(x: number, y: number, runs: Run[], attrs: Attrs, after = ''): void {
@@ -1009,13 +1119,15 @@ export class SceneOut implements Out {
 
   ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
     const f = this.top;
-    this.part(rx > 0 && ry > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, rx, ry) : [], lookAt(attrs), item, 'ellipse', true);
+    if (f.m) this.part(rx > 0 && ry > 0 ? ellipse(cx ?? 0, cy ?? 0, rx, ry) : [], lookAt(attrs), item, 'ellipse');
+    else this.part(rx > 0 && ry > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, rx, ry) : [], lookAt(attrs), item, 'ellipse', true);
   }
 
   line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
     // A line has no inside, whatever fill it inherits.
     const f = this.top;
-    this.part([M, x1 + f.dx, y1 + f.dy, L, x2 + f.dx, y2 + f.dy], merge(lookAt(attrs), NO_FILL), item, 'line', true);
+    if (f.m) this.part([M, x1, y1, L, x2, y2], merge(lookAt(attrs), NO_FILL), item, 'line');
+    else this.part([M, x1 + f.dx, y1 + f.dy, L, x2 + f.dx, y2 + f.dy], merge(lookAt(attrs), NO_FILL), item, 'line', true);
   }
 
   polygon(list: number[], attrs: Attrs, item?: Item): void {
@@ -1032,7 +1144,7 @@ export class SceneOut implements Out {
     for (const op of parseFragment(svg)) {
       switch (op.op) {
         case 'begin':
-          this.open(op.id, op.kind, op.dx, op.dy, op.look, op.source);
+          this.open(op.id, op.kind, op.dx, op.dy, op.look, op.source, op.turn);
           break;
         case 'end':
           this.end();
@@ -1095,13 +1207,34 @@ export class SceneOut implements Out {
     if (f.hidden || !spans.some((s) => s.text.trim())) return;
     // A scene text has no family of its own, so its runs carry a monospace text's.
     if (base.mono) spans = spans.map((s) => (s.mono === undefined ? { ...s, mono: true } : s));
-    const t: SceneText = { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
+    const m = f.m;
+    const t: SceneText = m
+      ? { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5], size: base.size * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])), weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item }
+      : { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
     (this.current.texts ??= []).push(t);
     const chars = spans.reduce((n, s) => n + s.text.length, 0);
     this.grow(chars);
-    const w = chars * base.size * 0.55;
-    const x0 = anchor === 'middle' ? t.x - w / 2 : anchor === 'end' ? t.x - w : t.x;
-    this.touch({ x0, y0: t.y - base.size, x1: x0 + w, y1: t.y + base.size * 0.25 });
+    const w = chars * t.size * 0.55;
+    const x0 = anchor === 'middle' ? -w / 2 : anchor === 'end' ? -w : 0;
+    const angle = m ? (Math.atan2(m[1], m[0]) * 180) / Math.PI : 0;
+    if (Math.abs(angle) < 1e-9) {
+      this.touch({ x0: t.x + x0, y0: t.y - t.size, x1: t.x + x0 + w, y1: t.y + t.size * 0.25 });
+      return;
+    }
+    t.angle = angle;
+    // The turned box's corners, around the text's origin.
+    const cos = Math.cos((angle * Math.PI) / 180);
+    const sin = Math.sin((angle * Math.PI) / 180);
+    const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    for (const [u, v] of [[x0, -t.size], [x0 + w, -t.size], [x0, t.size * 0.25], [x0 + w, t.size * 0.25]]) {
+      const px = t.x + u * cos - v * sin;
+      const py = t.y + u * sin + v * cos;
+      if (px < box.x0) box.x0 = px;
+      if (py < box.y0) box.y0 = py;
+      if (px > box.x1) box.x1 = px;
+      if (py > box.y1) box.y1 = py;
+    }
+    this.touch(box);
   }
 
   // The scene, section by section in the order they are painted.
@@ -1162,17 +1295,21 @@ export class SceneOut implements Out {
     let dx = g.x ?? 0;
     let dy = g.y ?? 0;
     const attrs = g.before === undefined ? (g.attrs ?? '') : g.before + (g.attrs ?? '');
+    let turn: Matrix | undefined;
     if (attrs.includes('transform="')) {
-      const t = RE_TRANSLATE.exec(/ transform="([^"]*)"/.exec(attrs)?.[1] ?? '');
+      const t = transformOf(/ transform="([^"]*)"/.exec(attrs)?.[1] ?? '');
       if (!t) {
         this.skip('transform');
         this.frames.push({ ...this.top, hidden: true });
         return;
       }
-      dx += Number(t[1]);
-      dy += Number(t[2] ?? 0);
+      if (t[0] !== 1 || t[1] !== 0 || t[2] !== 0 || t[3] !== 1) turn = t;
+      else {
+        dx += t[4];
+        dy += t[5];
+      }
     }
-    this.open(g.id, g.cls ?? 'g', dx, dy, attrs ? parseLook(attrs) : null, g.source);
+    this.open(g.id, g.cls ?? 'g', dx, dy, attrs ? parseLook(attrs) : null, g.source, turn);
   }
 
   shift(x: number, y: number): void {
@@ -1198,7 +1335,7 @@ export class SceneOut implements Out {
   }
 
   path(d: string | Pen, attrs: Attrs = '', tokens?: number[], item?: Item): void {
-    if (typeof d === 'string' && tokens) {
+    if (typeof d === 'string' && tokens && !this.top.m) {
       // Read, moved and measured in one pass.
       const f = this.top;
       const dx = f.dx;
@@ -1223,7 +1360,7 @@ export class SceneOut implements Out {
       this.part(cmds, lookAt(attrs), item, 'path', true, box);
       return;
     }
-    this.part(typeof d !== 'string' ? (d as ScenePen).take() : parsePathData(d), lookAt(attrs), item, 'path');
+    this.part(typeof d !== 'string' ? (d as ScenePen).take() : tokens ? tokenCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
   }
 
   raw(): void {}

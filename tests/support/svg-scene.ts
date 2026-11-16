@@ -122,19 +122,6 @@ function pathData(d: string): Path {
   return out;
 }
 
-function moved(cmds: Path, dx: number, dy: number): Path {
-  const o = cmds.slice();
-  for (let i = 0; i < o.length; ) {
-    const op = o[i];
-    const end = i + 1 + ARGC[op];
-    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
-      o[k] += dx;
-      o[k + 1] += dy;
-    }
-    i = end;
-  }
-  return o;
-}
 
 interface Node {
   tag: string;
@@ -228,6 +215,70 @@ function points(list: number[], close: boolean): Path {
   return cmds;
 }
 
+// An affine map as SVG writes one, matrix(a b c d e f).
+type Affine = [number, number, number, number, number, number];
+const IDENTITY: Affine = [1, 0, 0, 1, 0, 0];
+
+// p -> outer(inner(p)).
+function compose(outer: Affine, inner: Affine): Affine {
+  const [a, b, c, d, e, f] = outer;
+  const [g, h, i, j, k, l] = inner;
+  return [a * g + c * h, b * g + d * h, a * i + c * j, b * i + d * j, a * k + c * l + e, b * k + d * l + f];
+}
+
+// A transform attribute, read one function at a time; null when one is not understood.
+function readTransform(text: string): Affine | null {
+  let at = IDENTITY;
+  let rest = text.trim();
+  while (rest) {
+    const open = rest.indexOf('(');
+    const close = rest.indexOf(')');
+    if (open < 0 || close < open) return null;
+    const name = rest.slice(0, open).trim();
+    const v = numbers(rest.slice(open + 1, close));
+    rest = rest.slice(close + 1).replace(/^[\s,]+/, '');
+    const deg = (x: number) => (x * Math.PI) / 180;
+    let t: Affine;
+    if (name === 'translate') t = [1, 0, 0, 1, v[0], v[1] ?? 0];
+    else if (name === 'scale') t = [v[0], 0, 0, v[1] ?? v[0], 0, 0];
+    else if (name === 'matrix' && v.length === 6) t = [v[0], v[1], v[2], v[3], v[4], v[5]];
+    else if (name === 'rotate') {
+      const r: Affine = [Math.cos(deg(v[0])), Math.sin(deg(v[0])), -Math.sin(deg(v[0])), Math.cos(deg(v[0])), 0, 0];
+      t = v.length >= 3 ? compose(compose([1, 0, 0, 1, v[1], v[2]], r), [1, 0, 0, 1, -v[1], -v[2]]) : r;
+    } else if (name === 'skewX') t = [1, 0, Math.tan(deg(v[0])), 1, 0, 0];
+    else if (name === 'skewY') t = [1, Math.tan(deg(v[0])), 0, 1, 0, 0];
+    else return null;
+    at = compose(at, t);
+  }
+  return at;
+}
+
+// How much a map scales lengths, and how far it turns the x axis (degrees).
+const scaleOf = (m: Affine) => Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2]));
+const angleOf = (m: Affine) => (Math.atan2(m[1], m[0]) * 180) / Math.PI;
+
+// A path in a frame's coordinates, in the scene's.
+function place(cmds: Path, m: Affine): Path {
+  const out = cmds.slice();
+  for (let i = 0; i < out.length; ) {
+    const op = out[i];
+    const end = i + 1 + ARGC[op];
+    if (op === A) {
+      out[i + 1] *= Math.hypot(m[0], m[1]);
+      out[i + 2] *= Math.hypot(m[2], m[3]);
+      out[i + 3] += angleOf(m);
+      if (m[0] * m[3] - m[1] * m[2] < 0) out[i + 5] = 1 - out[i + 5];
+    }
+    for (let k = op === A ? i + 6 : i + 1; k + 1 < end; k += 2) {
+      const [x, y] = [out[k], out[k + 1]];
+      out[k] = m[0] * x + m[2] * y + m[4];
+      out[k + 1] = m[1] * x + m[3] * y + m[5];
+    }
+    i = end;
+  }
+  return out;
+}
+
 export function svgToScene(svg: string): Scene {
   const root = parseXml(svg);
   const vb = (root.attrs.viewBox ?? '').split(/[\s,]+/).map(Number);
@@ -246,17 +297,19 @@ export function svgToScene(svg: string): Scene {
       it.box.y1 = Math.max(it.box.y1, box.y1);
     }
   };
-  const shape = (cmds: Path, look: Look) => {
-    if (!cmds.length) return;
+  const shape = (local: Path, look: Look, m: Affine) => {
+    if (!local.length) return;
+    const cmds = place(local, m);
     const box = cmdsBox(cmds);
     const item = items[items.length - 1];
     const opacity = len(look.opacity, 1);
     if (look.fill && look.fill !== 'none' && look.fill !== 'transparent') {
       scene.shapes.push({ kind: 'fill', paint: look.fill, opacity: opacity * len(look['fill-opacity'], 1), cmds, box, item });
     }
-    const width = len(look['stroke-width'], 1);
+    const k = scaleOf(m);
+    const width = len(look['stroke-width'], 1) * k;
     if (look.stroke && look.stroke !== 'none' && look.stroke !== 'transparent' && width > 0) {
-      const dash = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : [];
+      const dash = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']).map((d) => d * k) : [];
       const p = width / 2;
       scene.shapes.push({
         kind: 'stroke', paint: look.stroke, opacity: opacity * len(look['stroke-opacity'], 1), width, dash: dash.length ? dash : null,
@@ -265,11 +318,13 @@ export function svgToScene(svg: string): Scene {
     }
     touch(box);
   };
-  const text = (el: Node, look: Look, dx: number, dy: number) => {
-    const size = len(look['font-size'], 16);
+  // Texts in an icon are not drawn: a scene text has no scale.
+  let inIcon = 0;
+  const text = (el: Node, look: Look, m: Affine) => {
+    const size = len(look['font-size'], 16) * scaleOf(m);
     const base = { size, weight: weight(look['font-weight'], 400), italic: look['font-style'] === 'italic', paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)' };
-    let x = len(el.attrs.x, 0) + dx;
-    let y = len(el.attrs.y, 0) + dy;
+    let x = len(el.attrs.x, 0);
+    let y = len(el.attrs.y, 0);
     let anchor = (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end';
     let spans: SceneSpan[] = [];
     // A run's style as the text it is in gives it, and its own over that.
@@ -284,10 +339,27 @@ export function svgToScene(svg: string): Scene {
     };
     const flush = () => {
       if (spans.some((s) => s.text.trim())) {
-        scene.texts.push({ x, y, ...base, anchor, spans, item: items[items.length - 1] });
-        const w = spans.reduce((n, s) => n + s.text.length, 0) * size * 0.55;
-        const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
-        touch({ x0, y0: y - size, x1: x0 + w, y1: y + size * 0.25 });
+        if (inIcon) skip('text');
+        else {
+          const px = m[0] * x + m[2] * y + m[4];
+          const py = m[1] * x + m[3] * y + m[5];
+          const t: SceneText = { x: px, y: py, ...base, anchor, spans, item: items[items.length - 1] };
+          const angle = angleOf(m);
+          const w = spans.reduce((n, s) => n + s.text.length, 0) * size * 0.55;
+          const left = anchor === 'middle' ? -w / 2 : anchor === 'end' ? -w : 0;
+          // The text's box, turned with it about its origin.
+          const r = (angle * Math.PI) / 180;
+          const xs: number[] = [];
+          const ys: number[] = [];
+          for (const u of [left, left + w])
+            for (const v of [-size, size * 0.25]) {
+              xs.push(px + u * Math.cos(r) - v * Math.sin(r));
+              ys.push(py + u * Math.sin(r) + v * Math.cos(r));
+            }
+          if (Math.abs(angle) >= 1e-9) t.angle = angle;
+          scene.texts.push(t);
+          touch({ x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) });
+        }
       }
       spans = [];
     };
@@ -300,30 +372,41 @@ export function svgToScene(svg: string): Scene {
       // A tspan with its own position starts a new run of text.
       if (c.attrs.x !== undefined || c.attrs.y !== undefined) {
         flush();
-        if (c.attrs.x !== undefined) x = len(c.attrs.x, 0) + dx;
-        if (c.attrs.y !== undefined) y = len(c.attrs.y, 0) + dy;
+        if (c.attrs.x !== undefined) x = len(c.attrs.x, 0);
+        if (c.attrs.y !== undefined) y = len(c.attrs.y, 0);
         anchor = (c.attrs['text-anchor'] ?? look['text-anchor'] ?? 'start') as typeof anchor;
       }
       spans.push(run(c.children.filter((t): t is string => typeof t === 'string').join(''), own(c)));
     }
     flush();
   };
-  const walk = (el: Node, inherited: Look, dx: number, dy: number) => {
+  // A nested viewport: its viewBox fitted to its box, centred (preserveAspectRatio's default).
+  const icon = (el: Node, look: Look, m: Affine) => {
+    const w = len(el.attrs.width, 0);
+    const h = len(el.attrs.height, 0);
+    const vb = el.attrs.viewBox ? numbers(el.attrs.viewBox) : [0, 0, w, h];
+    if (!(w > 0 && h > 0 && vb[2] > 0 && vb[3] > 0)) return;
+    const k = Math.min(w / vb[2], h / vb[3]);
+    const ox = len(el.attrs.x, 0) + (w - vb[2] * k) / 2 - vb[0] * k;
+    const oy = len(el.attrs.y, 0) + (h - vb[3] * k) / 2 - vb[1] * k;
+    inIcon++;
+    walk(el, look, compose(m, [k, 0, 0, k, ox, oy]));
+    inIcon--;
+  };
+  const walk = (el: Node, inherited: Look, outer: Affine) => {
     for (const c of el.children) {
       if (typeof c === 'string') continue;
       const a = own(c);
       const look: Look = { ...inherited };
       for (const k of INHERITED) if (a[k] !== undefined) look[k] = a[k];
-      let tx = dx;
-      let ty = dy;
+      let m = outer;
       if (c.attrs.transform) {
-        const t = c.attrs.transform.match(/^\s*translate\(\s*([-\d.e+]+)(?:[\s,]+([-\d.e+]+))?\s*\)\s*$/);
+        const t = readTransform(c.attrs.transform);
         if (!t) {
           skip('transform');
           continue;
         }
-        tx += Number(t[1]);
-        ty += Number(t[2] ?? 0);
+        m = compose(outer, t);
       }
       const id = c.attrs['data-id'];
       if (id !== undefined) {
@@ -339,38 +422,38 @@ export function svgToScene(svg: string): Scene {
       switch (c.tag) {
         case 'g':
         case 'a':
-          walk(c, look, tx, ty);
+          walk(c, look, m);
           break;
         case 'rect': {
           const w = len(a.width, 0);
           const h = len(a.height, 0);
-          if (w > 0 && h > 0) shape(roundRect(len(a.x, 0) + tx, len(a.y, 0) + ty, w, h, len(look.rx ?? a.ry, 0), len(a.ry ?? look.rx, 0)), look);
+          if (w > 0 && h > 0) shape(roundRect(len(a.x, 0), len(a.y, 0), w, h, len(look.rx ?? a.ry, 0), len(a.ry ?? look.rx, 0)), look, m);
           break;
         }
         case 'circle':
-          if (len(a.r, 0) > 0) shape(ellipse(len(a.cx, 0) + tx, len(a.cy, 0) + ty, len(a.r, 0), len(a.r, 0)), look);
+          if (len(a.r, 0) > 0) shape(ellipse(len(a.cx, 0), len(a.cy, 0), len(a.r, 0), len(a.r, 0)), look, m);
           break;
         case 'ellipse':
-          if (len(a.rx, 0) > 0 && len(a.ry, 0) > 0) shape(ellipse(len(a.cx, 0) + tx, len(a.cy, 0) + ty, len(a.rx, 0), len(a.ry, 0)), look);
+          if (len(a.rx, 0) > 0 && len(a.ry, 0) > 0) shape(ellipse(len(a.cx, 0), len(a.cy, 0), len(a.rx, 0), len(a.ry, 0)), look, m);
           break;
         case 'line':
-          shape([M, len(a.x1, 0) + tx, len(a.y1, 0) + ty, L, len(a.x2, 0) + tx, len(a.y2, 0) + ty], { ...look, fill: 'none' });
+          shape([M, len(a.x1, 0), len(a.y1, 0), L, len(a.x2, 0), len(a.y2, 0)], { ...look, fill: 'none' }, m);
           break;
         case 'polygon':
         case 'polyline':
-          shape(moved(points(numbers(a.points ?? ''), c.tag === 'polygon'), tx, ty), c.tag === 'polyline' && a.fill === undefined ? { ...look, fill: 'none' } : look);
+          shape(points(numbers(a.points ?? ''), c.tag === 'polygon'), c.tag === 'polyline' && a.fill === undefined ? { ...look, fill: 'none' } : look, m);
           break;
         case 'path':
-          if (a.d) shape(moved(pathData(a.d), tx, ty), look);
+          if (a.d) shape(pathData(a.d), look, m);
           break;
         case 'text':
-          text(c, look, tx, ty);
+          text(c, look, m);
           break;
         case 'title':
         case 'desc':
           break;
         case 'svg':
-          if (/\bpele-icon\b/.test(c.attrs.class ?? '')) icon(c, look, tx, ty);
+          if (/\bpele-icon\b/.test(c.attrs.class ?? '')) icon(c, look, m);
           else skip(/\bpele-math\b/.test(c.attrs.class ?? '') ? 'math' : c.tag);
           break;
         case 'foreignObject':
@@ -382,52 +465,8 @@ export function svgToScene(svg: string): Scene {
       if (id !== undefined) items.pop();
     }
   };
-  // A nested viewport: its viewBox fitted to its box, centred (preserveAspectRatio's default).
-  // What it holds is read on its own and then scaled and moved into place, line widths too.
-  const icon = (el: Node, look: Look, dx: number, dy: number) => {
-    const w = len(el.attrs.width, 0);
-    const h = len(el.attrs.height, 0);
-    const vb = el.attrs.viewBox ? numbers(el.attrs.viewBox) : [0, 0, w, h];
-    if (!(w > 0 && h > 0 && vb[2] > 0 && vb[3] > 0)) return;
-    const k = Math.min(w / vb[2], h / vb[3]);
-    const ox = len(el.attrs.x, 0) + dx + (w - vb[2] * k) / 2 - vb[0] * k;
-    const oy = len(el.attrs.y, 0) + dy + (h - vb[3] * k) / 2 - vb[1] * k;
-    const from = scene.shapes.length;
-    const texts = scene.texts.length;
-    items.push(-1);
-    walk(el, look, 0, 0);
-    items.pop();
-    for (let n = scene.texts.length - texts; n > 0; n--) skip('text');
-    scene.texts.length = texts;
-    for (const x of scene.shapes.slice(from)) {
-      const c = x.cmds.slice();
-      for (let i = 0; i < c.length; ) {
-        const op = c[i];
-        const end = i + 1 + ARGC[op];
-        if (op === A) {
-          c[i + 1] *= k;
-          c[i + 2] *= k;
-        }
-        for (let j = op === A ? i + 6 : i + 1; j + 1 < end; j += 2) {
-          c[j] = c[j] * k + ox;
-          c[j + 1] = c[j + 1] * k + oy;
-        }
-        i = end;
-      }
-      x.cmds = c;
-      x.item = items[items.length - 1];
-      const box = cmdsBox(c);
-      if (x.kind === 'stroke') {
-        x.width = x.width! * k;
-        if (x.dash) x.dash = x.dash.map((d) => d * k);
-        const p = x.width / 2;
-        x.box = { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p };
-      } else x.box = box;
-      touch(box);
-    }
-  };
   const font = root.attrs.style?.match(/font:\s*(\d+(?:\.\d+)?)px/);
-  walk(root, { fill: root.attrs.fill ?? 'var(--_fg)', 'font-size': font ? font[1] : '16' }, 0, 0);
+  walk(root, { fill: root.attrs.fill ?? 'var(--_fg)', 'font-size': font ? font[1] : '16' }, IDENTITY);
   return scene;
 }
 

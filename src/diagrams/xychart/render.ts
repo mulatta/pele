@@ -1,7 +1,7 @@
 import { PeleError } from '../../errors.js';
 import type { Out } from '../../draw/out.js';
 import type { Config } from '../../preprocess.js';
-import { labelSvg, num } from '../../svg/builder.js';
+import { num } from '../../svg/builder.js';
 import { seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -404,14 +404,9 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
   out.section('titles');
   if (leftTitle.height > 0) {
     const turn = ` transform="translate(${num(pad + leftTitle.height / 2)},${num(top + plotHeight / 2)}) rotate(-90)"`;
-    // A scene hides what a rotation holds, so it is not drawn.
-    out.both(
-      () => `<g${turn}>${labelSvg(leftTitle, 0, 0, '')}</g>`,
-      () => {
-        out.group({ attrs: turn });
-        out.end();
-      }
-    );
+    out.group({ attrs: turn });
+    out.label(leftTitle, 0, 0, '');
+    out.end();
   }
   out.label(bottomTitle, left + plotWidth / 2, height - pad - bottomTitle.height / 2, '');
 
