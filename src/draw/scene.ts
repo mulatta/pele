@@ -26,12 +26,12 @@ export const SCENE_VERSION = 2;
 //   C x1 y1 x2 y2 x y  2  Q x1 y1 x y      3
 //   A rx ry rot large sweep x y  4         Z (no arguments)  5
 export type Path = number[];
-export const M = 0;
-export const L = 1;
-export const C = 2;
-export const Q = 3;
-export const A = 4;
-export const Z = 5;
+const M = 0;
+const L = 1;
+const C = 2;
+const Q = 3;
+const A = 4;
+const Z = 5;
 // Arguments after each op code.
 const ARGC = [2, 2, 6, 4, 7, 0];
 
@@ -120,7 +120,7 @@ const lookCache = new Map<string, Look>();
 
 // ` fill="x" style="stroke:y;rx:var(--_r)"` -> { fill: 'x', stroke: 'y', rx: ... }. Declarations in
 // style win over attributes, as in CSS.
-export function parseLook(attrs: string): Look {
+function parseLook(attrs: string): Look {
   let look = lookCache.get(attrs);
   if (look) return look;
   look = {};
@@ -372,7 +372,7 @@ function arcNumbers(s: string): number[] {
 }
 
 // Path data -> absolute commands.
-export function parsePathData(d: string): Path {
+function parsePathData(d: string): Path {
   const out: Path = [];
   let x = 0;
   let y = 0;
@@ -466,7 +466,7 @@ function points(list: number[], close: boolean): Path {
 // A copy of the path moved by (dx, dy), or the path itself when there is nothing to move: callers
 // must not write to the result, which can be a cached fragment. All arguments are x, y pairs but
 // an arc's radii, rotation and flags.
-export function shift(cmds: Path, dx: number, dy: number): Path {
+function shift(cmds: Path, dx: number, dy: number): Path {
   if (dx === 0 && dy === 0) return cmds;
   const o = cmds.slice();
   for (let i = 0; i < o.length; ) {
