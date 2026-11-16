@@ -45,30 +45,24 @@ function tagWidth(tag: Label): number {
   return NOTCH + 4 + tag.width + 6;
 }
 
-function symbol(type: number, x: number, y: number, color: string): string {
-  const at = `cx="${num(x)}" cy="${num(y)}"`;
+function symbol(out: Out, type: number, x: number, y: number, color: string): void {
   if (type === commitType.HIGHLIGHT) {
-    return `<rect x="${num(x - DOT - 1)}" y="${num(y - DOT - 1)}" width="${2 * DOT + 2}" height="${2 * DOT + 2}" rx="2" fill="${color}"/>`;
+    out.rect(x - DOT - 1, y - DOT - 1, 2 * DOT + 2, 2 * DOT + 2, ` rx="2" fill="${color}"`);
+    return;
   }
   if (type === commitType.MERGE) {
-    return `<circle ${at} r="${DOT - 1}" fill="var(--_bg)" stroke="${color}" stroke-width="2"/><circle ${at} r="2.5" fill="${color}"/>`;
+    out.circle(x, y, DOT - 1, ` fill="var(--_bg)" stroke="${color}" stroke-width="2"`);
+    out.circle(x, y, 2.5, ` fill="${color}"`);
+    return;
   }
-  const dot = `<circle ${at} r="${DOT}" fill="${color}"/>`;
+  out.circle(x, y, DOT, ` fill="${color}"`);
   if (type === commitType.REVERSE) {
-    return (
-      dot +
-      `<path d="M${num(x - 3)},${num(y - 3)}l6,6M${num(x - 3)},${num(y + 3)}l6,-6" fill="none" stroke="var(--_bg)" stroke-width="1.5" stroke-linecap="round"/>`
-    );
+    out.path(out.pen().M(x - 3, y - 3).l(6, 6).M(x - 3, y + 3).l(6, -6), ' fill="none" stroke="var(--_bg)" stroke-width="1.5" stroke-linecap="round"');
+  } else if (type === commitType.CHERRY_PICK) {
+    out.path(out.pen().M(x - 2.6, y + 1).L(x + 0.8, y - 4.2).L(x + 2.6, y + 1), ' fill="none" stroke="var(--_bg)" stroke-linejoin="round"');
+    out.circle(x - 2.6, y + 2.2, 1.8, ' fill="var(--_bg)"');
+    out.circle(x + 2.6, y + 2.2, 1.8, ' fill="var(--_bg)"');
   }
-  if (type === commitType.CHERRY_PICK) {
-    return (
-      dot +
-      `<path d="M${num(x - 2.6)},${num(y + 1)}L${num(x + 0.8)},${num(y - 4.2)}L${num(x + 2.6)},${num(y + 1)}" fill="none" stroke="var(--_bg)" stroke-linejoin="round"/>` +
-      `<circle cx="${num(x - 2.6)}" cy="${num(y + 2.2)}" r="1.8" fill="var(--_bg)"/>` +
-      `<circle cx="${num(x + 2.6)}" cy="${num(y + 2.2)}" r="1.8" fill="var(--_bg)"/>`
-    );
-  }
-  return dot;
 }
 
 export function renderGit(model: GitModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -321,7 +315,7 @@ function draw(out: Out, model: GitModel, config: Config, options: RenderOptions,
     // Merges and cherry-picks carry a message Mermaid makes up; only a written one is worth showing.
     if (commit.type < commitType.MERGE && commit.message !== '') out.tooltip(commit.message);
     const color = seriesColor(view.lane);
-    out.at(x, y, (x, y) => symbol(type, x, y, color));
+    symbol(out, type, x, y, color);
 
     if (label !== undefined && label.lines.length > 0) {
       const w = label.width;
