@@ -520,7 +520,7 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
       const cy = y + 6 + headH[g] / 2;
       let textX = start;
       if (group.icon) {
-        out.at(start, cy - badge / 2, (x, y) => iconSlot(group.icon!, x, y, badge, icons));
+        out.opaque(iconSlot(group.icon, start, cy - badge / 2, badge, icons), 'icon');
         textX += badge + 6;
       }
       out.label(label, textX + label.width / 2, cy, ' class="pele-cluster-label" fill="var(--_m)"', icons);
@@ -535,15 +535,14 @@ function draw(out: Out, model: ArchitectureModel, config: Config, options: Rende
     out.section('nodes');
     out.group({ cls: `pele-node pele-${node.type === 'junction' ? 'junction' : 'service'}`, id: node.id, source: node.source, x: centerX(i), y: Y[nodeRow[i]] });
     if (node.type === 'junction') {
-      // Neither shape has the position a typed call would write (cx and y are left out).
-      out.fragment(`<circle cy="${num(half)}" r="${DOT}" fill="var(--_l)"/>`);
+      out.circle(null, half, DOT, ' fill="var(--_l)"');
       out.end();
       continue;
     }
-    out.fragment(`<rect x="${num(-half)}" width="${num(iconSize)}" height="${num(iconSize)}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>`);
+    out.rect(-half, null, iconSize, iconSize, ` fill="var(--_s)" stroke="var(--_b)"${ROUNDED}`);
     if (node.icon) {
       const icon = node.icon;
-      out.at(-glyph / 2, (iconSize - glyph) / 2, (x, y) => iconSlot(icon, x, y, glyph, icons));
+      out.opaque(iconSlot(icon, -glyph / 2, (iconSize - glyph) / 2, glyph, icons), 'icon');
     } else if (node.iconText) {
       const text = layoutLabel(node.iconText, false, measurer, textSize, iconSize - 8);
       const lines = Math.max(1, Math.floor((iconSize - 4) / (text.lineHeight || 1)));
