@@ -403,7 +403,15 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
   }
   out.section('titles');
   if (leftTitle.height > 0) {
-    out.fragment(`<g transform="translate(${num(pad + leftTitle.height / 2)},${num(top + plotHeight / 2)}) rotate(-90)">${labelSvg(leftTitle, 0, 0, '')}</g>`);
+    const turn = ` transform="translate(${num(pad + leftTitle.height / 2)},${num(top + plotHeight / 2)}) rotate(-90)"`;
+    // A scene hides what a rotation holds, so it is not drawn.
+    out.both(
+      () => `<g${turn}>${labelSvg(leftTitle, 0, 0, '')}</g>`,
+      () => {
+        out.group({ attrs: turn });
+        out.end();
+      }
+    );
   }
   out.label(bottomTitle, left + plotWidth / 2, height - pad - bottomTitle.height / 2, '');
 
@@ -424,8 +432,7 @@ export function renderXyChart(model: XyChartModel, config: Config, options: Rend
     const color = seriesColor(index);
     out.group({ cls: 'pele-legend-item', id: plots[index].title, source: plots[index].source });
     if (plots[index].type === 'bar') out.rect(lx, y - SWATCH / 2, SWATCH, SWATCH, ` rx="2" fill="${color}"`);
-    // Relative path data, which the pen does not write.
-    else out.path(`M${num(lx)},${num(y)}h${SWATCH}`, ` stroke="${color}" stroke-width="2" stroke-linecap="round"`);
+    else out.path(out.pen().M(lx, y).h(SWATCH), ` stroke="${color}" stroke-width="2" stroke-linecap="round"`);
     out.label(label, lx + SWATCH + 8 + label.width / 2, y, '');
     out.end();
     ly += row;
