@@ -2,7 +2,7 @@ import { cnode, compoundLayout, direction, inheritCrossedDirections, shiftLayout
 import { titleLabel } from '../../svg/title.js';
 import type { LayeredOptions } from '../../layout/layered.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, num } from '../../svg/builder.js';
+import { esc, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
 import { CASINGS_ATTRS, drawCasing, drawMarker, loopPath, markerTrim, overFills, routePath, sideReach, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
@@ -257,7 +257,7 @@ function drawNodes(
       const struck = titleCrossed(c, view.label.width, titleX, crossings);
       // A title drawn over the edges sits on a halo in the theme's colors.
       const titleAttrs = ` class="pele-cluster-label"${struck ? ' fill="var(--_m)"' : inkFill(view.style, 'var(--_m)')}${view.style.text}`;
-      if (struck) out.into('cluster-titles', '', () => out.fragment(struckTitle(view.label, titleX, titleY, titleAttrs, escText(node.id), cnodes, i, icons)));
+      if (struck) out.into('cluster-titles', '', () => struckTitle(out, view.label, titleX, titleY, titleAttrs, node.id, cnodes, i, icons));
       out.section('clusters');
       out.group({ cls: `pele-cluster${classes}`, id: node.id, source: node.source });
       out.rect(x - c.w / 2, y - c.h / 2, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);

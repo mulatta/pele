@@ -1,7 +1,7 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
 import { wrapComponents } from '../../layout/components.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, num } from '../../svg/builder.js';
+import { esc, num } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, struckTitle, titleCrossed, type Crossings } from '../../svg/cluster.js';
 import { routePath, type EdgePath } from '../../svg/edges.js';
 import { inkFill } from '../../svg/ink.js';
@@ -515,7 +515,7 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
       const titleY = y - h / 2 + 8 + view.label.height / 2;
       const titleAttrs = ' class="pele-cluster-label" fill="var(--_m)"';
       const struck = c.isGroup && titleCrossed(c, view.label.width, titleX, crossings);
-      if (struck) out.into('cluster-titles', '', () => out.fragment(struckTitle(view.label, titleX + ox, titleY, titleAttrs, escText(node.id), graph.nodes, i)));
+      if (struck) out.into('cluster-titles', '', () => struckTitle(out, view.label, titleX + ox, titleY, titleAttrs, node.id, graph.nodes, i));
       out.section('clusters');
       out.group({ cls: 'pele-cluster pele-namespace', id: node.id, source: node.written });
       out.rect(x - w / 2, y - h / 2, w, h, ` fill="var(--_a)" fill-opacity="0.5" stroke="var(--_b)"${ROUNDED}`);
