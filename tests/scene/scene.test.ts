@@ -89,6 +89,23 @@ describe('scene output', () => {
     expect(items[texts.find((t) => t.spans[0].text === 'OpenAPI')!.item].id).toBe('AB1');
   });
 
+  // Paints name pele's private variables, which stand for its --pele-* CSS variables with their
+  // defaults, so a host resolves them as a page with pele's CSS would.
+  it('defines the theme variables its paints name', () => {
+    const { scene } = renderScene('pie\n  "A": 1', options);
+    expect(scene.vars).toEqual({
+      '--_bg': 'var(--pele-bg,#fff)',
+      '--_fg': 'var(--pele-fg,#1f1f1f)',
+      '--_m': 'var(--pele-muted,#6e6e6e)',
+      '--_l': 'var(--pele-line,#1f1f1f)',
+      '--_s': 'var(--pele-surface,#f3f3f3)',
+      '--_a': 'var(--pele-surface-alt,#e6e6e6)',
+      '--_b': 'var(--pele-border,#8a8a8a)',
+      '--_c': 'var(--pele-accent,#5b7bd5)',
+    });
+    expect(renderScene('%%{init: {"themeVariables": {"pie1": "red"}}}%%\npie\n  "A": 1', options).scene.vars['--pele-series-1']).toBe('red');
+  });
+
   it('says what each part is', () => {
     const src = 'flowchart LR\n  subgraph S [Group]\n    A -->|go| B\n  end\n  B --> C';
     const roles = Object.fromEntries(renderScene(src, options).scene.items.map((i) => [`${i.id} ${i.kind.split(' ')[0]}`, i.role]));

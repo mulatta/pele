@@ -13,13 +13,27 @@ const { scene, width, height, links } = renderScene(`flowchart LR
   A[Mermaid text] --> B[Scene]`);
 ```
 
-A scene (`SCENE_VERSION` 3) holds:
+A scene (`SCENE_VERSION` 4) holds:
 
 - `shapes`: fills and strokes in painting order, each a path of numbers (`M L C Q A Z` op codes, see `src/draw/scene.ts`), its paint, opacity, outline width and dashes, and bounds.
 - `texts`: lines of text with their position, size, weight, anchor, paint and runs.
 - `items`: the parts a host can point at (nodes, edges, labels), with their class, role, bounds and where the source wrote them.
+- `vars`: what the CSS variables paints name stand for, such as `--_s: var(--pele-surface,#f3f3f3)`, and the series colors a diagram's `themeVariables` set (`--pele-series-1: red`).
 
-Paints stay theme tokens such as `var(--_s)` for the host to resolve: `--_bg`, `--_fg`, `--_m` (muted), `--_l` (line), `--_s` (surface), `--_a` (surface alt), `--_b` (border), `--_c` (accent), and `var(--pele-series-N, …)` for chart series.
+Paints stay theme tokens such as `var(--_s)` or `var(--pele-series-1,#4c78a8)`. A host resolves them through `vars` against its own values for pele's CSS variables, as a page with pele's CSS would:
+
+```css
+--pele-bg: #fffcf0;
+--pele-fg: #100f0f;
+--pele-muted: #6f6e69;
+--pele-line: #100f0f;
+--pele-surface: #f2f0e5;
+--pele-surface-alt: #e6e4d9;
+--pele-border: #cecdc3;
+--pele-accent: #205ea6;
+```
+
+Charts also use `--pele-series-1` through `--pele-series-8`, and some labels `--pele-fg-on-light`, `--pele-fg-on-dark` and `--pele-critical`. Any variable a host leaves unset takes the default in the paint or in `vars`. `--pele-radius`, the `--pele-*-weight` variables and fonts are drawn at their defaults: a scene has corners as path numbers and weights as numbers, and text is set in the host's fonts.
 
 The main entry point includes every diagram type. Reduce the initial bundle size by registering individual types or loading them on demand:
 

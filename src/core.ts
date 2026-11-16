@@ -201,12 +201,14 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
     const drawing = { ...options, icons };
     const out = new SceneOut(sceneRoot(options.fontSize ?? 16), options.outputLimit ?? DEFAULT_OUTPUT_LIMIT);
+    const colors = palette(type, config);
     const rendered = tagErrors({ type, mermaidType }, () =>
-      withPalette(palette(type, config), () =>
+      withPalette(colors, () =>
         withMath(diagram.math ? options.math : undefined, () => withIcons(icons, () => diagram.render(model, config, drawing, out)))
       )
     );
     if (!out.scene) throw new PeleError(`${type} drew no scene.`, 'unsupported-diagram', { type, mermaidType });
+    Object.assign(out.scene.vars, colors.vars);
     for (const link of rendered.links) link.id = decodeEntities(link.id);
     return { type, mermaidType, scene: out.scene, width: rendered.width, height: rendered.height, links: rendered.links };
   });

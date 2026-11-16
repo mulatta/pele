@@ -7,8 +7,8 @@
 // marker) are read the way a browser would read them in place, and small ones
 // are cached, as the same pieces come again.
 //
-// The data matches herdr-scene's scene contract, version 2: paint stays a
-// token (`var(--_s)`) for the host's theme to resolve.
+// Paint stays a token (`var(--_s)`) for the host's theme to resolve, through
+// the scene's `vars`.
 
 import { PeleError } from '../errors.js';
 import { decodeEntities } from '../text/entities.js';
@@ -16,6 +16,7 @@ import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import { iconSvg } from '../diagrams/common/icon.js';
 import { mathMarkup } from '../svg/builder.js';
+import { THEME_VARS } from '../svg/theme.js';
 import type { IconResolver, SourceInfo } from '../types.js';
 import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
@@ -26,7 +27,8 @@ import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 //      another is painted just after it; turned groups are drawn, texts keeping an angle; texts
 //      carry an outline and may have no fill; fills may name a gradient; arcs bound their
 //      boxes; items have a role.
-export const SCENE_VERSION = 3;
+//   4  `vars` defines the theme variables paints name, palette colors included.
+export const SCENE_VERSION = 4;
 
 // A path is one flat array of numbers: an op code, then that op's arguments, command after
 // command. One array per shape keeps a diagram's heap (and every walk over it) to a few objects
@@ -132,6 +134,10 @@ export interface Scene {
   items: SceneItem[];
   // The gradients fills use, by id; absent when none do.
   gradients?: Record<string, SceneGradient>;
+  // CSS custom properties paints refer to, by name (`--_s`), each defined as CSS would define it
+  // (`var(--pele-surface,#f3f3f3)`): a host resolves a paint through them against the --pele-*
+  // values of its theme, as a page with pele's CSS would.
+  vars: Record<string, string>;
   // What could not be drawn, by kind (`transform` for a rotated group, `math`, `text` in an
   // icon), and how often.
   skipped: Record<string, number>;
@@ -1400,7 +1406,7 @@ export class SceneOut implements Out {
     }
     for (const x of shapes) if (x.item >= 0) x.item = at[x.item];
     for (const x of texts) if (x.item >= 0) x.item = at[x.item];
-    const scene: Scene = { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, skipped: this.skipped };
+    const scene: Scene = { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, vars: { ...THEME_VARS }, skipped: this.skipped };
     if (this.gradients) scene.gradients = this.gradients;
     return scene;
   }

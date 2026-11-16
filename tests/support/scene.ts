@@ -81,6 +81,7 @@ export function sceneProblem(result: SceneResult): string | undefined {
   if (scene.version !== SCENE_VERSION) return `version ${scene.version}`;
   if (!finite(result.width, result.height, scene.x, scene.y, scene.w, scene.h)) return 'size is not a number';
   for (const p of paints(scene)) if (RE_UNSAFE_PAINT.test(p)) return `paint ${JSON.stringify(p)}`;
+  for (const [name, value] of Object.entries(scene.vars)) if (!/^--[\w-]+$/.test(name) || RE_UNSAFE_PAINT.test(value)) return `variable ${name}: ${JSON.stringify(value)}`;
   for (const s of scene.shapes) {
     if (!finite(...s.cmds, s.opacity, s.box.x0, s.box.y0, s.box.x1, s.box.y1)) return 'shape number is not a number';
     if (s.width !== undefined && !finite(s.width)) return 'stroke width is not a number';

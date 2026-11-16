@@ -91,26 +91,30 @@ function entries(type: DiagramType, vars: Config): { list: unknown[]; repeat: bo
 }
 
 export interface Palette {
+  // The --pele-series-* colors it sets, by variable name.
+  vars: Record<string, string>;
   // Label colors for text on each series, where the contrast of its color is known.
   inks: (string | undefined)[];
 }
 
-const NONE: Palette = { inks: [] };
+const NONE: Palette = { vars: {}, inks: [] };
 
-// The label inks for the palette a diagram's theme variables set. An entry that isn't a usable
-// color leaves its series in the theme's color.
+// The series colors and label inks of the palette a diagram's theme variables set. An entry that
+// isn't a usable color leaves its series in the theme's color.
 export function palette(type: DiagramType, config: Config): Palette {
   const found = entries(type, record(config.themeVariables));
   if (found === undefined || found.list.length === 0) return NONE;
   const { list, repeat } = found;
+  const vars: Record<string, string> = {};
   const inks: (string | undefined)[] = [];
   for (let i = 0; i < SLOTS; i++) {
     if (!repeat && i >= list.length) break;
     const color = safeColor(list[i % list.length]);
     if (color === undefined) continue;
+    vars[`--pele-series-${i + 1}`] = color;
     inks[i] = ink(`;fill:${color}`);
   }
-  return inks.length === 0 ? NONE : { inks };
+  return inks.length === 0 ? NONE : { vars, inks };
 }
 
 let current = NONE;
