@@ -16,7 +16,7 @@ import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import { iconSvg } from '../diagrams/common/icon.js';
 import { mathMarkup } from '../svg/builder.js';
-import { THEME_VARS } from '../svg/theme.js';
+import { THEME_VARS, families } from '../svg/theme.js';
 import type { IconResolver, SourceInfo } from '../types.js';
 import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
@@ -30,7 +30,10 @@ import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 //   4  `vars` defines the theme variables paints name, palette colors included.
 //   5  runs may be underlined, or sub- or superscript (`scale`, `shift`); lengths in em are read
 //      by the font size; every xychart bar is an item, one of no height too.
-export const SCENE_VERSION = 5;
+//   6  `vars` define pele's corner radius, weights and fonts; texts and runs name the weight
+//      variable they take (`weightVar`) and a family a style sets; rectangles with pele's corners,
+//      turned or not, say so (`radius`, `radiusScale`).
+export const SCENE_VERSION = 6;
 
 // A path is one flat array of numbers: an op code, then that op's arguments, command after
 // command. One array per shape keeps a diagram's heap (and every walk over it) to a few objects
@@ -72,6 +75,12 @@ export interface SceneShape {
   item: number;
   // A fill drawn with `gradients[gradient]`; `paint` is its fallback.
   gradient?: string;
+  // A rectangle, turned or not, whose corners are rounded by this variable (`--_r`); `cmds`
+  // round them by its default, cut to half the shorter side.
+  radius?: string;
+  // How much larger than its own units such a rectangle is drawn, by a frame that scales it;
+  // absent, 1. The radius a host sets is scaled by it.
+  radiusScale?: number;
 }
 
 // A linear gradient across the scene from (x1, y1) to (x2, y2), stops at offsets from 0 to 1.
@@ -90,6 +99,8 @@ export interface SceneSpan {
   italic?: boolean;
   mono?: boolean;
   paint?: string;
+  // The variable its weight is set by (`--_w`), whose default `weight` is.
+  weightVar?: string;
   underline?: boolean;
   // A sub- or superscript: its size as a share of its text's, and how far its baseline is moved,
   // in its text's size (down positive, as y runs).
@@ -108,6 +119,10 @@ export interface SceneText {
   paint: string;
   spans: SceneSpan[];
   item: number;
+  // The variable its weight is set by (`--_tw`), whose default `weight` is.
+  weightVar?: string;
+  // A font family a style names, over the diagram's (`--_f`).
+  family?: string;
   // Degrees the line is turned about (x, y), clockwise as the y axis runs down; absent when level.
   angle?: number;
   // An outline drawn around the letters (a halo where `paint` is 'none'), and its width.
@@ -228,6 +243,10 @@ const len = (v: string | undefined, fallback: number, em = 16): number => {
 const SCRIPT_SCALE = 1 / 1.2;
 const SUB_SHIFT = 0.2;
 const SUPER_SHIFT = -0.33;
+
+// The variable a weight is set by, for pele's weight variables.
+const RE_WEIGHT_VAR = /^var\((--_(?:w|tw|hw))\)$/;
+const weightVarOf = (v: string | undefined): string | undefined => (v === undefined ? undefined : RE_WEIGHT_VAR.exec(v)?.[1]);
 
 const weight = (v: string | undefined, fallback: number): number => {
   if (v === undefined) return fallback;
@@ -830,7 +849,11 @@ const textOf = (el: Element): string => el.children.filter((c): c is string => t
 
 function spanOf(text: string, a: Record<string, string>): SceneSpan {
   const span: SceneSpan = { text };
-  if (a['font-weight'] !== undefined && weight(a['font-weight'], 400) >= 600) span.weight = 700;
+  if (a['font-weight'] !== undefined && weight(a['font-weight'], 400) >= 600) {
+    span.weight = 700;
+    const named = weightVarOf(a['font-weight']);
+    if (named) span.weightVar = named;
+  }
   if (a['font-style'] === 'italic') span.italic = true;
   if (a['font-family'] === MONO) span.mono = true;
   if (a.fill !== undefined && a.fill !== 'none') span.paint = a.fill;
@@ -1233,11 +1256,27 @@ export class SceneOut implements Out {
   rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs = '', item?: Item): void {
     const look = lookAt(attrs);
     const f = this.top;
-    if (w > 0 && h > 0 && f.m) this.part(roundRect(x ?? 0, y ?? 0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect');
-    else if (w > 0 && h > 0) {
-      const x0 = (x ?? 0) + f.dx;
-      const y0 = (y ?? 0) + f.dy;
-      this.part(roundRect(x0, y0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect', true, { x0, y0, x1: x0 + w, y1: y0 + h });
+    if (w > 0 && h > 0) {
+      const drawn = this.current.shapes?.length ?? 0;
+      const rx = len(look.rx ?? look.ry, 0);
+      const ry = len(look.ry ?? look.rx, 0);
+      if (f.m) this.part(roundRect(x ?? 0, y ?? 0, w, h, rx, ry), look, item, 'rect');
+      else {
+        const x0 = (x ?? 0) + f.dx;
+        const y0 = (y ?? 0) + f.dy;
+        this.part(roundRect(x0, y0, w, h, rx, ry), look, item, 'rect', true, { x0, y0, x1: x0 + w, y1: y0 + h });
+      }
+      // Corners by pele's radius variable, which a host may set: the shapes say so.
+      if ((look.rx ?? look.ry) === 'var(--_r)') {
+        const shapes = this.current.shapes;
+        const scale = f.m ? Math.sqrt(Math.abs(f.m[0] * f.m[3] - f.m[1] * f.m[2])) : 1;
+        if (shapes) {
+          for (let i = drawn; i < shapes.length; i++) {
+            shapes[i].radius = '--_r';
+            if (scale !== 1) shapes[i].radiusScale = scale;
+          }
+        }
+      }
     } else if (item?.id !== undefined) {
       // A part of no size (a bar of nothing) is still where it would be drawn.
       this.open(item.id, item.cls ?? 'rect', 0, 0, null, item.source);
@@ -1363,7 +1402,10 @@ export class SceneOut implements Out {
     let top = cy - label.height / 2;
     const span = (s: { text: string; style: number }): SceneSpan => {
       const out: SceneSpan = { text: s.text };
-      if (s.style & Style.Bold) out.weight = 700;
+      if (s.style & Style.Bold) {
+        out.weight = 700;
+        out.weightVar = '--_w';
+      }
       if (s.style & Style.Italic) out.italic = true;
       if (s.style & Style.Mono) out.mono = true;
       if (s.style & Style.Underline) out.underline = true;
@@ -1403,6 +1445,8 @@ export class SceneOut implements Out {
     const t: SceneText = m
       ? { x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5], size: base.size * Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])), weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item }
       : { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
+    if (base.weightVar !== undefined) t.weightVar = base.weightVar;
+    if (base.family !== undefined) t.family = base.family;
     if (base.stroke !== null) {
       t.stroke = base.stroke;
       t.strokeWidth = base.strokeWidth * (m ? Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) : 1);
@@ -1567,6 +1611,8 @@ export class SceneOut implements Out {
 interface TextBase {
   size: number;
   weight: number;
+  weightVar: string | undefined;
+  family: string | undefined;
   italic: boolean;
   paint: string;
   mono: boolean;
@@ -1586,6 +1632,8 @@ function textBase(look: Look): TextBase {
   base = {
     size: len(look['font-size'], 16),
     weight: weight(look['font-weight'], 400),
+    weightVar: weightVarOf(look['font-weight']),
+    family: look['font-family'] === undefined || look['font-family'] === MONO ? undefined : families(look['font-family'], '') || undefined,
     italic: look['font-style'] === 'italic',
     // Letters with no fill show only their outline, if they have one.
     paint: look.fill === undefined ? 'var(--_fg)' : (ink.fill ?? 'none'),

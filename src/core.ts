@@ -6,6 +6,7 @@ import { withMath } from './text/math.js';
 import { cleanupComments, encodeEntities, normalizeLineBreaks, preprocess, type Config } from './preprocess.js';
 import type { DiagramModel } from './models.js';
 import { palette, withPalette } from './svg/palette.js';
+import { fontVars } from './svg/theme.js';
 import type { Diagram, LinkInfo, RenderOptions } from './types.js';
 import { SceneOut, sceneRoot, type Scene } from './draw/scene.js';
 
@@ -208,7 +209,7 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
       )
     );
     if (!out.scene) throw new PeleError(`${type} drew no scene.`, 'unsupported-diagram', { type, mermaidType });
-    Object.assign(out.scene.vars, colors.vars);
+    Object.assign(out.scene.vars, fontVars(options.fontFamily, options.fontFamilyMono), colors.vars);
     for (const link of rendered.links) link.id = decodeEntities(link.id);
     return { type, mermaidType, scene: out.scene, width: rendered.width, height: rendered.height, links: rendered.links };
   });

@@ -123,7 +123,7 @@ describe('flowchart rendering', () => {
   });
 
   it('still formats recognized tags while keeping unrecognized ones literal', () => {
-    expect(spansOf('flowchart LR\n  A["<b>bold</b> and <T>"]')).toEqual([{ text: 'bold', weight: 700 }, { text: ' and <T>' }]);
+    expect(spansOf('flowchart LR\n  A["<b>bold</b> and <T>"]')).toEqual([{ text: 'bold', weight: 700, weightVar: '--_w' }, { text: ' and <T>' }]);
   });
 
   it('decodes entity codes and line breaks in labels', () => {
@@ -149,7 +149,7 @@ describe('flowchart rendering', () => {
   });
 
   it('renders markdown emphasis', () => {
-    expect(spansOf('flowchart TD\n  A["`This **is** _Markdown_`"]')).toEqual([{ text: 'This ' }, { text: 'is', weight: 700 }, { text: ' ' }, { text: 'Markdown', italic: true }]);
+    expect(spansOf('flowchart TD\n  A["`This **is** _Markdown_`"]')).toEqual([{ text: 'This ' }, { text: 'is', weight: 700, weightVar: '--_w' }, { text: ' ' }, { text: 'Markdown', italic: true }]);
   });
 
   it('draws <code> spans in labels with the monospace font', () => {
@@ -534,9 +534,9 @@ describe('public api', () => {
 
   it('nesting sub/sup inside other emphasis keeps the emphasis on each run', () => {
     expect(spansOf('flowchart LR\n  A["<b>H<sub>2</sub>O</b>"]')).toEqual([
-      { text: 'H', weight: 700 },
-      { text: '2', weight: 700, scale: 1 / 1.2, shift: 0.2 },
-      { text: 'O', weight: 700 },
+      { text: 'H', weight: 700, weightVar: '--_w' },
+      { text: '2', weight: 700, weightVar: '--_w', scale: 1 / 1.2, shift: 0.2 },
+      { text: 'O', weight: 700, weightVar: '--_w' },
     ]);
   });
 

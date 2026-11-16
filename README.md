@@ -13,16 +13,19 @@ const { scene, width, height, links } = renderScene(`flowchart LR
   A[Mermaid text] --> B[Scene]`);
 ```
 
-A scene (`SCENE_VERSION` 5) holds:
+A scene (`SCENE_VERSION` 6) holds:
 
 - `shapes`: fills and strokes in painting order, each a path of numbers (`M L C Q A Z` op codes, see `src/draw/scene.ts`), its paint, opacity, outline width and dashes, and bounds.
 - `texts`: lines of text with their position, size, weight, anchor, paint and runs. A run may be bold, italic, monospace, underlined, or a sub- or superscript (`scale` of the text's size, baseline `shift` in the text's size).
 - `items`: the parts a host can point at (nodes, edges, labels), with their class, role, bounds and where the source wrote them.
-- `vars`: what the CSS variables paints name stand for, such as `--_s: var(--pele-surface,#f3f3f3)`, and the series colors a diagram's `themeVariables` set (`--pele-series-1: red`).
+- `vars`: what pele's CSS variables stand for, such as `--_s: var(--pele-surface,#f3f3f3)`, `--_r: var(--pele-radius,4px)`, `--_w: var(--pele-bold-weight,bold)` and `--_f: var(--pele-font,sans-serif)` (the fonts given as `fontFamily` and `fontFamilyMono`), and the series colors a diagram's `themeVariables` set (`--pele-series-1: red`). A text or run names the weight variable it takes (`weightVar`), a rectangle with pele's corners the radius variable (`radius`), and text is set in `--_f`, monospace runs in `--_fm`, unless a style names a `family`.
 
 Paints stay theme tokens such as `var(--_s)` or `var(--pele-series-1,#4c78a8)`. A host resolves them through `vars` against its own values for pele's CSS variables, as a page with pele's CSS would:
 
 ```css
+--pele-font: Inter, sans-serif;
+--pele-radius: 6px;
+--pele-bold-weight: 600;
 --pele-bg: #fffcf0;
 --pele-fg: #100f0f;
 --pele-muted: #6f6e69;
@@ -33,7 +36,7 @@ Paints stay theme tokens such as `var(--_s)` or `var(--pele-series-1,#4c78a8)`. 
 --pele-accent: #205ea6;
 ```
 
-Charts also use `--pele-series-1` through `--pele-series-8`, and some labels `--pele-fg-on-light`, `--pele-fg-on-dark` and `--pele-critical`. Any variable a host leaves unset takes the default in the paint or in `vars`. `--pele-radius`, the `--pele-*-weight` variables and fonts are drawn at their defaults: a scene has corners as path numbers and weights as numbers, and text is set in the host's fonts.
+Monospace text also takes `--pele-font-mono`, and titles and headings `--pele-title-weight` and `--pele-heading-weight`. Charts use `--pele-series-1` through `--pele-series-8`, and some labels `--pele-fg-on-light`, `--pele-fg-on-dark` and `--pele-critical`. Any variable a host leaves unset takes the default in the paint or in `vars`.
 
 The main entry point includes every diagram type. Reduce the initial bundle size by registering individual types or loading them on demand:
 

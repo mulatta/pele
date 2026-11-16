@@ -391,7 +391,7 @@ describe('class diagram rendering', () => {
     const s = scene('class MyClass\nnote "General<br>note"\nnote for MyClass "About **it**"');
     expect(textsOf(s, itemById(s, 'note0', 'pele-note')!).map(lineOf)).toEqual(['General', 'note']);
     const about = textsOf(s, itemById(s, 'note1', 'pele-note')!)[0];
-    expect(about.spans).toEqual([{ text: 'About ' }, { text: 'it', weight: 700 }]);
+    expect(about.spans).toEqual([{ text: 'About ' }, { text: 'it', weight: 700, weightVar: '--_w' }]);
     const edge = shapesOf(s, itemById(s, 'edgeNote1', 'pele-note-edge')!);
     expect(edge).toHaveLength(1);
     expect(edge[0].dash).toEqual([2, 4]);

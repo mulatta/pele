@@ -107,7 +107,7 @@ describe('drawing outputs', () => {
       out.end();
     }, '<g class="pele-node" data-id="n" transform="translate(4,2)"><path d="M1,1l2,3h4v-1c1,1 2,2 3,0s1,1 2,0q1,2 3,0t2,0a2,2 0 0 1 4,0zm5,5S9,9 10,10T12,9Z" fill="var(--_s)" stroke="var(--_b)"/><circle r="3" fill="var(--_c)"/><circle cy="6" r="2" fill="var(--_c)"/><rect width="8" height="5" fill="var(--_s)"/><text font-size="12" x="0" y="9" text-anchor="middle">a &amp; <tspan font-weight="var(--_w)">b</tspan><tspan fill="var(--_m)"> c</tspan></text><svg class="pele-icon" data-icon="x" x="2" y="1" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--_m)" stroke-width="2"><path d="M4 4h16v16H4z"/><circle cx="12" cy="12" r="4" fill="var(--_c)" stroke-dasharray="2 1"/></svg><circle r="1.5" fill="var(--_l)"/></g>');
     expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
-    expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700 }, { text: ' c', paint: 'var(--_m)' }]);
+    expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700, weightVar: '--_w' }, { text: ' c', paint: 'var(--_m)' }]);
     // The icon's 24-unit viewBox is drawn at half size in its 12-unit box, line widths too.
     const icon = scene.shapes.filter((s) => s.paint === 'var(--_m)');
     expect(icon.map((s) => [s.kind, s.width, s.cmds.slice(0, 3)])).toEqual([
@@ -202,6 +202,55 @@ describe('drawing outputs', () => {
     out.end();
     out.done(10, 10);
     expect(out.scene!.shapes.map((s) => s.width)).toEqual([16, 5, 32]);
+  });
+
+  // Weights and corners set by pele's variables keep their variable, so a host's --pele-* values
+  // reach them; the numbers are the defaults.
+  it('name the variables weights and corners take', () => {
+    const out = new SceneOut();
+    out.text(0, 10, 'Title', ' font-weight="var(--_tw)"');
+    out.spans(0, 20, [{ text: 'a ' }, { text: 'b', attrs: ' font-weight="var(--_w)"' }, { text: 'c', attrs: ' font-weight="bold"' }], '');
+    out.rect(0, 0, 20, 10, ' fill="red" style="rx:var(--_r)"');
+    out.rect(0, 0, 20, 10, ' fill="red" rx="3"');
+    out.done(10, 10);
+    const [title, runs] = out.scene!.texts;
+    expect([title.weight, title.weightVar]).toEqual([700, '--_tw']);
+    expect(runs.spans).toEqual([{ text: 'a ' }, { text: 'b', weight: 700, weightVar: '--_w' }, { text: 'c', weight: 700 }]);
+    expect(out.scene!.shapes.map((s) => s.radius)).toEqual(['--_r', undefined]);
+  });
+
+  // Turned, a rectangle is a path whose corners a host rounds again by the radius it sets.
+  it('name the corner variable of a turned rectangle too', () => {
+    const out = new SceneOut();
+    out.group({ attrs: ' transform="translate(20,40) rotate(-90)"' });
+    out.rect(0, 0, 20, 10, ' fill="red" style="rx:var(--_r)"');
+    out.end();
+    out.done(10, 10);
+    expect(out.scene!.shapes.map((s) => s.radius)).toEqual(['--_r']);
+  });
+
+  // A host's radius is in the units the rectangle is drawn in, which a frame may scale: a corner
+  // cut to fit a small rectangle does not tell how much.
+  it('give the scale a turned rectangle is drawn at, for its radius', () => {
+    const out = new SceneOut();
+    out.group({ attrs: ' transform="rotate(30) scale(2)"' });
+    out.rect(0, 0, 6, 4, ' fill="red" style="rx:var(--_r)"');
+    out.end();
+    out.rect(0, 0, 6, 4, ' fill="red" style="rx:var(--_r)"');
+    out.done(10, 10);
+    const [turned, plain] = out.scene!.shapes;
+    expect(turned.radiusScale).toBeCloseTo(2, 9);
+    expect(plain.radiusScale).toBeUndefined();
+  });
+
+  // A family a style names is the text's; a monospace run is in the monospace variable's.
+  it('keep the font family a style names', () => {
+    const out = new SceneOut();
+    out.text(0, 10, 'serif', ' font-family="Georgia, serif"');
+    out.text(0, 20, 'plain', '');
+    out.text(0, 30, 'bad', ' font-family="x;y"');
+    out.done(10, 10);
+    expect(out.scene!.texts.map((t) => t.family)).toEqual(['Georgia, serif', undefined, undefined]);
   });
 
   it('keep each attempt apart and take the one adopted', () => {

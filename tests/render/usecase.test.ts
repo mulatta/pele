@@ -352,7 +352,7 @@ describe('use case diagram rendering', () => {
     const s = sceneOf('actor User\nnote for User "Starts the workflow"\nnote for Login "`Needs a **session**`"\nUser --> Login');
     expect(items(s, 'usecase-note')).toHaveLength(2);
     expect(lines(s)).toEqual(expect.arrayContaining(['Starts the workflow', 'Needs a session']));
-    expect(textsOf(s, itemById(s, 'note-1')!)[0].spans).toEqual([{ text: 'Needs a ' }, { text: 'session', weight: 700 }]);
+    expect(textsOf(s, itemById(s, 'note-1')!)[0].spans).toEqual([{ text: 'Needs a ' }, { text: 'session', weight: 700, weightVar: '--_w' }]);
     const connectors = items(s, 'pele-note').filter((i) => hasClass(i, 'pele-edge'));
     expect(connectors.map((i) => i.id)).toEqual(['note-0-edge', 'note-1-edge']);
     for (const connector of connectors) {
@@ -382,7 +382,7 @@ describe('use case diagram rendering', () => {
     const label = (id: string) => textsOf(s, itemById(s, id)!);
     expect(label('A').map(lineOf)).toEqual(['*n* <b>x</b> \\n &amp;']);
     expect(label('Q').map(lineOf)).toEqual(['a "q" (b)']);
-    expect(label('B')[0].spans).toEqual([{ text: 'bold', weight: 700 }, { text: ' and ' }, { text: 'italic', italic: true }]);
+    expect(label('B')[0].spans).toEqual([{ text: 'bold', weight: 700, weightVar: '--_w' }, { text: ' and ' }, { text: 'italic', italic: true }]);
     expect(label('C').map(lineOf)).toEqual(['*literal*']);
   });
 

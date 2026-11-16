@@ -154,7 +154,7 @@ describe('mindmap rendering', () => {
   it('formats markdown and breaks lines', () => {
     const { scene } = draw('mindmap\n  id1["`**Root** with\na second line`"]\n    id2[One<br/>Two]\n    id3[*emphasis*]');
     const spans = (id: string) => textsOf(scene, itemById(scene, id)!).map((t) => t.spans);
-    expect(spans('id1')).toEqual([[{ text: 'Root', weight: 700 }, { text: ' with' }], [{ text: 'a second line' }]]);
+    expect(spans('id1')).toEqual([[{ text: 'Root', weight: 700, weightVar: '--_w' }, { text: ' with' }], [{ text: 'a second line' }]]);
     expect(spans('id2')).toEqual([[{ text: 'One' }], [{ text: 'Two' }]]);
     expect(spans('id3')).toEqual([[{ text: 'emphasis', italic: true }]]);
   });

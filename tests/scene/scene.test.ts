@@ -102,7 +102,16 @@ describe('scene output', () => {
       '--_a': 'var(--pele-surface-alt,#e6e6e6)',
       '--_b': 'var(--pele-border,#8a8a8a)',
       '--_c': 'var(--pele-accent,#5b7bd5)',
+      '--_r': 'var(--pele-radius,4px)',
+      '--_w': 'var(--pele-bold-weight,bold)',
+      '--_tw': 'var(--pele-title-weight,bold)',
+      '--_hw': 'var(--pele-heading-weight,bold)',
+      '--_f': 'var(--pele-font,sans-serif)',
+      '--_fm': 'var(--pele-font-mono,monospace)',
     });
+    // The fonts labels were measured in are drawn in, unless a host's --pele-font says otherwise.
+    const fonts = renderScene('pie\n  "A": 1', { ...options, fontFamily: 'Inter, sans-serif', fontFamilyMono: 'x;y' }).scene.vars;
+    expect([fonts['--_f'], fonts['--_fm']]).toEqual(['var(--pele-font,Inter, sans-serif)', 'var(--pele-font-mono,monospace)']);
     expect(renderScene('%%{init: {"themeVariables": {"pie1": "red"}}}%%\npie\n  "A": 1', options).scene.vars['--pele-series-1']).toBe('red');
   });
 

@@ -11,7 +11,26 @@ export const THEME_VARS: Readonly<Record<string, string>> = {
   '--_a': 'var(--pele-surface-alt,#e6e6e6)',
   '--_b': 'var(--pele-border,#8a8a8a)',
   '--_c': 'var(--pele-accent,#5b7bd5)',
+  '--_r': 'var(--pele-radius,4px)',
+  '--_w': 'var(--pele-bold-weight,bold)',
+  '--_tw': 'var(--pele-title-weight,bold)',
+  '--_hw': 'var(--pele-heading-weight,bold)',
 };
+
+// A list of font names, quoted or not, and nothing that could end the declaration it is put in.
+const FAMILY = String.raw`(?:"[^"'\\\n<>{}();:@]*"|'[^"'\\\n<>{}();:@]*'|[\p{L}\p{N}_-][\p{L}\p{N}_ .-]*)`;
+const RE_FAMILIES = new RegExp(String.raw`^\s*${FAMILY}(?:\s*,\s*${FAMILY})*\s*$`, 'u');
+
+// A font list as given, or `generic` when it is not one.
+export function families(list: string | undefined, generic: string): string {
+  return list && RE_FAMILIES.test(list) ? list.trim() : generic;
+}
+
+// The fonts labels were measured in are the ones they are drawn in, unless the host's --pele-font
+// or --pele-font-mono names others: text is in --_f, monospace runs in --_fm.
+export function fontVars(family: string | undefined, mono: string | undefined): Record<string, string> {
+  return { '--_f': `var(--pele-font,${families(family, 'sans-serif')})`, '--_fm': `var(--pele-font-mono,${families(mono, 'monospace')})` };
+}
 
 export const FONT_MONO = 'var(--_fm)';
 export const RADIUS = 'var(--pele-radius,4px)';
