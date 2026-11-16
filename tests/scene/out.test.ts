@@ -85,6 +85,26 @@ describe('drawing outputs', () => {
     expect(scene.shapes.length).toBe(6);
   });
 
+  it('draw relative path data, shapes at the origin, runs of text and icons', () => {
+    const { svg, scene } = both((out) => {
+      out.group({ cls: 'pele-node', id: 'n', x: 4, y: 2 });
+      out.path(out.pen().M(1, 1).l(2, 3).h(4).v(-1).c(1, 1, 2, 2, 3, 0).s(1, 1, 2, 0).q(1, 2, 3, 0).t(2, 0).a(2, 2, 0, 0, 1, 4, 0).z().m(5, 5).S(9, 9, 10, 10).T(12, 9).Z(), ' fill="var(--_s)" stroke="var(--_b)"');
+      out.circle(null, null, 3, ' fill="var(--_c)"');
+      out.circle(null, 6, 2, ' fill="var(--_c)"');
+      out.rect(null, null, 8, 5, ' fill="var(--_s)"');
+      out.spans(0, 9, [{ text: 'a & ' }, { text: 'b', attrs: ' font-weight="var(--_w)"' }, { text: ' c', attrs: ' fill="var(--_m)"' }], ' font-size="12"', ' text-anchor="middle"');
+      out.opaque('<svg class="pele-icon" data-icon="x" x="0" y="0" width="4" height="4"></svg>', 'icon');
+      out.both(() => '<circle r="1.5" fill="var(--_l)"/>', () => out.circle(null, null, 1.5, ' fill="var(--_l)"'));
+      out.end();
+    });
+    expect(svg).toContain('<path d="M1,1l2,3h4v-1c1,1 2,2 3,0s1,1 2,0q1,2 3,0t2,0a2,2 0 0 1 4,0zm5,5S9,9 10,10T12,9Z" fill="var(--_s)" stroke="var(--_b)"/>');
+    expect(svg).toContain('<circle r="3" fill="var(--_c)"/><circle cy="6" r="2" fill="var(--_c)"/><rect width="8" height="5" fill="var(--_s)"/>');
+    expect(svg).toContain('<text font-size="12" x="0" y="9" text-anchor="middle">a &amp; <tspan font-weight="var(--_w)">b</tspan><tspan fill="var(--_m)"> c</tspan></text>');
+    expect(sceneDifference(scene, svgToScene(svg))).toBeNull();
+    expect(scene.texts[0].spans).toEqual([{ text: 'a & ' }, { text: 'b', weight: 700 }, { text: ' c' }]);
+    expect(scene.skipped).toEqual({ icon: 1 });
+  });
+
   it('keep each attempt apart and take the one adopted', () => {
     for (const out of [new SvgOut({}), new SceneOut()]) {
       const attempts = [100, 200].map((w) => {

@@ -4,7 +4,7 @@ import { esc, escText, labelSvg, num, sourceAttrs } from '../svg/builder.js';
 import { svgDocument, type Accessible } from '../svg/root.js';
 import type { Label } from '../text/label.js';
 import type { IconResolver, RenderOptions } from '../types.js';
-import type { Attrs, Group, Item, Out, Pen } from './out.js';
+import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
 const text = (a: Attrs): string => (typeof a === 'string' ? a : a.attrs);
 
@@ -40,6 +40,58 @@ class SvgPen implements Pen {
   }
   Z(): this {
     this.d += 'Z';
+    return this;
+  }
+  S(x2: number, y2: number, x: number, y: number): this {
+    this.d += 'S' + num(x2) + ',' + num(y2) + ' ' + num(x) + ',' + num(y);
+    return this;
+  }
+  T(x: number, y: number): this {
+    this.d += 'T' + num(x) + ',' + num(y);
+    return this;
+  }
+  m(dx: number, dy: number): this {
+    this.d += 'm' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  l(dx: number, dy: number): this {
+    this.d += 'l' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  h(dx: number): this {
+    this.d += 'h' + num(dx);
+    return this;
+  }
+  v(dy: number): this {
+    this.d += 'v' + num(dy);
+    return this;
+  }
+  c(dx1: number, dy1: number, dx2: number, dy2: number, dx: number, dy: number): this {
+    this.d += 'c' + num(dx1) + ',' + num(dy1) + ' ' + num(dx2) + ',' + num(dy2) + ' ' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  s(dx2: number, dy2: number, dx: number, dy: number): this {
+    this.d += 's' + num(dx2) + ',' + num(dy2) + ' ' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  q(dx1: number, dy1: number, dx: number, dy: number): this {
+    this.d += 'q' + num(dx1) + ',' + num(dy1) + ' ' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  t(dx: number, dy: number): this {
+    this.d += 't' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  a(rx: number, ry: number, rotation: number, large: 0 | 1, sweep: 0 | 1, dx: number, dy: number): this {
+    this.d += 'a' + num(rx) + ',' + num(ry) + ' ' + num(rotation) + ' ' + large + ' ' + sweep + ' ' + num(dx) + ',' + num(dy);
+    return this;
+  }
+  z(): this {
+    this.d += 'z';
+    return this;
+  }
+  both(svg: string): this {
+    this.d += svg;
     return this;
   }
 }
@@ -120,13 +172,13 @@ export class SvgOut implements Out {
   }
 
   group(g: Group): void {
-    let tag = g.cls === undefined ? '<g' : '<g class="' + g.cls + '"';
-    if (g.before !== undefined) tag += g.before;
-    if (g.id !== undefined) tag += ' data-id="' + escText(g.id) + '"';
-    if (g.source !== undefined && this.sources) tag += sourceAttrs(g.source);
-    if (g.attrs !== undefined) tag += g.attrs;
-    if (g.x !== undefined) tag += ' transform="translate(' + num(g.x) + ',' + num(g.y ?? 0) + ')"';
-    this.body += tag + '>';
+    this.body +=
+      (g.cls === undefined ? '<g' : '<g class="' + g.cls + '"') +
+      (g.before ?? '') +
+      (g.id === undefined ? '' : ' data-id="' + escText(g.id) + '"') +
+      (g.source === undefined || !this.sources ? '' : sourceAttrs(g.source)) +
+      (g.attrs ?? '') +
+      (g.x === undefined ? '>' : ' transform="translate(' + num(g.x) + ',' + num(g.y ?? 0) + ')">');
     this.open.push('</g>');
   }
 
@@ -161,30 +213,57 @@ export class SvgOut implements Out {
     return s;
   }
 
-  rect(x: number, y: number, w: number, h: number, attrs: Attrs, item?: Item): void {
-    this.body += `<rect${this.head(item)} x="${num(x)}" y="${num(y)}" width="${num(w)}" height="${num(h)}"${text(attrs)}/>`;
+  // Hot paths: one `+` chain per element is faster than a template here, and most shapes are not
+  // parts, so they skip head().
+  rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs, item?: Item): void {
+    this.body +=
+      (item === undefined ? '<rect' : '<rect' + this.head(item)) +
+      (x === null ? '' : ' x="' + num(x) + '"') + (y === null ? '' : ' y="' + num(y) + '"') +
+      ' width="' + num(w) + '" height="' + num(h) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
-  circle(cx: number, cy: number, r: number, attrs: Attrs, item?: Item): void {
-    this.body += `<circle${this.head(item)} cx="${num(cx)}" cy="${num(cy)}" r="${num(r)}"${text(attrs)}/>`;
+  circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
+    this.body +=
+      (item === undefined ? '<circle' : '<circle' + this.head(item)) +
+      (cx === null ? '' : ' cx="' + num(cx) + '"') + (cy === null ? '' : ' cy="' + num(cy) + '"') +
+      ' r="' + num(r) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
-  ellipse(cx: number, cy: number, rx: number, ry: number, attrs: Attrs, item?: Item): void {
-    this.body += `<ellipse${this.head(item)} cx="${num(cx)}" cy="${num(cy)}" rx="${num(rx)}" ry="${num(ry)}"${text(attrs)}/>`;
+  ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
+    this.body +=
+      (item === undefined ? '<ellipse' : '<ellipse' + this.head(item)) +
+      (cx === null ? '' : ' cx="' + num(cx) + '"') + (cy === null ? '' : ' cy="' + num(cy) + '"') +
+      ' rx="' + num(rx) + '" ry="' + num(ry) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
   line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
-    this.body += `<line${this.head(item)} x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}"${text(attrs)}/>`;
+    this.body +=
+      (item === undefined ? '<line x1="' : '<line' + this.head(item) + ' x1="') +
+      num(x1) + '" y1="' + num(y1) + '" x2="' + num(x2) + '" y2="' + num(y2) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
   polygon(points: number[], attrs: Attrs, item?: Item): void {
     let p = '';
     for (let i = 0; i + 1 < points.length; i += 2) p += (i ? ' ' : '') + num(points[i]) + ',' + num(points[i + 1]);
-    this.body += `<polygon${this.head(item)} points="${p}"${text(attrs)}/>`;
+    this.body += (item === undefined ? '<polygon points="' : '<polygon' + this.head(item) + ' points="') + p + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
   text(x: number, y: number, s: string, attrs: Attrs, after = ''): void {
-    this.body += `<text${text(attrs)} x="${num(x)}" y="${num(y)}"${after}>${esc(s)}</text>`;
+    this.body += '<text' + (typeof attrs === 'string' ? attrs : attrs.attrs) + ' x="' + num(x) + '" y="' + num(y) + '"' + after + '>' + esc(s) + '</text>';
+  }
+
+  spans(x: number, y: number, runs: Run[], attrs: Attrs, after = ''): void {
+    let body = '';
+    for (const r of runs) body += r.attrs === undefined ? esc(r.text) : '<tspan' + r.attrs + '>' + esc(r.text) + '</tspan>';
+    this.body += '<text' + (typeof attrs === 'string' ? attrs : attrs.attrs) + ' x="' + num(x) + '" y="' + num(y) + '"' + after + '>' + body + '</text>';
+  }
+
+  opaque(svg: string): void {
+    this.body += svg;
+  }
+
+  both(svg: () => string): void {
+    this.body += svg();
   }
 
   pen(): Pen {
@@ -192,7 +271,8 @@ export class SvgOut implements Out {
   }
 
   path(d: string | Pen, attrs: Attrs, _tokens?: number[], item?: Item): void {
-    this.body += `<path${this.head(item)} d="${typeof d === 'string' ? d : (d as SvgPen).d}"${text(attrs)}/>`;
+    this.body +=
+      (item === undefined ? '<path d="' : '<path' + this.head(item) + ' d="') + (typeof d === 'string' ? d : (d as SvgPen).d) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
   }
 
   at(x: number, y: number, draw: (x: number, y: number) => string): void {

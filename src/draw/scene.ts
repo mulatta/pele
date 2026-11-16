@@ -14,7 +14,7 @@ import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import type { SourceInfo } from '../types.js';
-import type { Attrs, Group, Item, Out, Pen } from './out.js';
+import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
 export const SCENE_VERSION = 2;
 
@@ -161,36 +161,106 @@ class ScenePen implements Pen {
   cmds: Path = [];
   private x = 0;
   private y = 0;
-  M(x: number, y: number): this {
-    this.cmds.push(M, (this.x = x), (this.y = y));
+  // Where the subpath started, for Z, and the last control points, for S and T.
+  private sx = 0;
+  private sy = 0;
+  private cx: number | null = null;
+  private cy = 0;
+  private qx: number | null = null;
+  private qy = 0;
+  private to(x: number, y: number): this {
+    this.x = x;
+    this.y = y;
     return this;
+  }
+  M(x: number, y: number): this {
+    this.cmds.push(M, x, y);
+    this.sx = x;
+    this.sy = y;
+    this.cx = this.qx = null;
+    return this.to(x, y);
   }
   L(x: number, y: number): this {
-    this.cmds.push(L, (this.x = x), (this.y = y));
-    return this;
+    this.cmds.push(L, x, y);
+    this.cx = this.qx = null;
+    return this.to(x, y);
   }
   H(x: number): this {
-    this.cmds.push(L, (this.x = x), this.y);
-    return this;
+    return this.L(x, this.y);
   }
   V(y: number): this {
-    this.cmds.push(L, this.x, (this.y = y));
-    return this;
+    return this.L(this.x, y);
   }
   C(x1: number, y1: number, x2: number, y2: number, x: number, y: number): this {
-    this.cmds.push(C, x1, y1, x2, y2, (this.x = x), (this.y = y));
-    return this;
+    this.cmds.push(C, x1, y1, x2, y2, x, y);
+    this.cx = x2;
+    this.cy = y2;
+    this.qx = null;
+    return this.to(x, y);
+  }
+  S(x2: number, y2: number, x: number, y: number): this {
+    const x1 = this.cx === null ? this.x : 2 * this.x - this.cx;
+    const y1 = this.cx === null ? this.y : 2 * this.y - this.cy;
+    return this.C(x1, y1, x2, y2, x, y);
   }
   Q(x1: number, y1: number, x: number, y: number): this {
-    this.cmds.push(Q, x1, y1, (this.x = x), (this.y = y));
-    return this;
+    this.cmds.push(Q, x1, y1, x, y);
+    this.qx = x1;
+    this.qy = y1;
+    this.cx = null;
+    return this.to(x, y);
+  }
+  T(x: number, y: number): this {
+    const x1 = this.qx === null ? this.x : 2 * this.x - this.qx;
+    const y1 = this.qx === null ? this.y : 2 * this.y - this.qy;
+    return this.Q(x1, y1, x, y);
   }
   A(rx: number, ry: number, rotation: number, large: 0 | 1, sweep: 0 | 1, x: number, y: number): this {
-    this.cmds.push(A, Math.abs(rx), Math.abs(ry), rotation, large, sweep, (this.x = x), (this.y = y));
-    return this;
+    this.cmds.push(A, Math.abs(rx), Math.abs(ry), rotation, large, sweep, x, y);
+    this.cx = this.qx = null;
+    return this.to(x, y);
   }
   Z(): this {
     this.cmds.push(Z);
+    this.cx = this.qx = null;
+    return this.to(this.sx, this.sy);
+  }
+  m(dx: number, dy: number): this {
+    return this.M(this.x + dx, this.y + dy);
+  }
+  l(dx: number, dy: number): this {
+    return this.L(this.x + dx, this.y + dy);
+  }
+  h(dx: number): this {
+    return this.L(this.x + dx, this.y);
+  }
+  v(dy: number): this {
+    return this.L(this.x, this.y + dy);
+  }
+  c(dx1: number, dy1: number, dx2: number, dy2: number, dx: number, dy: number): this {
+    const x = this.x;
+    const y = this.y;
+    return this.C(x + dx1, y + dy1, x + dx2, y + dy2, x + dx, y + dy);
+  }
+  s(dx2: number, dy2: number, dx: number, dy: number): this {
+    return this.S(this.x + dx2, this.y + dy2, this.x + dx, this.y + dy);
+  }
+  q(dx1: number, dy1: number, dx: number, dy: number): this {
+    const x = this.x;
+    const y = this.y;
+    return this.Q(x + dx1, y + dy1, x + dx, y + dy);
+  }
+  t(dx: number, dy: number): this {
+    return this.T(this.x + dx, this.y + dy);
+  }
+  a(rx: number, ry: number, rotation: number, large: 0 | 1, sweep: 0 | 1, dx: number, dy: number): this {
+    return this.A(rx, ry, rotation, large, sweep, this.x + dx, this.y + dy);
+  }
+  z(): this {
+    return this.Z();
+  }
+  both(_svg: string, scene: (pen: Pen) => void): this {
+    scene(this);
     return this;
   }
 }
@@ -467,6 +537,19 @@ function sourceOf(a: Record<string, string>): SourceInfo | undefined {
   if (a['data-from'] !== undefined) info.from = unescape(a['data-from']);
   if (a['data-to'] !== undefined) info.to = unescape(a['data-to']);
   return Object.keys(info).length > 0 ? info : undefined;
+}
+
+// A tspan's own attributes, as the reader of its SVG would see them.
+const runCache = new Map<string, Record<string, string>>();
+function runAttrs(attrs: string): Record<string, string> {
+  let a = runCache.get(attrs);
+  if (!a) {
+    a = {};
+    for (const m of attrs.matchAll(RE_ATTR)) a[m[1]] = m[2];
+    if (runCache.size > 500) runCache.clear();
+    runCache.set(attrs, a);
+  }
+  return a;
 }
 
 const textOf = (el: Element): string => el.children.filter((c): c is string => typeof c === 'string').map(unescape).join('');
@@ -749,19 +832,38 @@ export class SceneOut implements Out {
     this.end();
   }
 
-  rect(x: number, y: number, w: number, h: number, attrs: Attrs = '', item?: Item): void {
+  rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs = '', item?: Item): void {
     const look = lookAt(attrs);
     const rx = len(look.rx, 0);
-    if (w > 0 && h > 0) this.part(roundRect(x, y, w, h, rx, rx), look, item, 'rect');
+    if (w > 0 && h > 0) this.part(roundRect(x ?? 0, y ?? 0, w, h, rx, rx), look, item, 'rect');
     else if (item?.id !== undefined) this.part([], look, item, 'rect');
   }
 
-  circle(cx: number, cy: number, r: number, attrs: Attrs, item?: Item): void {
-    this.part(r > 0 ? ellipse(cx, cy, r, r) : [], lookAt(attrs), item, 'circle');
+  circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
+    this.part(r > 0 ? ellipse(cx ?? 0, cy ?? 0, r, r) : [], lookAt(attrs), item, 'circle');
   }
 
-  ellipse(cx: number, cy: number, rx: number, ry: number, attrs: Attrs, item?: Item): void {
-    this.part(rx > 0 && ry > 0 ? ellipse(cx, cy, rx, ry) : [], lookAt(attrs), item, 'ellipse');
+  spans(x: number, y: number, runs: Run[], attrs: Attrs, after = ''): void {
+    const look = merge(this.top.look, after ? parseLook((typeof attrs === 'string' ? attrs : attrs.attrs) + after) : lookAt(attrs));
+    const list: SceneSpan[] = [];
+    for (const r of runs) {
+      if (r.attrs === undefined) {
+        if (r.text) list.push({ text: r.text });
+      } else list.push(spanOf(r.text, runAttrs(r.attrs)));
+    }
+    this.put(x, y, list, textBase(look, len(look['font-size'], 16)), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
+  }
+
+  opaque(_svg: string, what: string): void {
+    this.skip(what);
+  }
+
+  both(_svg: () => string, scene: () => void): void {
+    scene();
+  }
+
+  ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
+    this.part(rx > 0 && ry > 0 ? ellipse(cx ?? 0, cy ?? 0, rx, ry) : [], lookAt(attrs), item, 'ellipse');
   }
 
   line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
