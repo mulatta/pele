@@ -126,9 +126,6 @@ export interface Out {
   // A path, written as <path d{attrs}/>: data from pen(), or text, with the numbers of the text
   // when the caller has them.
   path(d: string | Pen, attrs: Attrs, tokens?: number[], item?: Item): void;
-  // What a shared helper draws at (x, y). A scene reads what it draws at (0, 0) and moves it, so a
-  // piece drawn in many places is read once.
-  at(x: number, y: number, draw: (x: number, y: number) => string): void;
   // A measured label centered on (cx, cy).
   label(label: Label, cx: number, cy: number, attrs: Attrs, icons?: IconResolver): void;
   // Markup only the SVG has (an image, an icon), which a scene leaves out.

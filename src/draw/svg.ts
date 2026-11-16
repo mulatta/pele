@@ -182,7 +182,6 @@ export class SvgOut implements Out {
     this.open.push('</g>');
   }
 
-
   shift(x: number, y: number): void {
     this.group({ x, y });
   }
@@ -273,10 +272,6 @@ export class SvgOut implements Out {
   path(d: string | Pen, attrs: Attrs, _tokens?: number[], item?: Item): void {
     this.body +=
       (item === undefined ? '<path d="' : '<path' + this.head(item) + ' d="') + (typeof d === 'string' ? d : (d as SvgPen).d) + '"' + (typeof attrs === 'string' ? attrs : attrs.attrs) + '/>';
-  }
-
-  at(x: number, y: number, draw: (x: number, y: number) => string): void {
-    this.body += draw(x, y);
   }
 
   label(label: Label, cx: number, cy: number, attrs: Attrs, icons?: IconResolver): void {

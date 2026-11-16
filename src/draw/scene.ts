@@ -925,14 +925,6 @@ export class SceneOut implements Out {
     this.part(points(list, true), lookAt(attrs), item, 'polygon');
   }
 
-  at(x: number, y: number, draw: (x: number, y: number) => string): void {
-    const svg = draw(0, 0);
-    if (!svg) return;
-    this.open(undefined, '', x, y, null);
-    this.fragment(svg);
-    this.end();
-  }
-
   pen(): Pen {
     return new ScenePen();
   }
