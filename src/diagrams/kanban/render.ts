@@ -1,5 +1,5 @@
 import type { Config } from '../../preprocess.js';
-import type { Out } from '../../draw/out.js';
+import { Paint, type Out } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
 import { esc, num, textStyle, type IconResolver } from '../../svg/builder.js';
 import { CRITICAL, ROUNDED, classNames } from '../../svg/theme.js';
@@ -11,6 +11,10 @@ import { titleRoom } from '../common/fit-width.js';
 import { iconMarkup } from '../../text/icons.js';
 import { iconSvg } from '../common/icon.js';
 import type { KanbanModel, KanbanNode } from './db.js';
+
+// Read once, however many columns and cards use them.
+const COLUMN = new Paint(` fill="var(--_s)"${ROUNDED}`);
+const CARD = new Paint(` fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}`);
 
 const COLUMN_GAP = 12;
 const COLUMN_PAD = 8;
@@ -225,12 +229,11 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
       x: left + (index % perRow) * (columnWidth + COLUMN_GAP),
       y: pad + titleHeight + rowTops[row],
     });
-    // A rect with no x and y, which a typed rect would write.
-    out.fragment(`<rect width="${columnWidth}" height="${num(rowHeights[row])}" fill="var(--_s)"${ROUNDED}/>`);
+    out.rect(null, null, columnWidth, rowHeights[row], COLUMN);
     textBlock(out, titles[index], COLUMN_PAD + 4, COLUMN_PAD, ' class="pele-cluster-label" font-weight="var(--_hw)"', icons);
     out.text(edge, COLUMN_PAD + line / 2 + small * 0.35, String(section.items.length), ' class="pele-count"', ` text-anchor="end" font-size="${small}" fill="var(--_m)"`);
     if (has(section.icon)) {
-      out.at(edge - countWidths[index] - ICON_GAP - glyph, COLUMN_PAD + (line - glyph) / 2, (x, y) => iconSvg(section.icon!, x, y, glyph, icons));
+      out.opaque(iconSvg(section.icon!, edge - countWidths[index] - ICON_GAP - glyph, COLUMN_PAD + (line - glyph) / 2, glyph, icons), 'icon');
     }
 
     let y = headHeight;
@@ -245,13 +248,13 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
         source: item.source,
         attrs: ` transform="translate(${COLUMN_PAD},${num(y)})" font-size="${small}"`,
       });
-      out.fragment(`<rect width="${cardWidth}" height="${num(card.height)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>`);
+      out.rect(null, null, cardWidth, card.height, CARD);
       if (color !== undefined) {
         out.path(out.pen().M(2.5, 5).V(card.height - 5), ` fill="none" ${color} stroke-width="3" stroke-linecap="round"`, undefined, { cls: 'pele-priority' });
       }
       textBlock(out, card.label, CARD_PAD, CARD_PAD, ' class="pele-label"', icons);
       if (has(item.icon)) {
-        out.at(cardWidth - CARD_PAD - glyph, CARD_PAD + (smallLine - glyph) / 2, (x, yy) => iconSvg(item.icon!, x, yy, glyph, icons));
+        out.opaque(iconSvg(item.icon!, cardWidth - CARD_PAD - glyph, CARD_PAD + (smallLine - glyph) / 2, glyph, icons), 'icon');
       }
       const bottom = card.height - CARD_PAD;
       if (item.ticket) {
