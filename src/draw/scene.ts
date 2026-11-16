@@ -368,20 +368,6 @@ function arcNumbers(s: string): number[] {
   return out;
 }
 
-// Path tokens as routePath keeps them (command code, argument count, arguments; absolute M, L, C,
-// Q) -> commands, with no text in between.
-export function tokensToCmds(tokens: number[]): Path {
-  const out: Path = [];
-  for (let i = 0; i < tokens.length; ) {
-    const code = tokens[i];
-    const n = tokens[i + 1];
-    out.push(code === 77 ? M : code === 76 ? L : code === 67 ? C : Q);
-    for (let k = 0; k < n; k++) out.push(tokens[i + 2 + k]);
-    i += 2 + n;
-  }
-  return out;
-}
-
 // Path data -> absolute commands.
 export function parsePathData(d: string): Path {
   const out: Path = [];
@@ -877,41 +863,48 @@ export class SceneOut implements Out {
   }
 
   // Adds geometry in the current group's coordinates, painted by `look` over the inherited one.
-  shape(cmds: Path, own: Look = NO_LOOK): void {
+  // Geometry made already moved by the group's offset is `placed`, with its `box` when known: a
+  // copy and a pass over it cost an interpreter as much as making it.
+  shape(cmds: Path, own: Look = NO_LOOK, placed = false, known?: Box): void {
     const f = this.top;
     if (!cmds.length || f.hidden) return;
     const ink = inkOf(merge(f.look, own));
-    const placed = shift(cmds, f.dx, f.dy);
-    const box = cmdsBox(placed);
+    if (!placed) cmds = shift(cmds, f.dx, f.dy);
+    const box = known ?? cmdsBox(cmds);
     if (ink.fill !== null) {
-      (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds: placed, box, item: f.item });
+      (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item });
     }
     if (ink.stroke !== null) {
       const p = ink.width / 2;
       (this.current.shapes ??= []).push({
         kind: 'stroke', paint: ink.stroke, opacity: ink.strokeOpacity, width: ink.width, dash: ink.dash === null ? null : ink.dash.slice(),
-        cmds: placed, box: { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p }, item: f.item,
+        cmds, box: { x0: box.x0 - p, y0: box.y0 - p, x1: box.x1 + p, y1: box.y1 + p }, item: f.item,
       });
     }
     this.touch(box);
   }
 
   // A shape, in an item of its own when it is a part, as a reader of its SVG would see it.
-  private part(cmds: Path, look: Look, item: Item | undefined, tag: string): void {
-    if (item === undefined || item.id === undefined) return this.shape(cmds, look);
+  private part(cmds: Path, look: Look, item: Item | undefined, tag: string, placed = false, box?: Box): void {
+    if (item === undefined || item.id === undefined) return this.shape(cmds, look, placed, box);
     this.open(item.id, item.cls ?? tag, 0, 0, null, item.source);
-    this.shape(cmds, look);
+    this.shape(cmds, look, placed, box);
     this.end();
   }
 
   rect(x: number | null, y: number | null, w: number, h: number, attrs: Attrs = '', item?: Item): void {
     const look = lookAt(attrs);
-    if (w > 0 && h > 0) this.part(roundRect(x ?? 0, y ?? 0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect');
-    else if (item?.id !== undefined) this.part([], look, item, 'rect');
+    if (w > 0 && h > 0) {
+      const f = this.top;
+      const x0 = (x ?? 0) + f.dx;
+      const y0 = (y ?? 0) + f.dy;
+      this.part(roundRect(x0, y0, w, h, len(look.rx ?? look.ry, 0), len(look.ry ?? look.rx, 0)), look, item, 'rect', true, { x0, y0, x1: x0 + w, y1: y0 + h });
+    } else if (item?.id !== undefined) this.part([], look, item, 'rect');
   }
 
   circle(cx: number | null, cy: number | null, r: number, attrs: Attrs, item?: Item): void {
-    this.part(r > 0 ? ellipse(cx ?? 0, cy ?? 0, r, r) : [], lookAt(attrs), item, 'circle');
+    const f = this.top;
+    this.part(r > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, r, r) : [], lookAt(attrs), item, 'circle', true);
   }
 
   spans(x: number, y: number, runs: Run[], attrs: Attrs, after = ''): void {
@@ -922,7 +915,7 @@ export class SceneOut implements Out {
         if (r.text) list.push({ text: r.text });
       } else list.push(spanOf(r.text, runAttrs(r.attrs)));
     }
-    this.put(x, y, list, textBase(look, len(look['font-size'], 16)), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
+    this.put(x, y, list, textBase(look), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
   }
 
   opaque(_svg: string, what: string): void {
@@ -934,12 +927,14 @@ export class SceneOut implements Out {
   }
 
   ellipse(cx: number | null, cy: number | null, rx: number, ry: number, attrs: Attrs, item?: Item): void {
-    this.part(rx > 0 && ry > 0 ? ellipse(cx ?? 0, cy ?? 0, rx, ry) : [], lookAt(attrs), item, 'ellipse');
+    const f = this.top;
+    this.part(rx > 0 && ry > 0 ? ellipse((cx ?? 0) + f.dx, (cy ?? 0) + f.dy, rx, ry) : [], lookAt(attrs), item, 'ellipse', true);
   }
 
   line(x1: number, y1: number, x2: number, y2: number, attrs: Attrs, item?: Item): void {
     // A line has no inside, whatever fill it inherits.
-    this.part([M, x1, y1, L, x2, y2], merge(lookAt(attrs), NO_FILL), item, 'line');
+    const f = this.top;
+    this.part([M, x1 + f.dx, y1 + f.dy, L, x2 + f.dx, y2 + f.dy], merge(lookAt(attrs), NO_FILL), item, 'line', true);
   }
 
   polygon(list: number[], attrs: Attrs, item?: Item): void {
@@ -967,7 +962,7 @@ export class SceneOut implements Out {
         case 'text': {
           const look = merge(this.top.look, op.look);
           const anchor = op.anchor ?? look['text-anchor'] ?? 'start';
-          this.put(op.x, op.y, op.spans, textBase(look, len(look['font-size'], 16)), anchor as 'start' | 'middle' | 'end');
+          this.put(op.x, op.y, op.spans, textBase(look), anchor as 'start' | 'middle' | 'end');
           break;
         }
         case 'skip':
@@ -982,13 +977,8 @@ export class SceneOut implements Out {
     if (lines.length === 0) return;
     const f = this.top;
     const look = merge(f.look, lookAt(attrs));
-    const base = {
-      size: label.size,
-      weight: weight(look['font-weight'], 400),
-      italic: look['font-style'] === 'italic',
-      paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
-      mono: look['font-family'] === MONO,
-    };
+    let base = textBase(look);
+    if (base.size !== label.size) base = { ...base, size: label.size };
     const lh = label.lineHeight;
     const shiftY = label.size * 0.35;
     let top = cy - label.height / 2;
@@ -1121,11 +1111,36 @@ export class SceneOut implements Out {
 
   text(x: number, y: number, text: string, attrs: Attrs, after = ''): void {
     const look = merge(this.top.look, after ? parseLook((typeof attrs === 'string' ? attrs : attrs.attrs) + after) : lookAt(attrs));
-    this.put(x, y, [{ text }], textBase(look, len(look['font-size'], 16)), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
+    this.put(x, y, [{ text }], textBase(look), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
   }
 
   path(d: string | Pen, attrs: Attrs = '', tokens?: number[], item?: Item): void {
-    this.part(typeof d !== 'string' ? (d as ScenePen).take() : tokens ? tokensToCmds(tokens) : parsePathData(d), lookAt(attrs), item, 'path');
+    if (typeof d === 'string' && tokens) {
+      // Read, moved and measured in one pass.
+      const f = this.top;
+      const dx = f.dx;
+      const dy = f.dy;
+      const cmds: Path = [];
+      const box = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+      for (let i = 0; i < tokens.length; ) {
+        const code = tokens[i];
+        const end = i + 2 + tokens[i + 1];
+        cmds.push(code === 77 ? M : code === 76 ? L : code === 67 ? C : Q);
+        for (let k = i + 2; k + 1 < end; k += 2) {
+          const x = tokens[k] + dx;
+          const y = tokens[k + 1] + dy;
+          cmds.push(x, y);
+          if (x < box.x0) box.x0 = x;
+          if (y < box.y0) box.y0 = y;
+          if (x > box.x1) box.x1 = x;
+          if (y > box.y1) box.y1 = y;
+        }
+        i = end;
+      }
+      this.part(cmds, lookAt(attrs), item, 'path', true, box);
+      return;
+    }
+    this.part(typeof d !== 'string' ? (d as ScenePen).take() : parsePathData(d), lookAt(attrs), item, 'path');
   }
 
   raw(): void {}
@@ -1146,12 +1161,19 @@ interface TextBase {
 
 const MONO = 'var(--_fm)';
 
-function textBase(look: Look, size: number): TextBase {
-  return {
-    size,
+// Looks are shared and never change, so a text's base is read once per look.
+const bases = new WeakMap<Look, TextBase>();
+
+function textBase(look: Look): TextBase {
+  let base = bases.get(look);
+  if (base) return base;
+  base = {
+    size: len(look['font-size'], 16),
     weight: weight(look['font-weight'], 400),
     italic: look['font-style'] === 'italic',
     paint: look.fill && look.fill !== 'none' ? look.fill : 'var(--_fg)',
     mono: look['font-family'] === MONO,
   };
+  bases.set(look, base);
+  return base;
 }
