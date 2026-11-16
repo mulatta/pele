@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import { Paint, type Out } from '../../draw/out.js';
-import { escText, labelSvg, num } from '../../svg/builder.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
+import { escText, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -25,16 +25,57 @@ const LEGEND_GAP = 20;
 const CARD = new Paint(` fill="var(--_s)" stroke="var(--_b)"${ROUNDED}`);
 const BAND = new Paint(` fill="var(--_a)"${ROUNDED}`);
 
-const EYES = '<circle cx="-3.6" cy="-2.8" r="1.3"/><circle cx="3.6" cy="-2.8" r="1.3"/>';
-const MOUTHS = { happy: 'M-5,2A6,6 0 0 0 5,2', neutral: 'M-4.5,4.5H4.5', sad: 'M-5,6.5A6,6 0 0 1 5,6.5' };
+const MOUTHS = {
+  happy: (p: Pen) => p.M(-5, 2).A(6, 6, 0, 0, 0, 5, 2),
+  neutral: (p: Pen) => p.M(-4.5, 4.5).H(4.5),
+  sad: (p: Pen) => p.M(-5, 6.5).A(6, 6, 0, 0, 1, 5, 6.5),
+};
 
-function face(x: number, y: number, mood: keyof typeof MOUTHS): string {
-  return (
-    `<g class="pele-face pele-face-${mood}" transform="translate(${num(x)},${num(y)})">` +
-    `<circle r="${FACE}" fill="var(--_bg)" stroke="var(--_l)"/>` +
-    `<g fill="var(--_l)">${EYES}</g>` +
-    `<path d="${MOUTHS[mood]}" fill="none" stroke="var(--_l)" stroke-linecap="round"/>` +
-    '</g>'
+function face(out: Out, x: number, y: number, mood: keyof typeof MOUTHS): void {
+  out.group({ cls: `pele-face pele-face-${mood}`, x, y });
+  out.circle(null, null, FACE, ' fill="var(--_bg)" stroke="var(--_l)"');
+  out.group({ attrs: ' fill="var(--_l)"' });
+  out.circle(-3.6, -2.8, 1.3, '');
+  out.circle(3.6, -2.8, 1.3, '');
+  out.end();
+  out.path(MOUTHS[mood](out.pen()), ' fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.end();
+}
+
+// Measured at the small size but drawn at the inherited one, which out.label would not reproduce.
+function inheritedLabel(out: Out, label: Label, cx: number, cy: number, attrs: string): void {
+  out.both(
+    () => labelSvg(label, cx, cy, attrs),
+    () => {
+      const lines = label.lines;
+      if (lines.length === 0) return;
+      const shift = label.size * 0.35;
+      const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
+      let top = cy - label.height / 2;
+      if (only && only.icon === undefined && only.math === undefined && only.style === 0) {
+        out.text(cx, top + label.lineHeight / 2 + shift, only.text, attrs, ' text-anchor="middle"');
+        return;
+      }
+      const shared = sharedStyle(label);
+      const look = textStyle(attrs, shared);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const h = label.heights ? label.heights[i] : label.lineHeight;
+        const y = top + h / 2 + shift;
+        if (line.some((span) => span.icon !== undefined || span.math)) {
+          let x = cx - label.widths[i] / 2;
+          for (const span of line) {
+            if (span.math) out.opaque('', 'math');
+            else if (span.icon !== undefined) out.opaque('', 'icon');
+            else if (span.text !== '') out.spans(x, y, [{ text: span.text, attrs: spanStyle(span.style & ~shared) }], look, ' text-anchor="start"');
+            x += span.width;
+          }
+        } else {
+          out.spans(cx, y, line.length ? line.map((span) => ({ text: span.text, attrs: spanStyle(span.style & ~shared) })) : [{ text: ' ' }], look, ' text-anchor="middle"');
+        }
+        top += h;
+      }
+    }
   );
 }
 
@@ -170,8 +211,13 @@ function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOpt
         out.rect(x, cardsY, cardW, cardH, CARD);
         out.label(labels[i], cx, cardsY + PAD_Y + textH / 2, ` font-size="${small}"`);
         people.forEach((name, k) => {
-          out.at(cx + (k - (people.length - 1) / 2) * step, cardsY + cardH - PAD_Y - DOT, (px, py) =>
-            `<circle class="pele-actor" cx="${num(px)}" cy="${num(py)}" r="${DOT}" fill="${seriesColor(actor.get(name) ?? 0)}" stroke="var(--_s)"><title>${escText(name)}</title></circle>`
+          const px = cx + (k - (people.length - 1) / 2) * step;
+          const py = cardsY + cardH - PAD_Y - DOT;
+          const dot = ` fill="${seriesColor(actor.get(name) ?? 0)}" stroke="var(--_s)"`;
+          // The tooltip sits inside the circle, which no typed call writes.
+          out.both(
+            () => `<circle class="pele-actor" cx="${num(px)}" cy="${num(py)}" r="${DOT}"${dot}><title>${escText(name)}</title></circle>`,
+            () => out.circle(px, py, DOT, dot, { cls: 'pele-actor' })
           );
         });
         out.end();
@@ -179,7 +225,7 @@ function draw(out: Out, model: JourneyModel, _config: Config, options: RenderOpt
     });
     out.path(stems, ' fill="none" stroke="var(--_b)" stroke-dasharray="2 3"', undefined, { cls: 'pele-stems' });
     if (n > 1) out.path(line, ' fill="none" stroke="var(--_l)" stroke-linejoin="round"', undefined, { cls: 'pele-edge' });
-    for (const [fx, fy, mood] of faces) out.at(fx, fy, (x, y) => face(x, y, mood));
+    for (const [fx, fy, mood] of faces) face(out, fx, fy, mood);
 
     for (const run of runs) {
       if (!run.label) {
@@ -257,10 +303,9 @@ function verticalJourney(out: Out, model: JourneyModel, options: RenderOptions):
     const w = Math.max(room, label.width + 72);
     out.group({ cls: 'pele-node pele-journey-step', id: `${index}`, source: task.source });
     out.rect(pad, y, w, h, CARD);
-    // Measured at the small size but drawn at the inherited one, which a typed label would not reproduce.
-    out.fragment(labelSvg(label, pad + PAD_X + label.width / 2, y + PAD_Y + label.height / 2, ' class="pele-label"'));
+    inheritedLabel(out, label, pad + PAD_X + label.width / 2, y + PAD_Y + label.height / 2, ' class="pele-label"');
     const cx = pad + w - 28;
-    out.at(cx, y + PAD_Y + FACE, (x, yy) => face(x, yy, task.score > 3 ? 'happy' : task.score < 3 ? 'sad' : 'neutral'));
+    face(out, cx, y + PAD_Y + FACE, task.score > 3 ? 'happy' : task.score < 3 ? 'sad' : 'neutral');
     if (!Number.isNaN(task.score))
       out.text(cx, y + PAD_Y + 2 * FACE + small, num(Math.min(5, Math.max(1, task.score))), ' class="pele-journey-score"', ` font-size="${small}" text-anchor="middle"`);
     let py = y + PAD_Y + textH + 4;
@@ -272,7 +317,7 @@ function verticalJourney(out: Out, model: JourneyModel, options: RenderOptions):
     }
     out.end();
     y += h;
-    if (index + 1 < model.tasks.length) out.path(`M${num(pad + w / 2)},${num(y)}v16`, ' fill="none" stroke="var(--_l)"', undefined, { cls: 'pele-edge' });
+    if (index + 1 < model.tasks.length) out.path(out.pen().M(pad + w / 2, y).v(16), ' fill="none" stroke="var(--_l)"', undefined, { cls: 'pele-edge' });
     y += 16;
     width = Math.max(width, w);
   });
