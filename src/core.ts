@@ -22,7 +22,7 @@ export type { Attrs, Group, Out, Pen } from './draw/out.js';
 export type { MountOptions, Mounted } from './mount.js';
 export { forgetTextWidths } from './text/measurer.js';
 export { enableZoom } from './zoom.js';
-export type { Scene, SceneShape, SceneSpan, SceneText, SceneItem } from './draw/scene.js';
+export type { Scene, SceneGradient, SceneShape, SceneSpan, SceneText, SceneItem } from './draw/scene.js';
 export { SCENE_VERSION } from './draw/scene.js';
 export type { Zoom, ZoomOptions } from './zoom.js';
 

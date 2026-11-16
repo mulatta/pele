@@ -78,7 +78,6 @@ export function labelSvg(label: Label, cx: number, cy: number, attrs: string, ic
 
   const shared = sharedStyle(label);
   const given = attrs;
-  let math: MathLook | undefined;
   attrs = textStyle(attrs, shared);
   let body = '';
   let extra = '';
@@ -93,9 +92,7 @@ export function labelSvg(label: Label, cx: number, cy: number, attrs: string, ic
       let x = cx - label.widths[i] / 2;
       for (const span of line) {
         if (span.math) {
-          const box = `x="${num(x)}" y="${num(mid - span.math.height / 2)}" width="${num(span.math.width)}" height="${num(span.math.height)}"`;
-          math ??= mathLook(given);
-          extra += math.halo === undefined ? mathSvg(span.math, box, label.size, math.attrs) : `<rect ${box} rx="2" fill="${math.halo}"/>`;
+          extra += mathMarkup(span.math, x, mid, label.size, given);
         } else if (span.icon !== undefined) {
           const side = label.size * 1.1;
           const inner = icons?.(span.icon) ?? '';
@@ -139,6 +136,14 @@ function mathLook(attrs: string): MathLook {
   if (fill === 'none') return { attrs: '', halo: RE_STROKE.exec(attrs)?.[1] ?? 'none' };
   const opacity = RE_STYLE_OPACITY.exec(style)?.[1].trim();
   return { attrs: (fill === '' ? '' : ` color="${fill}"`) + (opacity ? ` opacity="${opacity}"` : '') };
+}
+
+// A math span from x, centred on mid, as a label writes it: the resolver's markup in a box, or, on
+// a label with no fill (a cluster title's outline), a patch of the outline's colour.
+export function mathMarkup(math: MathMarkup, x: number, mid: number, size: number, attrs: string): string {
+  const box = `x="${num(x)}" y="${num(mid - math.height / 2)}" width="${num(math.width)}" height="${num(math.height)}"`;
+  const look = mathLook(attrs);
+  return look.halo === undefined ? mathSvg(math, box, size, look.attrs) : `<rect ${box} rx="2" fill="${look.halo}"/>`;
 }
 
 // Resolver markup is trusted.

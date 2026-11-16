@@ -3,7 +3,7 @@
 // moved by translate(), inherited presentation attributes, `data-id` items, outlines and text.
 // Anything else (another transform, images, icons, math) is counted in `skipped` and not drawn.
 // Path geometry is computed here, not imported from the scene output, so a fault there shows.
-import type { Box, Path, Scene, SceneItem, SceneSpan, SceneText } from '../../src/draw/scene.js';
+import type { Box, Path, Scene, SceneItem, SceneShape, SceneSpan, SceneText } from '../../src/draw/scene.js';
 
 const [M, L, C, Q, A, Z] = [0, 1, 2, 3, 4, 5];
 const ARGC = [2, 2, 6, 4, 7, 0];
@@ -156,7 +156,7 @@ function parseXml(src: string): Node {
   return root.children.find((c): c is Node => typeof c !== 'string' && c.tag === 'svg') ?? root;
 }
 
-const INHERITED = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx'];
+const INHERITED = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx', 'color'];
 type Look = Record<string, string>;
 
 function own(el: Node): Look {
@@ -320,6 +320,16 @@ export function svgToScene(svg: string): Scene {
   const vb = (root.attrs.viewBox ?? '').split(/[\s,]+/).map(Number);
   const scene: Scene = { version: 3, x: 0, y: 0, w: vb[2] ?? 0, h: vb[3] ?? 0, baseline: null, shapes: [], texts: [], items: [], skipped: {} };
   const items: number[] = [-1];
+  // Gradients by id, read first: their definitions come after the fills that use them.
+  const defined = new Map<string, Node>();
+  const collect = (el: Node) => {
+    for (const c of el.children) {
+      if (typeof c === 'string') continue;
+      if (c.tag === 'linearGradient' && c.attrs.id) defined.set(c.attrs.id, c);
+      collect(c);
+    }
+  };
+  collect(root);
   const skip = (what: string) => (scene.skipped[what] = (scene.skipped[what] ?? 0) + 1);
   const touch = (box: Box) => {
     const i = items[items.length - 1];
@@ -333,14 +343,32 @@ export function svgToScene(svg: string): Scene {
       it.box.y1 = Math.max(it.box.y1, box.y1);
     }
   };
-  const shape = (local: Path, look: Look, m: Affine) => {
+  const shape = (local: Path, given: Look, m: Affine) => {
     if (!local.length) return;
+    // currentColor is the color property.
+    const look = { ...given };
+    for (const k of ['fill', 'stroke']) if (look[k] === 'currentColor' && look.color) look[k] = look.color;
     const cmds = place(local, m);
     const box = cmdsBox(cmds);
     const item = items[items.length - 1];
     const opacity = len(look.opacity, 1);
-    if (look.fill && look.fill !== 'none' && look.fill !== 'transparent') {
-      scene.shapes.push({ kind: 'fill', paint: look.fill, opacity: opacity * len(look['fill-opacity'], 1), cmds, box, item });
+    // A fill of `url(#id) fallback` paints the fallback where the gradient is not drawn.
+    const url = look.fill?.match(/^url\(#([^)]+)\)\s*(.*)$/);
+    const fill = url ? url[2] || 'none' : look.fill;
+    if (fill && fill !== 'none' && fill !== 'transparent') {
+      const s: SceneShape = { kind: 'fill', paint: fill, opacity: opacity * len(look['fill-opacity'], 1), cmds, box, item };
+      const g = url && defined.get(url[1]);
+      if (g) {
+        const at = (x: number, y: number) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+        const [x1, y1] = at(len(g.attrs.x1, 0), len(g.attrs.y1, 0));
+        const [x2, y2] = at(len(g.attrs.x2, 0), len(g.attrs.y2, 0));
+        const stops = g.children
+          .filter((c): c is Node => typeof c !== 'string' && c.tag === 'stop')
+          .map((c) => ({ offset: len(c.attrs.offset, 0), paint: c.attrs['stop-color'] ?? 'black' }));
+        (scene.gradients ??= {})[url[1]] = { x1, y1, x2, y2, stops };
+        s.gradient = url[1];
+      }
+      scene.shapes.push(s);
     }
     const k = scaleOf(m);
     const width = len(look['stroke-width'], 1) * k;
@@ -354,9 +382,11 @@ export function svgToScene(svg: string): Scene {
     }
     touch(box);
   };
-  // Texts in an icon are not drawn: a scene text has no scale.
-  let inIcon = 0;
-  const text = (el: Node, look: Look, m: Affine) => {
+  // Texts in a viewport are not drawn: a scene text has no scale.
+  let inViewport = 0;
+  const text = (el: Node, given: Look, m: Affine) => {
+    const look = { ...given };
+    for (const k of ['fill', 'stroke']) if (look[k] === 'currentColor' && look.color) look[k] = look.color;
     const size = len(look['font-size'], 16) * scaleOf(m);
     const filled = look.fill !== undefined && look.fill !== 'none' && look.fill !== 'transparent';
     const base = { size, weight: weight(look['font-weight'], 400), italic: look['font-style'] === 'italic', paint: look.fill === undefined ? 'var(--_fg)' : filled ? look.fill : 'none' };
@@ -378,7 +408,7 @@ export function svgToScene(svg: string): Scene {
     };
     const flush = () => {
       if (spans.some((s) => s.text.trim())) {
-        if (inIcon) skip('text');
+        if (inViewport) skip('text');
         else {
           const px = m[0] * x + m[2] * y + m[4];
           const py = m[1] * x + m[3] * y + m[5];
@@ -419,8 +449,9 @@ export function svgToScene(svg: string): Scene {
     }
     flush();
   };
-  // A nested viewport: its viewBox fitted to its box, centred (preserveAspectRatio's default).
-  const icon = (el: Node, look: Look, m: Affine) => {
+  // A nested viewport (an icon, typeset math): its viewBox fitted to its box, centred
+  // (preserveAspectRatio's default).
+  const viewport = (el: Node, look: Look, m: Affine) => {
     const w = len(el.attrs.width, 0);
     const h = len(el.attrs.height, 0);
     const vb = el.attrs.viewBox ? numbers(el.attrs.viewBox) : [0, 0, w, h];
@@ -428,9 +459,9 @@ export function svgToScene(svg: string): Scene {
     const k = Math.min(w / vb[2], h / vb[3]);
     const ox = len(el.attrs.x, 0) + (w - vb[2] * k) / 2 - vb[0] * k;
     const oy = len(el.attrs.y, 0) + (h - vb[3] * k) / 2 - vb[1] * k;
-    inIcon++;
+    inViewport++;
     walk(el, look, compose(m, [k, 0, 0, k, ox, oy]));
-    inIcon--;
+    inViewport--;
   };
   const walk = (el: Node, inherited: Look, outer: Affine) => {
     for (const c of el.children) {
@@ -490,13 +521,13 @@ export function svgToScene(svg: string): Scene {
           break;
         case 'title':
         case 'desc':
+        case 'defs':
           break;
         case 'svg':
-          if (/\bpele-icon\b/.test(c.attrs.class ?? '')) icon(c, look, m);
-          else skip(/\bpele-math\b/.test(c.attrs.class ?? '') ? 'math' : c.tag);
+          viewport(c, look, m);
           break;
         case 'foreignObject':
-          skip(c.tag);
+          skip(/\bpele-math\b/.test(c.attrs.class ?? '') ? 'math' : c.tag);
           break;
         default:
           skip(c.tag);
@@ -527,7 +558,7 @@ export function sceneDifference(actual: Scene, expected: Scene): string | null {
       if (d) return `${k.slice(0, -1)} ${i} (${name(actual, k, i)}, expected ${name(expected, k, i)})${d}${a.length !== e.length ? ` (${a.length} ${k}, expected ${e.length})` : ''}`;
     }
   }
-  return valueDifference(actual.skipped, expected.skipped, ' skipped');
+  return valueDifference(actual.gradients, expected.gradients, ' gradients') ?? valueDifference(actual.skipped, expected.skipped, ' skipped');
 }
 
 // A text as it shows: a style set on the text or on its run looks the same.

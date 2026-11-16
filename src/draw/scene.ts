@@ -15,6 +15,7 @@ import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
 import { iconSvg } from '../diagrams/common/icon.js';
+import { mathMarkup } from '../svg/builder.js';
 import type { IconResolver, SourceInfo } from '../types.js';
 import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 
@@ -62,6 +63,17 @@ export interface SceneShape {
   box: Box;
   // Index into `items` of the part this belongs to, or -1.
   item: number;
+  // A fill drawn with `gradients[gradient]`; `paint` is its fallback.
+  gradient?: string;
+}
+
+// A linear gradient across the scene from (x1, y1) to (x2, y2), stops at offsets from 0 to 1.
+export interface SceneGradient {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  stops: { offset: number; paint: string }[];
 }
 
 // A run of text in one style. A style the run leaves unset is its text's.
@@ -112,6 +124,8 @@ export interface Scene {
   texts: SceneText[];
   // In the SVG's document order: where two overlap, the later one is on top.
   items: SceneItem[];
+  // The gradients fills use, by id; absent when none do.
+  gradients?: Record<string, SceneGradient>;
   // What could not be drawn, by kind (`transform` for a rotated group, `math`, `text` in an
   // icon), and how often.
   skipped: Record<string, number>;
@@ -136,9 +150,11 @@ interface Look {
   'text-anchor'?: string;
   rx?: string;
   ry?: string;
+  // What currentColor paints.
+  color?: string;
 }
 
-const KEYS = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx', 'ry']);
+const KEYS = new Set(['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-size', 'font-weight', 'font-style', 'font-family', 'text-anchor', 'rx', 'ry', 'color']);
 const RE_ATTR = /([\w:-]+)\s*=\s*"([^"]*)"/g;
 
 const lookCache = new Map<string, Look>();
@@ -331,6 +347,8 @@ function merge(base: Look, own: Look): Look {
 // What a look paints with, read from its attribute text once: looks are shared and never change.
 interface Ink {
   fill: string | null;
+  // The gradient a fill of `url(#id) fallback` names; `fill` is then the fallback.
+  gradient: string | null;
   fillOpacity: number;
   stroke: string | null;
   strokeOpacity: number;
@@ -343,12 +361,16 @@ function inkOf(look: Look): Ink {
   let ink = inks.get(look);
   if (ink) return ink;
   const opacity = len(look.opacity, 1);
-  const fill = look.fill;
-  const stroke = look.stroke;
+  let fill = look.fill === 'currentColor' ? (look.color ?? 'currentColor') : look.fill;
+  const stroke = look.stroke === 'currentColor' ? (look.color ?? 'currentColor') : look.stroke;
+  // `url(#id) fallback`: the fallback paints where the gradient is not drawn.
+  const url = fill === undefined ? null : /^url\(#([^)]+)\)\s*(.*)$/.exec(fill);
+  if (url) fill = url[2] || 'none';
   const width = len(look['stroke-width'], 1);
   const dashed = look['stroke-dasharray'] && look['stroke-dasharray'] !== 'none' ? numbers(look['stroke-dasharray']) : null;
   ink = {
     fill: fill && fill !== 'none' && fill !== 'transparent' ? fill : null,
+    gradient: url ? url[1] : null,
     fillOpacity: opacity * len(look['fill-opacity'], 1),
     stroke: stroke && stroke !== 'none' && stroke !== 'transparent' && width > 0 ? stroke : null,
     strokeOpacity: opacity * len(look['stroke-opacity'], 1),
@@ -879,11 +901,11 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
       case 'desc':
         break;
       case 'svg':
-        if (/\bpele-icon\b/.test(a.class ?? '')) iconOps(el, look, ops);
-        else ops.push({ op: 'skip', what: /\bpele-math\b/.test(a.class ?? '') ? 'math' : el.tag });
+        viewportOps(el, look, ops);
         break;
       case 'foreignObject':
-        ops.push({ op: 'skip', what: el.tag });
+        // HTML (math a resolver typeset as HTML) has no place in a scene.
+        ops.push({ op: 'skip', what: /\bpele-math\b/.test(a.class ?? '') ? 'math' : el.tag });
         break;
       default:
         ops.push({ op: 'skip', what: el.tag });
@@ -893,9 +915,10 @@ function fragmentOps(list: (Element | string)[], ops: Op[]): void {
   }
 }
 
-// An icon's viewport: its viewBox fitted to its box and centred, as preserveAspectRatio's default
-// places it. What it holds is scaled and moved into place, line widths with it.
-function iconOps(el: Element, look: Look, ops: Op[]): void {
+// A nested viewport (an icon, typeset math): its viewBox fitted to its box and centred, as
+// preserveAspectRatio's default places it. What it holds is scaled and moved into place, line
+// widths with it.
+function viewportOps(el: Element, look: Look, ops: Op[]): void {
   const a = el.a;
   const w = len(a.width, 0);
   const h = len(a.height, 0);
@@ -908,7 +931,7 @@ function iconOps(el: Element, look: Look, ops: Op[]): void {
   for (const op of inner) {
     if (op.op === 'shape') ops.push({ op: 'shape', cmds: scaled(op.cmds, k), look: op.look, scale: k * (op.scale ?? 1) });
     else if (op.op === 'begin') ops.push({ ...op, dx: op.dx * k, dy: op.dy * k });
-    // A scene's text has no scale; an icon's lettering is left out.
+    // A scene's text has no scale; lettering in a viewport is left out.
     else if (op.op === 'text') ops.push({ op: 'skip', what: 'text' });
     else ops.push(op);
   }
@@ -983,6 +1006,7 @@ export class SceneOut implements Out {
   private sections = new Map<string, Section>();
   // The sections in the order they are painted.
   private order: Section[] = [];
+  private gradients: Record<string, SceneGradient> | null = null;
   private current!: Section;
   private currentName = '';
   private frames: Frame[] = [];
@@ -1128,7 +1152,9 @@ export class SceneOut implements Out {
     this.grow(cmds.length * 8);
     const box = known ?? cmdsBox(cmds);
     if (ink.fill !== null) {
-      (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item });
+      const shape: SceneShape = { kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item };
+      if (ink.gradient !== null && this.gradients?.[ink.gradient]) shape.gradient = ink.gradient;
+      (this.current.shapes ??= []).push(shape);
     }
     if (ink.stroke !== null) {
       const width = ink.width * scale * (f.m ? Math.sqrt(Math.abs(f.m[0] * f.m[3] - f.m[1] * f.m[2])) : 1);
@@ -1179,6 +1205,15 @@ export class SceneOut implements Out {
       } else list.push(spanOf(r.text, runAttrs(r.attrs)));
     }
     this.put(x, y, list, textBase(look), (look['text-anchor'] ?? 'start') as 'start' | 'middle' | 'end');
+  }
+
+  // Placed where it is defined: a fill that uses it is in the same group.
+  gradient(id: string, x1: number, y1: number, x2: number, y2: number, stops: [number, string][]): void {
+    const f = this.top;
+    const at = (x: number, y: number): [number, number] => (f.m ? [f.m[0] * x + f.m[2] * y + f.m[4], f.m[1] * x + f.m[3] * y + f.m[5]] : [x + f.dx, y + f.dy]);
+    const [ax, ay] = at(x1, y1);
+    const [bx, by] = at(x2, y2);
+    (this.gradients ??= {})[id] = { x1: ax, y1: ay, x2: bx, y2: by, stops: stops.map(([offset, paint]) => ({ offset, paint })) };
   }
 
   // An icon is drawn from its markup; what has none to draw from (math) is left out.
@@ -1275,7 +1310,7 @@ export class SceneOut implements Out {
       if (placed) {
         let x = cx - label.widths[i] / 2;
         for (const s of line) {
-          if (s.math) this.skip('math');
+          if (s.math) this.fragment(mathMarkup(s.math, x, top + h / 2, label.size, typeof attrs === 'string' ? attrs : attrs.attrs));
           else if (s.icon !== undefined) this.fragment(iconSvg(s.icon, x, top + h / 2 - (label.size * 1.1) / 2, label.size * 1.1, icons));
           else if (s.text !== '') this.put(x, y, [span(s)], base, 'start');
           x += s.width;
@@ -1345,7 +1380,9 @@ export class SceneOut implements Out {
     }
     for (const x of shapes) if (x.item >= 0) x.item = at[x.item];
     for (const x of texts) if (x.item >= 0) x.item = at[x.item];
-    return { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, skipped: this.skipped };
+    const scene: Scene = { version: SCENE_VERSION, x: 0, y: 0, w: width, h: height, baseline: null, shapes, texts, items, skipped: this.skipped };
+    if (this.gradients) scene.gradients = this.gradients;
+    return scene;
   }
 
   private move(s: Section, dx: number, dy: number): void {

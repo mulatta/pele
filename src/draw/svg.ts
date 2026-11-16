@@ -261,6 +261,8 @@ export class SvgOut implements Out {
     this.body += svg;
   }
 
+  gradient(): void {}
+
   both(svg: () => string): void {
     this.body += svg();
   }

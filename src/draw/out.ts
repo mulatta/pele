@@ -119,6 +119,9 @@ export interface Out {
   spans(x: number, y: number, runs: Run[], attrs: Attrs, after?: string): void;
   // Markup a scene cannot show (an icon's nested <svg>, an <image>), counted as skipped under `what`.
   opaque(svg: string, what: string): void;
+  // A linear gradient a fill can use as `url(#id) fallback`, from (x1, y1) to (x2, y2) in the
+  // current group, with stops as [offset 0..1, colour]. The SVG writes its definition itself.
+  gradient(id: string, x1: number, y1: number, x2: number, y2: number, stops: [number, string][]): void;
   // A piece whose SVG has a form of its own: SVG gets `svg()`, a scene what `scene` draws through
   // the typed calls. For markup kept byte for byte until the SVG output goes.
   both(svg: () => string, scene: () => void): void;

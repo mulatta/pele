@@ -232,6 +232,10 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
         `<stop offset="1" stop-color="${nodeColor(link.target)}"/>`;
       const id = `${idPrefix}-sankey-${contentId(stops)}`;
       gradients.set(id, `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" ${stops}</linearGradient>`);
+      out.gradient(id, x0, 0, x1, 0, [
+        [0, nodeColor(link.source)],
+        [1, nodeColor(link.target)],
+      ]);
       paint = `fill="url(#${id}) ${nodeColor(link.source)}"`;
     }
     const mid = (x0 + x1) / 2;

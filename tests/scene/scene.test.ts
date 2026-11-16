@@ -17,6 +17,12 @@ const baseline = JSON.parse(readFileSync('tests/scene/baseline.json', 'utf8')) a
 
 const icons = (name: string) => `<path d="M4 4h16v16H4z" stroke="var(--_m)"/><circle cx="12" cy="12" r="${(name.length % 5) + 1}" fill="currentColor"/>`;
 
+// Typeset as SVG for odd lengths, as HTML (which a scene leaves out) for even ones.
+const math = (tex: string, size: number) =>
+  tex.length % 2
+    ? { svg: '<svg viewBox="0 0 20 10"><path d="M0 5h20" stroke="currentColor"/><rect x="2" y="1" width="3" height="8" fill="currentColor"/></svg>', width: size * 2, height: size }
+    : { html: '<b>x</b>', width: size, height: size };
+
 // What a call gave, or the message it threw.
 const attempt = <T>(f: () => T): { value: T } | { error: string } => {
   try {
@@ -51,6 +57,10 @@ describe('scene output', () => {
     { src: 'erDiagram\n CUSTOMER {\n string name PK "note"\n }', extra: { monospace: ['attributes'] } },
     { src: 'sankey-beta\nA#amp;B,C,1', extra: {} },
     { src: 'sankey-beta\nA,B,3', extra: {} },
+    { src: 'sankey-beta\nA,B,3\nA,C,2\nB,D,1', extra: { idPrefix: 'p' } },
+    { src: 'flowchart LR\n A["$$x^2$$ and $$yy$$"] --> B["plain"]\n subgraph S["$$abc$$ title"]\n B\n end', extra: { math } },
+    { src: 'sequenceDiagram\n A->>B: $$x^2$$ hi', extra: { math } },
+    { src: 'journey\n title T\n section S\n  $$abc$$ task: 5: Me', extra: { math } },
     { src: 'railroad-ebnf-beta\nletter = "a" | "b" ;', extra: {} },
     { src: 'flowchart TD\n A[Test]\n style A rx:20,ry:2', extra: {} },
   ])('draws what the SVG shows for $src', ({ src, extra }) => {

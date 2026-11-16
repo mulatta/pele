@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { Paint, type Out, type Pen } from '../../draw/out.js';
-import { escText, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import { escText, labelSvg, mathMarkup, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
@@ -66,7 +66,7 @@ function inheritedLabel(out: Out, label: Label, cx: number, cy: number, attrs: s
         if (line.some((span) => span.icon !== undefined || span.math)) {
           let x = cx - label.widths[i] / 2;
           for (const span of line) {
-            if (span.math) out.opaque('', 'math');
+            if (span.math) out.fragment(mathMarkup(span.math, x, y - shift, label.size, attrs));
             else if (span.icon !== undefined) out.opaque(iconSvg(span.icon, x, y - shift - (label.size * 1.1) / 2, label.size * 1.1, undefined), 'icon');
             else if (span.text !== '') out.spans(x, y, [{ text: span.text, attrs: spanStyle(span.style & ~shared) }], look, ' text-anchor="start"');
             x += span.width;
