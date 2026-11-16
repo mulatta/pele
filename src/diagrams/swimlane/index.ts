@@ -48,12 +48,8 @@ function drawLane(out: Out, c: CNode, node: GraphNode, label: Label, style: Reso
   const cx = sideways ? left + c.padTop / 2 : c.x;
   const cy = sideways ? c.y : top + c.padTop / 2;
   out.group({ cls: `pele-cluster pele-lane${classes}`, id: node.id, source: node.source });
-  out.fragment(
-    `<rect x="${num(left)}" y="${num(top)}" width="${num(c.w)}" height="${num(c.h)}" fill="none" stroke="var(--_b)"/>` +
-      `<rect x="${num(left)}" y="${num(top)}" width="${num(sideways ? c.padTop : c.w)}" height="${num(
-        sideways ? c.h : c.padTop
-      )}" fill="var(--_a)" stroke="var(--_b)"${style.shape}/>`
-  );
+  out.rect(left, top, c.w, c.h, ' fill="none" stroke="var(--_b)"');
+  out.rect(left, top, sideways ? c.padTop : c.w, sideways ? c.h : c.padTop, ` fill="var(--_a)" stroke="var(--_b)"${style.shape}`);
   const turned = sideways && label.lines.length > 0;
   if (turned) out.group({ attrs: ` transform="rotate(-90 ${num(cx)} ${num(cy)})"` });
   out.label(label, cx, cy, ` class="pele-cluster-label"${inkFill(style, 'var(--_m)')}${style.text}`, icons);
