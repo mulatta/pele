@@ -1,5 +1,5 @@
 import { cnode, compoundLayout, direction, type CEdge, type CNode } from '../../layout/compound.js';
-import type { Out } from '../../draw/out.js';
+import type { Out, Run } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
 import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
@@ -70,8 +70,31 @@ function restyle(label: Label, bits: number, measurer: TextMeasurer): Label {
   return { ...label, lines, widths, width };
 }
 
-// Writes a measured label with its lines starting at x, the first line's box starting at top.
-function startText(label: Label, x: number, top: number, attrs: string): string {
+// Draws a measured label with its lines starting at x, the first line's box starting at top. The
+// SVG keeps one text whose tspans carry their own positions; a scene gets a text for each line.
+function startText(out: Out, label: Label, x: number, top: number, attrs: string): void {
+  out.both(
+    () => startSvg(label, x, top, attrs),
+    () => {
+      const shared = sharedStyle(label);
+      const paint = textStyle(attrs, shared) + ' text-anchor="start"';
+      for (let i = 0; i < label.lines.length; i++) {
+        const line = label.lines[i];
+        if (hasMath(line)) continue;
+        const runs: Run[] = [];
+        for (const span of line) {
+          if (span.icon === undefined && span.text !== '') runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
+        }
+        if (runs.length > 0) out.spans(x, top + lineMiddle(label, i) + label.size * 0.35, runs, paint);
+      }
+      for (let i = 0; i < label.lines.length; i++) {
+        if (hasMath(label.lines[i])) out.label(labelLine(label, i), x + label.widths[i] / 2, top + lineMiddle(label, i), attrs);
+      }
+    }
+  );
+}
+
+function startSvg(label: Label, x: number, top: number, attrs: string): string {
   const shared = sharedStyle(label);
   let body = '';
   let math = '';
@@ -296,9 +319,8 @@ function draw(out: Out, model: RequirementModel, _config: Config, options: Rende
       let y = divider + PAD_Y;
       out.group({ cls: 'pele-fields', attrs: ` font-size="${view.rows[0].key.size}"` });
       for (const row of view.rows) {
-        // Rows are tspans of mixed styles, which no typed call covers.
-        out.fragment(startText(row.key, left + PAD_X, y, ` class="pele-field"${muted}${style.text}`));
-        out.fragment(startText(row.value, left + PAD_X + view.keyWidth + COLUMN_GAP, y, ` class="pele-value"${color}${style.text}`));
+        startText(out, row.key, left + PAD_X, y, ` class="pele-field"${muted}${style.text}`);
+        startText(out, row.value, left + PAD_X + view.keyWidth + COLUMN_GAP, y, ` class="pele-value"${color}${style.text}`);
         y += row.height + ROW_GAP;
       }
       out.end();
