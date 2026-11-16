@@ -4,7 +4,7 @@ import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
 import { esc, escText, num, type IconResolver } from '../../svg/builder.js';
 import { markCrossings, type Crossings } from '../../svg/cluster.js';
-import { CASINGS_ATTRS, casingAttrs, edgeInk, fillUnder, hollowOn, marker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, casingAttrs, edgeInk, fillUnder, drawMarker, markerTrim, routePath, type EdgePath, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
 import { classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
@@ -149,55 +149,58 @@ function attachEnds(cedges: CEdge[], cnodes: CNode[], views: View[]): void {
 }
 
 // The hollow triangle of a generalization, with its tip at (x, y).
-function extension(x: number, y: number, dx: number, dy: number, color: string): string {
+function drawExtension(out: Out, x: number, y: number, dx: number, dy: number, fill: string, color: string, cls: boolean): void {
   const bx = x - dx * EXTENSION;
   const by = y - dy * EXTENSION;
   const half = EXTENSION * 0.5;
-  return `<path class="pele-marker" d="M${num(x)},${num(y)}L${num(bx - dy * half)},${num(by + dx * half)}L${num(
-    bx + dy * half
-  )},${num(by - dx * half)}Z" fill="var(--_bg)" stroke="${color}" stroke-linejoin="round"/>`;
+  out.path(
+    out.pen().M(x, y).L(bx - dy * half, by + dx * half).L(bx + dy * half, by - dx * half).Z(),
+    ` fill="${fill}" stroke="${color}" stroke-linejoin="round"`,
+    undefined,
+    cls ? { cls: 'pele-marker' } : undefined
+  );
 }
 
 function trim(type: string): number {
   return type === 'extension' ? EXTENSION : markerTrim(type);
 }
 
-function mark(type: string, x: number, y: number, dx: number, dy: number, color: string, stroke?: string): string {
-  return type === 'extension' ? extension(x, y, dx, dy, color) : marker(type, x, y, dx, dy, color, stroke);
-}
-
-function figure(view: View, icons: IconResolver | undefined): string {
+function drawFigure(out: Out, view: View, icons: IconResolver | undefined): void {
   const node = view.node;
   const shape = view.style.shape;
   const line = ` fill="none" stroke="var(--_b)"${view.style.line}`;
   let head = -21;
   let radius = 9;
-  let out: string;
   if (node.actorType === 'hollow') {
     radius = 8;
-    out =
-      `<circle cy="-21" r="8" fill="var(--_bg)" stroke="var(--_b)"${shape}/>` +
-      `<path d="M-20,-9H20V0H5.5L20,15.5L12,25.5L0,12L-12,25.5L-20,15.5L-5.5,0H-20Z" fill="var(--_bg)" stroke="var(--_b)" stroke-linejoin="round"${shape}/>`;
+    out.circle(null, -21, 8, ` fill="var(--_bg)" stroke="var(--_b)"${shape}`);
+    out.path(
+      out.pen().M(-20, -9).H(20).V(0).H(5.5).L(20, 15.5).L(12, 25.5).L(0, 12).L(-12, 25.5).L(-20, 15.5).L(-5.5, 0).H(-20).Z(),
+      ` fill="var(--_bg)" stroke="var(--_b)" stroke-linejoin="round"${shape}`
+    );
   } else if (node.actorType === 'awesome') {
-    out = `<path d="M0,-30A11,11 0 1 1 0,-8A11,11 0 1 1 0,-30ZM-20,25C-20,9 -12,-3 0,-3C12,-3 20,9 20,25C20,28 18,30 15,30H-15C-18,30 -20,28 -20,25Z" fill="var(--_b)"${shape}/>`;
+    out.path(
+      out.pen().M(0, -30).A(11, 11, 0, 1, 1, 0, -8).A(11, 11, 0, 1, 1, 0, -30).Z().M(-20, 25).C(-20, 9, -12, -3, 0, -3).C(12, -3, 20, 9, 20, 25).C(20, 28, 18, 30, 15, 30).H(-15).C(-18, 30, -20, 28, -20, 25).Z(),
+      ` fill="var(--_b)"${shape}`
+    );
   } else if (node.actorType === 'icon') {
     head = -14;
     radius = 12;
-    out =
-      `<rect x="-22" y="-26" width="44" height="44"${rounded(SHAPE_ATTRS + shape)}/>` +
+    out.rect(-22, -26, 44, 44, rounded(SHAPE_ATTRS + shape));
+    out.opaque(
       `<svg class="pele-icon" data-icon="${escText(node.icon ?? '')}" x="-14" y="-18" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
         icons?.(node.icon ?? '') ?? ''
-      }</svg>`;
+      }</svg>`,
+      'icon'
+    );
   } else {
-    out = `<circle cy="-21" r="9"${SHAPE_ATTRS}${shape}/><path d="M0,-12V10M-14,-3H14M0,10L-12,30M0,10L12,30"${line}/>`;
+    out.circle(null, -21, 9, `${SHAPE_ATTRS}${shape}`);
+    out.path(out.pen().M(0, -12).V(10).M(-14, -3).H(14).M(0, 10).L(-12, 30).M(0, 10).L(12, 30), line);
   }
   if (node.business) {
     // The slash of a business actor: a chord across the lower right of the head.
-    out += `<path class="pele-business" d="M${num(0.12 * radius)},${num(head + 0.99 * radius)}L${num(0.92 * radius)},${num(
-      head - 0.39 * radius
-    )}"${line}/>`;
+    out.path(out.pen().M(0.12 * radius, head + 0.99 * radius).L(0.92 * radius, head - 0.39 * radius), line, undefined, { cls: 'pele-business' });
   }
-  return out;
 }
 
 export function renderUsecase(model: UsecaseModel, config: Config, options: RenderOptions, out: Out): Rendered {
@@ -388,8 +391,7 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       const top = -h / 2;
       const stereotypeY = top + FIGURE_H + FIGURE_GAP + view.stereotype.height / 2;
       out.group({ cls: 'pele-actor-figure', x: 0, y: top + FIGURE_H / 2 });
-      // The figure's circles have no cx, which a typed circle would write.
-      out.fragment(figure(view, icons));
+      drawFigure(out, view, icons);
       out.end();
       out.label(view.stereotype, 0, stereotypeY, ` class="pele-stereotype" font-size="${tiny}" fill="var(--_m)"`, icons);
       out.label(view.label, 0, h / 2 - view.label.height / 2, ` class="pele-label"${textAttrs}`, icons);
@@ -414,8 +416,7 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
       const labelY = view.stereotype.height / 2;
       if (view.kind === Kind.Ellipse) {
         classed('pele-usecase');
-        // The oval has no cx or cy, which a typed ellipse would write.
-        out.fragment(`<ellipse rx="${num(w / 2)}" ry="${num(h / 2)}"${SHAPE_ATTRS}${shape}/>`);
+        out.ellipse(null, null, w / 2, h / 2, `${SHAPE_ATTRS}${shape}`);
         if (node.business) {
           // The slash of a business use case, cutting off the right end of the oval beside the text.
           const from = w / 2 - 15;
@@ -495,19 +496,16 @@ function draw(out: Out, model: UsecaseModel, config: Config, options: RenderOpti
     const under = fillUnder(path.d, [path.sx, path.sy, path.ex, path.ey], fills, path.tokens);
     const over = under ? edgeInk(under, style?.line) : under;
     const color = over || (style?.stroke ? esc(style.stroke) : 'var(--_l)');
-    // A marker is the same drawing wherever its tip is, so a scene reads it once per direction.
+    // Markers with the page color inside take the fill's color where the edge lies on one.
+    const hollow = under && over ? /[";]fill:([^;"]*)/.exec(under.shape)?.[1].trim() : undefined;
     const marks = (fill: string, stroke: string | undefined, plain: boolean): void => {
       for (const [type, x, y, dx, dy] of [
         [startType, path.sx, path.sy, path.sdx, path.sdy],
         [endType, path.ex, path.ey, path.edx, path.edy],
       ] as const) {
         if (!MARKED.has(type)) continue;
-        out.at(x, y, (px, py) => {
-          let m = mark(type, px, py, dx, dy, fill, stroke);
-          if (plain) m = m.replace(/ class="pele-marker"/g, '');
-          else if (under && over) m = hollowOn(m, under);
-          return m;
-        });
+        if (type !== 'extension') drawMarker(out, type, x, y, dx, dy, !plain && hollow && fill === 'var(--_bg)' ? hollow : fill, stroke, !plain);
+        else drawExtension(out, x, y, dx, dy, !plain && hollow ? hollow : 'var(--_bg)', fill, !plain);
       }
     };
     if (over === '') {
