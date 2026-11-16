@@ -16,9 +16,9 @@ import { runsAcross, tighten, turnToFit } from '../common/fit-width.js';
 import { linkUrl, relAttr } from '../../util/url.js';
 import type { ClassDb } from './db.js';
 import { buildClassGraph, type GraphEdge, type GraphNode } from './graph.js';
-import { classMarker, classMarkerTrim } from './markers.js';
+import { classMarkerTrim, drawClassMarker } from './markers.js';
 import { parseGenericTypes } from '../common/generics.js';
-import type { Out } from '../../draw/out.js';
+import type { Out, Pen } from '../../draw/out.js';
 import type { ClassMember } from './members.js';
 import type { ClassNode } from './types.js';
 
@@ -533,10 +533,8 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     if (note) {
       const r = w / 2;
       const t = -h / 2;
-      out.fragment(
-        `<path d="M${num(-r)},${num(t)}H${num(r - FOLD)}L${num(r)},${num(t + FOLD)}V${num(-t)}H${num(-r)}Z" fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"/>` +
-          `<path d="M${num(r - FOLD)},${num(t)}V${num(t + FOLD)}H${num(r)}" fill="none" stroke="var(--_b)" stroke-linejoin="round"/>`
-      );
+      out.path(out.pen().M(-r, t).H(r - FOLD).L(r, t + FOLD).V(-t).H(-r).Z(), ' fill="var(--_a)" stroke="var(--_b)" stroke-linejoin="round"');
+      out.path(out.pen().M(r - FOLD, t).V(t + FOLD).H(r), ' fill="none" stroke="var(--_b)" stroke-linejoin="round"');
     }
     out.label(view.label, 0, 0, ` class="pele-label" font-size="${small}"`, options.icons);
     out.end();
@@ -562,7 +560,7 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     const second = first + view.attributesH;
     if (h > view.titleH) {
       const stroke = style.stroke ? ` style="stroke:${esc(style.stroke)}"` : '';
-      out.fragment(`<path class="pele-divider" d="M${num(left)},${num(first)}H${num(-left)}M${num(left)},${num(second)}H${num(-left)}" fill="none" stroke="var(--_b)"${stroke}/>`);
+      out.path(out.pen().M(left, first).H(-left).M(left, second).H(-left), ` fill="none" stroke="var(--_b)"${stroke}`, undefined, { cls: 'pele-divider' });
     }
     let y0 = top + TITLE_PAD;
     for (const annotation of view.annotations) {
@@ -609,6 +607,7 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     const startTrim = classMarkerTrim(startType);
     const endTrim = classMarkerTrim(endType);
     let path: EdgePath;
+    let loop: Pen | undefined;
     if (ce.src === ce.dst) {
       const c = cnodes[ce.src];
       const view = views[ce.src];
@@ -617,10 +616,9 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
       const y = c.y + oy;
       const spread = Math.min(view.h / 2 - 4, 8 + k * 6);
       const reach = LOOP + k * 8;
+      loop = out.pen().M(x + startTrim, y - spread).C(x + reach + startTrim, y - spread, x + reach + endTrim, y + spread, x + endTrim, y + spread);
       path = {
-        d: `M${num(x + startTrim)},${num(y - spread)}C${num(x + reach + startTrim)},${num(y - spread)} ${num(
-          x + reach + endTrim
-        )},${num(y + spread)} ${num(x + endTrim)},${num(y + spread)}`,
+        d: '',
         sx: x,
         sy: y - spread,
         sdx: -1,
@@ -641,8 +639,9 @@ function draw(out: Out, db: ClassDb, config: Config, options: RenderOptions, tur
     const attrs = edge.pattern === 'dashed' ? ' stroke-dasharray="6 4"' : edge.pattern === 'dotted' ? ' stroke-dasharray="2 4"' : '';
     out.section('edges');
     out.group({ cls: `pele-edge${edge.pattern === 'dotted' ? ' pele-note-edge' : ' pele-relation'}`, id: edge.id, source: edge.written });
-    out.path(path.d, attrs, path.tokens);
-    out.fragment(classMarker(startType, path.sx, path.sy, path.sdx, path.sdy, LINE) + classMarker(endType, path.ex, path.ey, path.edx, path.edy, LINE));
+    out.path(loop ?? path.d, attrs, path.tokens);
+    drawClassMarker(out, startType, path.sx, path.sy, path.sdx, path.sdy, LINE);
+    drawClassMarker(out, endType, path.ex, path.ey, path.edx, path.edy, LINE);
     out.end();
     if (label.width > 0) {
       const x = ce.labelX + ox;

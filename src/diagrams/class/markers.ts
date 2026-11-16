@@ -1,5 +1,5 @@
-import { num } from '../../svg/builder.js';
-import { marker, markerTrim } from '../../svg/edges.js';
+import type { Out } from '../../draw/out.js';
+import { drawMarker, markerTrim } from '../../svg/edges.js';
 import type { EndMarker } from './graph.js';
 
 const TRIANGLE = 12;
@@ -23,33 +23,33 @@ export function classMarkerTrim(type: EndMarker): number {
   return 0;
 }
 
+const MARKER = { cls: 'pele-marker' };
+const ROUND = ' stroke-linejoin="round"';
+
 // Draws an end marker whose tip is at (x, y), pointing along (dx, dy).
-export function classMarker(type: EndMarker, x: number, y: number, dx: number, dy: number, color: string): string {
+export function drawClassMarker(out: Out, type: EndMarker, x: number, y: number, dx: number, dy: number, color: string): void {
   const nx = -dy;
   const ny = dx;
   switch (type) {
     case 'extension': {
       const bx = x - dx * TRIANGLE;
       const by = y - dy * TRIANGLE;
-      return `<path class="pele-marker" d="M${num(x)},${num(y)}L${num(bx + nx * HALF)},${num(by + ny * HALF)}L${num(
-        bx - nx * HALF
-      )},${num(by - ny * HALF)}Z" stroke-linejoin="round"/>`;
+      out.path(out.pen().M(x, y).L(bx + nx * HALF, by + ny * HALF).L(bx - nx * HALF, by - ny * HALF).Z(), ROUND, undefined, MARKER);
+      return;
     }
     case 'composition':
     case 'aggregation': {
       const mx = x - (dx * DIAMOND) / 2;
       const my = y - (dy * DIAMOND) / 2;
       const half = HALF - 1;
-      return `<path class="pele-marker" d="M${num(x)},${num(y)}L${num(mx + nx * half)},${num(my + ny * half)}L${num(
-        x - dx * DIAMOND
-      )},${num(y - dy * DIAMOND)}L${num(mx - nx * half)},${num(my - ny * half)}Z" stroke-linejoin="round"${
-        type === 'composition' ? ` fill="${color}"` : ''
-      }/>`;
+      const pen = out.pen().M(x, y).L(mx + nx * half, my + ny * half).L(x - dx * DIAMOND, y - dy * DIAMOND).L(mx - nx * half, my - ny * half).Z();
+      out.path(pen, type === 'composition' ? `${ROUND} fill="${color}"` : ROUND, undefined, MARKER);
+      return;
     }
     case 'lollipop':
-      return `<circle class="pele-marker" cx="${num(x - dx * RING)}" cy="${num(y - dy * RING)}" r="${RING}"/>`;
+      out.circle(x - dx * RING, y - dy * RING, RING, '', MARKER);
+      return;
     case 'dependency':
-      return marker('arrow_point', x, y, dx, dy, color);
+      drawMarker(out, 'arrow_point', x, y, dx, dy, color);
   }
-  return '';
 }
