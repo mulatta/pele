@@ -480,7 +480,16 @@ export function svgToScene(svg: string): Scene {
       }
       const id = c.attrs['data-id'];
       if (id !== undefined) {
-        const it: SceneItem = { id, kind: c.attrs.class ?? c.tag, box: null };
+        const kind = c.attrs.class ?? c.tag;
+        const classes = kind.split(/\s+/);
+        const role: SceneItem['role'] = classes.some((k) => k.includes('label') || k.includes('title'))
+          ? 'label'
+          : classes.some((k) => ['pele-edge', 'pele-message', 'pele-sankey-link', 'pele-branch'].includes(k)) || c.attrs['data-from'] !== undefined
+            ? 'connection'
+            : classes.some((k) => ['pele-cluster', 'pele-frame', 'pele-rect'].includes(k))
+              ? 'container'
+              : 'element';
+        const it: SceneItem = { id, kind, role, box: null };
         if (c.attrs['data-line'] !== undefined) it.line = Number(c.attrs['data-line']);
         if (c.attrs['data-end'] !== undefined) it.end = Number(c.attrs['data-end']);
         if (c.attrs['data-symbol'] !== undefined) it.symbol = c.attrs['data-symbol'];

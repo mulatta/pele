@@ -22,7 +22,10 @@ import type { Attrs, Group, Item, Out, Pen, Run } from './out.js';
 // Raised when what a scene means changes, so a host can tell scenes apart.
 //   2  shapes, texts and items as an SVG reader saw them.
 //   3  runs carry their own paint and monospace; item ids are decoded like their sources;
-//      icons are drawn as shapes; a section made within another is painted just after it.
+//      icons, math and other nested viewports are drawn as shapes; a section made within
+//      another is painted just after it; turned groups are drawn, texts keeping an angle; texts
+//      carry an outline and may have no fill; fills may name a gradient; arcs bound their
+//      boxes; items have a role.
 export const SCENE_VERSION = 3;
 
 // A path is one flat array of numbers: an op code, then that op's arguments, command after
@@ -108,6 +111,9 @@ export interface SceneText {
 export interface SceneItem extends SourceInfo {
   id: string;
   kind: string;
+  // What the part is to a reader: text on its own, a line between parts, a box holding parts, or
+  // any other part. Read from its kind, so hosts need not.
+  role: 'label' | 'connection' | 'container' | 'element';
   // What its shapes and texts cover (a text by an estimate of its width), or null when empty.
   box: Box | null;
 }
@@ -968,6 +974,28 @@ function parseFragment(svg: string): Op[] {
   return ops;
 }
 
+// ---------------------------------------------------------------- items
+
+const roles = new Map<string, SceneItem['role']>();
+
+// A part's role from its class list: labels and titles; edges, messages and links, which name
+// both ends; clusters, sequence frames and boxes; everything else.
+function roleOf(kind: string, source: SourceInfo | undefined): SceneItem['role'] {
+  let role = roles.get(kind);
+  if (role === undefined) {
+    role = /label|title/.test(kind)
+      ? 'label'
+      : /(^|\s)pele-(edge|message|sankey-link|branch)(\s|$)/.test(kind)
+        ? 'connection'
+        : /(^|\s)pele-(cluster|frame|rect)(\s|$)/.test(kind)
+          ? 'container'
+          : 'element';
+    if (roles.size > 500) roles.clear();
+    roles.set(kind, role);
+  }
+  return role === 'element' && source?.from !== undefined ? 'connection' : role;
+}
+
 // ---------------------------------------------------------------- sink
 
 interface Section {
@@ -1093,7 +1121,7 @@ export class SceneOut implements Out {
     }
     let item = f.item;
     if (id !== undefined) {
-      const it: SceneItem = { id: decodeEntities(id), kind, box: null };
+      const it: SceneItem = { id: decodeEntities(id), kind, role: roleOf(kind, source), box: null };
       if (source !== undefined) {
         if (source.line !== undefined) it.line = source.line;
         if (source.end !== undefined) it.end = source.end;

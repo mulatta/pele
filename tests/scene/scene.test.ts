@@ -78,6 +78,17 @@ describe('scene output', () => {
     expect(items[texts.find((t) => t.spans[0].text === 'OpenAPI')!.item].id).toBe('AB1');
   });
 
+  it('says what each part is', () => {
+    const src = 'flowchart LR\n  subgraph S [Group]\n    A -->|go| B\n  end\n  B --> C';
+    const roles = Object.fromEntries(renderScene(src, options).scene.items.map((i) => [`${i.id} ${i.kind.split(' ')[0]}`, i.role]));
+    expect(roles).toMatchObject({
+      'S pele-cluster': 'container',
+      'A pele-node': 'element',
+      'L_A_B_0 pele-edge': 'connection',
+      'L_A_B_0 pele-edge-label': 'label',
+    });
+  });
+
   // A host parses once, asks whether the model draws a scene, then draws the model.
   it.each(corpora)('draws a parsed model as it draws its text for $file', ({ sources }) => {
     const opts = { ...options, sourceInfo: true };
