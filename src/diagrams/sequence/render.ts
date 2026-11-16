@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { escText, num, sourceAttrs } from '../../svg/builder.js';
-import { ARROW, marker } from '../../svg/edges.js';
+import { ARROW, drawMarker } from '../../svg/edges.js';
 import { ink } from '../../svg/ink.js';
 import { FONT_MONO, ROUNDED, classNames, resolveStyle, rounded } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -180,29 +179,31 @@ function option(conf: Config, key: string, fallback: number): number {
   return typeof value === 'number' && value >= 0 && value <= 2000 ? value : fallback;
 }
 
-function half(x: number, y: number, dir: number, up: number, stick: boolean, color: string): string {
-  const bx = num(x - dir * ARROW);
-  if (stick) return `<path class="pele-marker" d="M${num(x)},${num(y)}L${bx},${num(y + up * 5)}"/>`;
-  return `<path class="pele-marker" d="M${num(x)},${num(y)}L${bx},${num(y + up * 4.5)}V${num(y)}Z" fill="${color}" stroke="none"/>`;
+const MARKER = { cls: 'pele-marker' };
+
+function drawHalf(out: Out, x: number, y: number, dir: number, up: number, stick: boolean, color: string): void {
+  const bx = x - dir * ARROW;
+  if (stick) out.path(out.pen().M(x, y).L(bx, y + up * 5), '', undefined, MARKER);
+  else out.path(out.pen().M(x, y).L(bx, y + up * 4.5).V(y).Z(), ` fill="${color}" stroke="none"`, undefined, MARKER);
 }
 
 // Draws the head whose tip is at (x, y) and points along dir. `up` is the side a half head sits on.
-function head(type: Head, x: number, y: number, dir: number, up: number, color: string): string {
+function drawHead(out: Out, type: Head, x: number, y: number, dir: number, up: number, color: string): void {
   switch (type) {
     case Head.Arrow:
-      return marker('arrow_point', x, y, dir, 0, color);
+      drawMarker(out, 'arrow_point', x, y, dir, 0, color);
+      return;
     case Head.Cross:
-      return marker('arrow_cross', x, y, dir, 0, color);
+      drawMarker(out, 'arrow_cross', x, y, dir, 0, color);
+      return;
     case Head.Open:
-      return `<path class="pele-marker" d="M${num(x - dir * ARROW)},${num(y - 4.5)}L${num(x)},${num(y)}L${num(x - dir * ARROW)},${num(
-        y + 4.5
-      )}" stroke-linejoin="round"/>`;
+      out.path(out.pen().M(x - dir * ARROW, y - 4.5).L(x, y).L(x - dir * ARROW, y + 4.5), ' stroke-linejoin="round"', undefined, MARKER);
+      return;
     case Head.HalfSolid:
-      return half(x, y, dir, up, false, color);
+      drawHalf(out, x, y, dir, up, false, color);
+      return;
     case Head.HalfStick:
-      return half(x, y, dir, up, true, color);
-    default:
-      return '';
+      drawHalf(out, x, y, dir, up, true, color);
   }
 }
 
@@ -222,7 +223,6 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
-  const srcAttrs = out.sources ? sourceAttrs : (): string => '';
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('messages');
   const messageMeasurer: TextMeasurer = monospaced ? { width: (t, s, style) => measurer.width(t, s, style | Style.Mono) } : measurer;
   const icons = options.icons;
@@ -667,7 +667,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
       id: col.id,
       source: col.actor.source,
     });
-    out.fragment(drawActor(col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : ''));
+    drawActor(out, col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : '');
     out.end();
   };
   const badgeRect = new Paint(` rx="${BADGE_H / 2}" fill="var(--_l)" stroke="none"`);
@@ -706,15 +706,13 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
       // Asked for sources, a block is a part too: it has no name, so it goes by its first entry's id.
       const start = messages[frame.dividers[0]];
       const bottom = y + 12;
-      const x = num(frame.x0);
-      const w = num(frame.x1 - frame.x0);
       if (frame.kind === 'rect') {
         const fill = frame.fill ? resolveStyle([`fill:${frame.fill}`]).shape : '';
-        const part = out.sources ? ` data-id="i${escText(start.id)}"${srcAttrs(start.source)}` : '';
+        const item = out.sources ? { cls: 'pele-rect', id: `i${start.id}`, source: start.source } : { cls: 'pele-rect' };
         const top = frame.top;
         rectsDraw.push(() => {
           out.section('rects');
-          out.fragment(`<rect class="pele-rect"${part} x="${x}" y="${num(top)}" width="${w}" height="${num(bottom - top)}"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>`);
+          out.rect(frame.x0, top, frame.x1 - frame.x0, bottom - top, rounded((fill ? '' : ' fill-opacity="0.5"') + fill), item);
         });
       } else {
         out.section('frames');
@@ -723,7 +721,7 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
         for (let k = 0; k < frame.dividerY.length; k++) {
           const dy = frame.dividerY[k];
           const label = frame.dividerLabels[k];
-          out.fragment(`<path d="M${x},${num(dy)}H${num(frame.x1)}"${DASH}/>`);
+          out.path(out.pen().M(frame.x0, dy).H(frame.x1), DASH);
           backed(label, frame.x0 + 8 + label.width / 2, dy + 2 + label.height / 2, true);
         }
         out.rect(frame.x0, frame.top, frame.tabW, TAB_H, ` fill="var(--_s)"${ROUNDED}`);
@@ -809,8 +807,8 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
         const hx0 = x0;
         const hx1 = x1;
         heads = () => {
-          if (st.atStart) out.at(hx0, top, (x, y) => head(st.head, x, y, -1, up, color));
-          if (st.atEnd) out.at(hx1, bottom, (x, y) => head(st.head, x, y, -1, -up, color));
+          if (st.atStart) drawHead(out, st.head, hx0, top, -1, up, color);
+          if (st.atEnd) drawHead(out, st.head, hx1, bottom, -1, -up, color);
         };
         const from = x0 + (st.atStart ? headTrim : 0);
         const to = x1 + (st.atEnd ? headTrim : 0);
@@ -862,8 +860,8 @@ function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight
         const hx0 = x0;
         const hx1 = x1;
         heads = () => {
-          if (st.atStart) out.at(hx0, lineY, (x, y) => head(st.head, x, y, -dir, up * dir, color));
-          if (st.atEnd) out.at(hx1, lineY, (x, y) => head(st.head, x, y, dir, up * dir, color));
+          if (st.atStart) drawHead(out, st.head, hx0, lineY, -dir, up * dir, color);
+          if (st.atEnd) drawHead(out, st.head, hx1, lineY, dir, up * dir, color);
         };
         const from = x0 + (st.atStart ? dir * headTrim : 0);
         const to = x1 - (st.atEnd ? dir * headTrim : 0);
