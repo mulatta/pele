@@ -206,7 +206,7 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
     }
     // The value is a tspan with a style of its own.
     if (value) {
-      out.fragment(`<text x="${num(x)}" y="${num(y + small * 0.35)}"${anchor}>${esc(name)} <tspan class="pele-sankey-value" fill="var(--_m)">${esc(value)}</tspan></text>`);
+      out.spans(x, y + small * 0.35, [{ text: `${name} ` }, { text: value, attrs: ' class="pele-sankey-value" fill="var(--_m)"' }], '', anchor);
     } else out.text(x, y + small * 0.35, name, '', anchor);
     out.end();
   });
@@ -234,23 +234,30 @@ function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions
       gradients.set(id, `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" ${stops}</linearGradient>`);
       paint = `fill="url(#${id}) ${nodeColor(link.source)}"`;
     }
-    const mid = num((x0 + x1) / 2);
-    const from = escText(model.nodes[link.source].id);
-    const to = escText(model.nodes[link.target].id);
-    // A tooltip inside the path, which a typed path does not write.
-    out.fragment(
-      `<path class="pele-sankey-link" data-id="${from}-&gt;${to}"${srcAttrs(model.links[k].written)} d="M${num(x0)},${num(link.sourceY - half)}C${mid},${num(
-        link.sourceY - half
-      )} ${mid},${num(link.targetY - half)} ${num(x1)},${num(link.targetY - half)}L${num(x1)},${num(
-        link.targetY + half
-      )}C${mid},${num(link.targetY + half)} ${mid},${num(link.sourceY + half)} ${num(x0)},${num(
-        link.sourceY + half
-      )}Z" ${paint}>` + `<title>${from} → ${to}: ${esc(prefix)}${rounded(link.value)}${esc(suffix)}</title></path>`
+    const mid = (x0 + x1) / 2;
+    const from = model.nodes[link.source].id;
+    const to = model.nodes[link.target].id;
+    const top = link.sourceY - half;
+    const bottom = link.targetY - half;
+    // The SVG has a tooltip inside the path, which a typed path does not write.
+    out.both(
+      () =>
+        `<path class="pele-sankey-link" data-id="${escText(from)}-&gt;${escText(to)}"${srcAttrs(model.links[k].written)} d="M${num(x0)},${num(top)}C${num(mid)},${num(top)} ${num(mid)},${num(bottom)} ${num(x1)},${num(bottom)}L${num(x1)},${num(
+          link.targetY + half
+        )}C${num(mid)},${num(link.targetY + half)} ${num(mid)},${num(link.sourceY + half)} ${num(x0)},${num(
+          link.sourceY + half
+        )}Z" ${paint}>` + `<title>${escText(from)} → ${escText(to)}: ${esc(prefix)}${rounded(link.value)}${esc(suffix)}</title></path>`,
+      () => {
+        const pen = out.pen().M(x0, top).C(mid, top, mid, bottom, x1, bottom).L(x1, link.targetY + half);
+        pen.C(mid, link.targetY + half, mid, link.sourceY + half, x0, link.sourceY + half).Z();
+        out.path(pen, ' ' + paint, undefined, { cls: 'pele-sankey-link', id: `${from}->${to}`, source: model.links[k].written });
+      }
     );
   });
   if (gradients.size > 0) {
     out.section('defs');
-    out.fragment(`<defs>${[...gradients.values()].join('')}</defs>`);
+    // A scene has no use for gradient definitions.
+    out.both(() => `<defs>${[...gradients.values()].join('')}</defs>`, () => {});
   }
 
   return { svg: out.done('sankey', width, height, size, options, model), width, height, links: [] };
