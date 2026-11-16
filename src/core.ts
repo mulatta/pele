@@ -240,7 +240,7 @@ export function renderScene(source: string | DiagramModel, options: RenderOption
     const resolve = options.icons;
     const icons = resolve && ((name: string) => resolve(decodeEntities(name)));
     const drawing = { ...options, responsive, icons };
-    const out = new SceneOut(sceneRoot(options.fontSize ?? 16));
+    const out = new SceneOut(sceneRoot(options.fontSize ?? 16), options.outputLimit ?? DEFAULT_OUTPUT_LIMIT);
     const rendered = tagErrors({ type, mermaidType }, () =>
       withPalette(palette(type, config), () =>
         withMath(diagram.math ? options.math : undefined, () => withIcons(icons, () => diagram.render(model, config, drawing, out)))

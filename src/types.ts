@@ -32,6 +32,8 @@ export interface RenderOptions {
   directionBreakpoint?: number;
   padding?: number;
   limit?: number;
+  // The longest drawing, in characters of SVG; a scene counts a path number as 8 (the bytes it
+  // takes) and a text character as one.
   outputLimit?: number;
   // The most edges a flowchart may have. One short line can ask for millions of them.
   maxEdges?: number;

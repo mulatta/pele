@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PeleError, detectType, parse, render } from '../../src/index.js';
+import { PeleError, detectType, parse, render, renderScene } from '../../src/index.js';
 import { all } from '../../src/diagrams/registry.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { PAYLOADS, assertInert } from '../support/inert.js';
@@ -267,6 +267,21 @@ describe('every diagram type', () => {
     expect((error as PeleError).code).toBe('limit');
     expect((error as PeleError).type).toBe('flowchart');
     expect(() => render('mindmap\nroot\n' + ' a\n'.repeat(16000), options)).toThrow(/output is longer than the limit/);
+  });
+
+  it('stops a scene at the output limit', () => {
+    const src = 'flowchart LR\n' + Array.from({ length: 200 }, (_, i) => `  n${i} --> n${i + 1}`).join('\n');
+    const { svg } = render(src, options);
+    // A scene counts a path number as 8 and a character as 1: about as much as its SVG.
+    expect(() => renderScene(src, { ...options, outputLimit: svg.length * 2 })).not.toThrow();
+    let error: unknown;
+    try {
+      renderScene(src, { ...options, outputLimit: 1000 });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(PeleError);
+    expect(error).toMatchObject({ code: 'limit', type: 'flowchart' });
   });
 
   it('turns entity codes into characters wherever text is read as text', { timeout: 300000 }, () => {

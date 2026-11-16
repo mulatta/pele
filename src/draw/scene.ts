@@ -10,6 +10,7 @@
 // The data matches herdr-scene's scene contract, version 2: paint stays a
 // token (`var(--_s)`) for the host's theme to resolve.
 
+import { PeleError } from '../errors.js';
 import { decodeEntities } from '../text/entities.js';
 import type { Label } from '../text/label.js';
 import { Style } from '../text/measurer.js';
@@ -824,8 +825,19 @@ export class SceneOut implements Out {
   private items: SceneItem[] = [];
   private skipped: Record<string, number> = {};
 
-  constructor(private readonly rootLook: Look = sceneRoot(16)) {
+  // What the scene holds so far, against the output limit: a path number as the 8 bytes it
+  // takes, a text character as one.
+  private size = 0;
+
+  constructor(
+    private readonly rootLook: Look = sceneRoot(16),
+    private readonly limit = Infinity
+  ) {
     this.section('main');
+  }
+
+  private grow(n: number): void {
+    if ((this.size += n) > this.limit) throw new PeleError(`Diagram output is larger than the limit of ${this.limit} characters.`, 'limit');
   }
 
   // Switches to a named layer of the picture, creating it with the given inherited attributes.
@@ -935,6 +947,7 @@ export class SceneOut implements Out {
     if (!cmds.length || f.hidden) return;
     const ink = inkOf(merge(f.look, own));
     if (!placed) cmds = shift(cmds, f.dx, f.dy);
+    this.grow(cmds.length * 8);
     const box = known ?? cmdsBox(cmds);
     if (ink.fill !== null) {
       (this.current.shapes ??= []).push({ kind: 'fill', paint: ink.fill, opacity: ink.fillOpacity, cmds, box, item: f.item });
@@ -1084,7 +1097,9 @@ export class SceneOut implements Out {
     if (base.mono) spans = spans.map((s) => (s.mono === undefined ? { ...s, mono: true } : s));
     const t: SceneText = { x: x + f.dx, y: y + f.dy, size: base.size, weight: base.weight, italic: base.italic, anchor, paint: base.paint, spans, item: f.item };
     (this.current.texts ??= []).push(t);
-    const w = spans.reduce((n, s) => n + s.text.length, 0) * base.size * 0.55;
+    const chars = spans.reduce((n, s) => n + s.text.length, 0);
+    this.grow(chars);
+    const w = chars * base.size * 0.55;
     const x0 = anchor === 'middle' ? t.x - w / 2 : anchor === 'end' ? t.x - w : t.x;
     this.touch({ x0, y0: t.y - base.size, x1: x0 + w, y1: t.y + base.size * 0.25 });
   }
@@ -1136,7 +1151,7 @@ export class SceneOut implements Out {
   // ---------------------------------------------------------------- Out
 
   fork(): SceneOut {
-    return new SceneOut(this.rootLook);
+    return new SceneOut(this.rootLook, this.limit);
   }
 
   adopt(attempt: Out): void {
