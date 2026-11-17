@@ -1,6 +1,7 @@
+import type { Out } from '../draw/out.js';
 import type { CNode } from '../layout/compound.js';
 import type { Label } from '../text/label.js';
-import { labelSvg, num, type IconResolver } from './builder.js';
+import { num, type IconResolver } from './builder.js';
 
 // The x of every route point, by its rounded y: the edges that cross a cluster's top border.
 export type Crossings = Map<number, number[]>;
@@ -50,6 +51,7 @@ export function titleCrossed(c: CNode, width: number, x: number, crossings: Cros
 // color of the cluster behind it, so that only the line is seen to stop short of the letters.
 // `nodes` and `index` find how many clusters deep the title is, each of which tints the background.
 export function struckTitle(
+  o: Out,
   label: Label,
   x: number,
   y: number,
@@ -58,15 +60,13 @@ export function struckTitle(
   nodes: readonly { parent: number }[],
   index: number,
   icons?: IconResolver
-): string {
+): void {
   let depth = 1;
   for (let p = nodes[index].parent; p >= 0 && depth < 8; p = nodes[p].parent) depth++;
   // Each cluster is half its fill over what is behind it.
   const fill = `color-mix(in srgb,var(--_a) ${num(100 * (1 - 0.5 ** depth))}%,var(--_bg))`;
-  return (
-    `<g class="pele-cluster-title" data-id="${id}">` +
-    labelSvg(label, x, y, ` fill="none" stroke="${fill}" stroke-width="5" stroke-linejoin="round"`, icons) +
-    labelSvg(label, x, y, attrs, icons) +
-    '</g>'
-  );
+  o.group({ cls: 'pele-cluster-title', id });
+  o.label(label, x, y, ` fill="none" stroke="${fill}" stroke-width="5" stroke-linejoin="round"`, icons);
+  o.label(label, x, y, attrs, icons);
+  o.end();
 }

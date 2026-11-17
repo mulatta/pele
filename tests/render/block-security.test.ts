@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, paints, textOf, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
-  expect(svg, JSON.stringify(src).slice(0, 160)).not.toMatch(/="[^"]*(?:NaN|Infinity)/);
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -122,16 +113,17 @@ describe('inert block output', () => {
     }
   });
 
-  it('keeps hostile text out of markup', () => {
-    const { svg } = render('block\n  a["</text><script>alert(1)</script>"]\n  classDef x fill:url(javascript:alert(1)),stroke:red\n  class a x', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('url(');
-    expect(svg).toContain('stroke:red');
+  it('keeps hostile text and paints out of the scene', () => {
+    const result = draw('block\n  a["</text><script>alert(1)</script>"]\n  classDef x fill:url(javascript:alert(1)),stroke:red\n  class a x');
+    assertSafe(result, 'hostile block');
+    expect(textOf(result.scene)).not.toContain('<script');
+    expect(paints(result.scene).filter((p) => p.includes('url('))).toEqual([]);
+    expect(paints(result.scene)).toContain('red');
   });
 
   it('does not pollute prototypes', () => {
-    render('block\n  __proto__ constructor toString\n  classDef __proto__ fill:red\n  class constructor,__proto__ __proto__\n  style __proto__ fill:blue\n  __proto__ --> constructor', options);
-    render('block\n  class __proto__ polluted\n  style constructor fill:red\n  a', options);
+    draw('block\n  __proto__ constructor toString\n  classDef __proto__ fill:red\n  class constructor,__proto__ __proto__\n  style __proto__ fill:blue\n  __proto__ --> constructor');
+    draw('block\n  class __proto__ polluted\n  style constructor fill:red\n  a');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).classes).toBeUndefined();
     expect(({} as Record<string, unknown>).styles).toBeUndefined();

@@ -29,17 +29,16 @@ for (const name of Object.keys(pkg.exports)) {
 
 writeFileSync(
   join(root, 'check.mjs'),
-  `import { render, mount } from 'pele';
+  `import { renderScene } from 'pele';
 import { register, supports } from 'pele/core';
 import flowchart from 'pele/diagrams/flowchart';
-import { renderAsync, mountAsync } from 'pele/lazy';
+import { renderSceneAsync } from 'pele/lazy';
 
 const source = 'flowchart LR\\n  A --> B';
-if (render(source).type !== 'flowchart') throw new Error('pele does not render');
+if (renderScene(source).type !== 'flowchart') throw new Error('pele does not draw');
 register(flowchart);
 if (!supports(source)) throw new Error('pele/core does not take a registered type');
-if ((await renderAsync('pie\\n  "a": 1')).type !== 'pie') throw new Error('pele/lazy does not load a type');
-if (typeof mount !== 'function' || typeof mountAsync !== 'function') throw new Error('mount is missing');
+if ((await renderSceneAsync('pie\\n  "a": 1')).type !== 'pie') throw new Error('pele/lazy does not load a type');
 `
 );
 try {

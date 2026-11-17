@@ -1,23 +1,22 @@
 import { cnode, compoundLayout, direction, shiftLayout, type CEdge, type CNode } from '../../layout/compound.js';
 import { titleLabel } from '../../svg/title.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sharedStyle, sourceAttrsFor, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
+import { esc, num, sharedStyle, spanStyle, textStyle, type IconResolver } from '../../svg/builder.js';
 import { clusterTitleX, markCrossings, type Crossings } from '../../svg/cluster.js';
-import { casing, casingsSvg, edgeInk, edgeLabelSvg, fillUnder, hollowOn, routePath, type Fill } from '../../svg/edges.js';
+import { CASINGS_ATTRS, edgeInk, fillUnder, routePath, type Fill } from '../../svg/edges.js';
 import { ON_DARK, ON_LIGHT, ink, inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { ROUNDED, classNames, resolveStyle, rounded, setsFill, type ResolvedStyle } from '../../svg/theme.js';
 import { hasMath, labelLine, layoutLabel, lineMiddle, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import { decodeEntities } from '../../text/entities.js';
-import { internalLink, relAttr } from '../../util/url.js';
+import { iconSvg } from '../common/icon.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { runsAcross, turnToFit } from '../common/fit-width.js';
 import type { ErDb } from './db.js';
 import { parseGenericTypes } from '../common/generics.js';
 import { buildErGraph, type ErGraphEdge, type ErGraphNode } from './graph.js';
-import { MARKER_LENGTH, erMarker } from './markers.js';
-import { activeSink, parseLook, parsePathData, tokensToCmds } from '../../scene/sink.js';
+import { MARKER_LENGTH, drawErMarker } from './markers.js';
+import { Paint, type Out, type Pen, type Run } from '../../draw/out.js';
 
 const NODE_SEP = 48;
 const EDGE_SEP = 20;
@@ -38,10 +37,9 @@ const NO_LOOPS: Loop[] = [];
 const PORT_GAP = 18;
 const PORT_MARGIN = 14;
 const BOX_ATTRS = ' fill="var(--_s)" stroke="var(--_b)"';
-// Paint layers of an ER scene, bottom to top, as the SVG stacks its groups.
-const SCENE_ORDER = ['title', 'clusters', 'casings', 'edges', 'labels', 'nodes'];
-// What casingsSvg puts on its group: the page color, CASE px wider than a line.
-const CASING_ATTRS = ' fill="none" stroke="var(--_bg)" stroke-width="5"';
+// What most entities' divider and outline look like, read once.
+const DIVIDER = new Paint(' stroke="var(--_b)"');
+const OUTLINE = new Paint(` fill="none" stroke="var(--_b)"${ROUNDED}`);
 
 function numberOption(config: Config, key: string, fallback: number): number {
   const value = (config.er as Config | undefined)?.[key];
@@ -80,68 +78,66 @@ interface Loop {
   at: number;
 }
 
-// Writes a measured label starting at x, with the baseline of its first line at y.
-function textLeft(label: Label, x: number, y: number, attrs: string, icons: IconResolver | undefined, mono = 0): string {
+// Draws a measured label starting at x, with the baseline of its first line at y.
+function textLeft(out: Out, label: Label, x: number, y: number, attrs: string, icons: IconResolver | undefined, mono = 0): void {
   const lines = label.lines;
-  if (lines.length === 0) return '';
-  const sink = activeSink();
+  if (lines.length === 0) return;
   const only = lines.length === 1 && lines[0].length === 1 ? lines[0][0] : undefined;
   // The short form collapses repeated spaces in monospace text.
   if (only && only.icon === undefined && only.math === undefined && only.style === mono && !(mono && only.text.includes('  '))) {
-    if (sink) {
-      sink.startText(lines[0], label.size, x, y, attrs);
-      return '';
-    }
-    return `<text${textStyle(attrs, mono)} x="${num(x)}" y="${num(y)}">${esc(only.text)}</text>`;
+    out.text(x, y, only.text, textStyle(attrs, mono));
+    return;
   }
   const shared = sharedStyle(label);
   const shift = label.size * 0.35;
   const top = y - shift - label.lineHeight / 2;
-  let body = '';
-  let extra = '';
+  // Runs that set no position of their own continue the one before; icons and math sit after the text.
+  const style = textStyle(attrs, shared);
+  let runs: Run[] = [];
+  let rx = 0;
+  let ry = 0;
+  const flush = (): void => {
+    if (runs.length > 0) out.spans(rx, ry, runs, style);
+    runs = [];
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const middle = top + lineMiddle(label, i);
-    if (hasMath(line)) {
-      extra += labelSvg(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
-      continue;
-    }
-    y = middle + shift;
+    if (hasMath(line)) continue;
+    const ty = top + lineMiddle(label, i) + shift;
     let hasIcon = false;
     for (const span of line) if (span.icon !== undefined) hasIcon = true;
-    if (sink) {
-      // A line is one text, unless an icon splits it into spans each placed on its own.
-      if (!hasIcon) sink.startText(line, label.size, x, y, attrs);
-      else {
-        let px = x;
-        for (const span of line) {
-          if (span.icon !== undefined) sink.skip('icon');
-          else if (span.text !== '') sink.startText([span], label.size, px, y, attrs);
-          px += span.width;
-        }
-      }
-      continue;
-    }
     let sx = x;
     let placed = false;
     for (const span of line) {
-      if (span.icon !== undefined) {
-        const side = label.size * 1.1;
-        extra += `<svg class="pele-icon" data-icon="${escText(span.icon)}" x="${num(sx)}" y="${num(
-          y - label.size * 0.35 - side / 2
-        )}" width="${num(side)}" height="${num(side)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-          icons?.(span.icon) ?? ''
-        }</svg>`;
-      } else if (span.text !== '') {
-        const pos = hasIcon || !placed ? ` x="${num(sx)}" y="${num(y)}"` : '';
-        body += `<tspan${pos}${spanStyle(span.style & ~shared)}>${esc(span.text)}</tspan>`;
+      if (span.icon === undefined && span.text !== '') {
+        if (hasIcon || !placed) {
+          flush();
+          rx = sx;
+          ry = ty;
+        }
+        runs.push({ text: span.text, attrs: spanStyle(span.style & ~shared) });
         placed = true;
       }
       sx += span.width;
     }
   }
-  if (sink) return '';
-  return `<text${textStyle(attrs, shared)} xml:space="preserve">${body}</text>${extra}`;
+  flush();
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const middle = top + lineMiddle(label, i);
+    if (hasMath(line)) {
+      out.label(labelLine(label, i), x + label.widths[i] / 2, middle, attrs, icons);
+      continue;
+    }
+    const ty = middle + shift;
+    const side = label.size * 1.1;
+    let sx = x;
+    for (const span of line) {
+      if (span.icon !== undefined) out.opaque(iconSvg(span.icon, sx, ty - label.size * 0.35 - side / 2, side, icons), 'icon');
+      sx += span.width;
+    }
+  }
+
 }
 
 // Mermaid reads `~` pairs as angle brackets. They are written as entities so the label parser
@@ -151,14 +147,13 @@ function cellText(raw: string): string {
   return converted === raw ? raw : converted.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export function renderEr(db: ErDb, config: Config, options: RenderOptions): Rendered {
-  if (!runsAcross(db.direction)) return draw(db, config, options, false);
-  return turnToFit(options, (down) => draw(db, config, options, down));
+export function renderEr(db: ErDb, config: Config, options: RenderOptions, out: Out): Rendered {
+  if (!runsAcross(db.direction)) return draw(out, db, config, options, false);
+  return turnToFit(options, (down, o) => draw(o, db, config, options, down), out);
 }
 
 // `turned` draws a diagram that runs across as one that runs down.
-function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, db: ErDb, config: Config, options: RenderOptions, turned: boolean): Rendered {
   const graph = buildErGraph(db);
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('attributes');
   const size = options.fontSize ?? 16;
@@ -343,12 +338,14 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     for (const e of cedges) markCrossings(crossings, e.route);
   }
 
-  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text.
-  const sink = activeSink();
-  sink?.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
-  let clusters = '';
+  // Layers, bottom to top.
+  out.section('title');
+  out.section('clusters', ' class="pele-clusters"');
+  out.section('casings', CASINGS_ATTRS);
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('labels', ` class="pele-edge-labels" font-size="${smallSize}"`);
+  out.section('nodes', ' class="pele-nodes"', true);
   const fills: Fill[] = [];
-  let nodesOut = '';
   for (let i = 0; i < views.length; i++) {
     const view = views[i];
     const c = cnodes[i];
@@ -361,19 +358,11 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       const y = c.y - c.h / 2;
       const titleX = clusterTitleX(c, view.label.width, crossings, GROUP_PAD);
       if (paints(view.style.shape)) fills.push({ box: [x, y, x + c.w, y + c.h], shape: view.style.shape });
-      if (sink) {
-        sink.section('clusters');
-        sink.begin(node.id, `pele-cluster${classes}`, 0, 0, '', node.written);
-        sink.rect(x, y, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
-        labelSvg(view.label, titleX, y + 8 + view.label.height / 2, ` class="pele-cluster-label"${inkFill(view.style, 'var(--_m)')}${view.style.text}`, icons);
-        sink.end();
-        continue;
-      }
-      clusters +=
-        `<g class="pele-cluster${classes}" data-id="${escText(node.id)}"${srcAttrs(node.written)}>` +
-        `<rect x="${num(x)}" y="${num(y)}" width="${num(c.w)}" height="${num(c.h)}" fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}/>` +
-        labelSvg(view.label, titleX, y + 8 + view.label.height / 2, ` class="pele-cluster-label"${inkFill(view.style, 'var(--_m)')}${view.style.text}`, icons) +
-        '</g>';
+      out.section('clusters');
+      out.group({ cls: `pele-cluster${classes}`, id: node.id, source: node.written });
+      out.rect(x, y, c.w, c.h, ` fill="var(--_a)"${setsFill(view.style.shape) ? '' : ' fill-opacity="0.5"'} stroke="var(--_b)"${rounded(view.style.shape)}`);
+      out.label(view.label, titleX, y + 8 + view.label.height / 2, ` class="pele-cluster-label"${inkFill(view.style, 'var(--_m)')}${view.style.text}`, icons);
+      out.end();
       continue;
     }
 
@@ -384,75 +373,67 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     const text = view.style.text;
     const color = inkFill(view.style);
     const muted = color || ' fill="var(--_m)"';
-    const shape = `x="${num(x0)}" y="${num(y0)}" width="${num(w)}" height="${num(h)}"`;
-    if (sink) {
-      sink.section('nodes');
-      sink.begin(node.label, `pele-node pele-entity${classes}`, c.x, c.y, '', node.written);
-    }
-    let name = labelSvg(view.label, 0, view.rows.length > 0 ? y0 + view.headH / 2 : 0, ` class="pele-label"${color}${text}`, icons);
-    const display = decodeEntities(node.alias || node.label);
-    if (/ internal-link(?: |$)/.test(classes + ' ') && (name !== '' || (sink !== null && view.label.lines.length > 0)) && options.links !== false) {
-      // The name ends up in an href, so it gets the same check as a URL.
-      const safe = internalLink(display, options);
-      const target = esc(display);
-      name = `<a class="internal-link"${safe ? ` href="${target}"${relAttr(options)}` : ''} data-href="${target}">${name}</a>`;
-      links.push({ id: node.label, href: display, internal: true });
-    }
-
-    let body: string;
+    out.section('nodes');
+    out.group({ cls: `pele-node pele-entity${classes}`, id: node.label, source: node.written, x: c.x, y: c.y });
+    const baselines: number[] = [];
     if (view.rows.length === 0) {
-      body = `<rect ${shape}${rounded(BOX_ATTRS + view.style.shape)}/>` + name;
+      out.rect(x0, y0, w, h, rounded(BOX_ATTRS + view.style.shape));
     } else {
       const rowLine = Math.round(view.rowSize * 1.5);
       const lineColor = view.style.stroke ? esc(view.style.stroke) : 'var(--_b)';
-      let stripes = '';
-      let cells = '';
+      // y, height and whether it is the last row, for each shaded row.
+      const stripeAt: number[] = [];
       let y = y0 + view.headH;
       for (let r = 0; r < view.rows.length; r++) {
         const row = view.rows[r];
         if (r % 2 === 0) {
-          const span = `x="${num(x0)}" width="${num(w)}"`;
-          if (r === view.rows.length - 1) {
-            // The last row follows the box's rounded bottom corners: a rounded rect, squared off on top.
-            stripes +=
-              `<rect ${span} y="${num(y)}" height="${num(row.h)}"${ROUNDED}/>` +
-              `<rect ${span} y="${num(y)}" height="${num(row.h / 2)}"/>`;
-          } else {
-            stripes += `<rect ${span} y="${num(y)}" height="${num(row.h)}"/>`;
-          }
+          stripeAt.push(y, row.h, r === view.rows.length - 1 ? 1 : 0);
         }
-        const baseline = y + ROW_PAD / 2 + rowLine / 2 + view.rowSize * 0.35;
-        const [type, attribute, keys, comment] = row.cells;
-        cells +=
-          textLeft(type, x0 + view.cols[0], baseline, ` class="pele-er-type"${muted}${text}`, icons, view.mono) +
-          textLeft(attribute, x0 + view.cols[1], baseline, ` class="pele-er-name"${color}${text}`, icons, view.mono) +
-          textLeft(keys, x0 + view.cols[2], baseline, ` class="pele-er-keys" font-size="${view.keySize}"${muted}${text}`, icons, view.mono) +
-          textLeft(comment, x0 + view.cols[3], baseline, ` class="pele-er-comment"${muted}${text}`, icons);
+        baselines.push(y + ROW_PAD / 2 + rowLine / 2 + view.rowSize * 0.35);
         y += row.h;
       }
-      const dividerY = num(y0 + view.headH);
       // Keep row shading light on light fills and dark on dark fills to preserve text contrast.
       const tone = ink(view.style.shape);
       const shade = tone === ON_LIGHT ? ON_DARK : tone === ON_DARK ? ON_LIGHT : 'var(--_bg)';
-      body =
-        `<rect ${shape}${rounded(BOX_ATTRS + view.style.shape)}/>` +
-        // Over a fill the diagram chose, the shading is a tint of that fill. The opacity is on the
-        // group because the two parts of the last row overlap.
-        `<g class="pele-er-stripes" fill="${shade}"${view.style.shape.includes('fill:') ? ' opacity="0.6"' : ''}>${stripes}</g>` +
-        `<path class="pele-er-divider" d="M${num(x0)},${dividerY}H${num(x0 + w)}" stroke="${lineColor}"/>` +
-        `<rect ${shape} fill="none" stroke="var(--_b)"${rounded(view.style.line)}/>` +
-        name +
-        `<g class="pele-er-attributes" font-size="${view.rowSize}">${cells}</g>`;
+      out.rect(x0, y0, w, h, rounded(BOX_ATTRS + view.style.shape));
+      // Over a fill the diagram chose, the shading is a tint of that fill. The opacity is on the
+      // group because the two parts of the last row overlap.
+      const stripeAttrs = ` fill="${shade}"${view.style.shape.includes('fill:') ? ' opacity="0.6"' : ''}`;
+      out.group({ cls: 'pele-er-stripes', attrs: stripeAttrs });
+      for (let k = 0; k < stripeAt.length; k += 3) {
+        if (stripeAt[k + 2] === 1) {
+          out.rect(x0, stripeAt[k], w, stripeAt[k + 1], ROUNDED);
+          out.rect(x0, stripeAt[k], w, stripeAt[k + 1] / 2, '');
+        } else out.rect(x0, stripeAt[k], w, stripeAt[k + 1], '');
+      }
+      out.end();
+
+      out.path(out.pen().M(x0, y0 + view.headH).H(x0 + w), view.style.stroke ? ` stroke="${lineColor}"` : DIVIDER, undefined, { cls: 'pele-er-divider' });
+      out.rect(x0, y0, w, h, view.style.line ? ` fill="none" stroke="var(--_b)"${rounded(view.style.line)}` : OUTLINE);
     }
-    if (sink) {
-      // The label and the cells were written as they were laid out; the rest is the outline.
-      sink.fragment(body);
-      sink.end();
-      continue;
+    const nameAttrs = ` class="pele-label"${color}${text}`;
+    const nameY = view.rows.length > 0 ? y0 + view.headH / 2 : 0;
+    if (/ internal-link(?: |$)/.test(classes + ' ') && view.label.lines.length > 0 && options.links !== false) {
+      // The name ends up in an href, so it gets the same check as a URL.
+      const display = decodeEntities(node.alias || node.label);
+      out.link();
+      out.label(view.label, 0, nameY, nameAttrs, icons);
+      out.end();
+      links.push({ id: node.label, href: display, internal: true });
+    } else out.label(view.label, 0, nameY, nameAttrs, icons);
+    if (view.rows.length > 0) {
+      out.group({ cls: 'pele-er-attributes', attrs: ` font-size="${view.rowSize}"` });
+      view.rows.forEach((row, r) => {
+        const [type, attribute, keys, comment] = row.cells;
+        const baseline = baselines[r];
+        textLeft(out, type, x0 + view.cols[0], baseline, ` class="pele-er-type"${muted}${text}`, icons, view.mono);
+        textLeft(out, attribute, x0 + view.cols[1], baseline, ` class="pele-er-name"${color}${text}`, icons, view.mono);
+        textLeft(out, keys, x0 + view.cols[2], baseline, ` class="pele-er-keys" font-size="${view.keySize}"${muted}${text}`, icons, view.mono);
+        textLeft(out, comment, x0 + view.cols[3], baseline, ` class="pele-er-comment"${muted}${text}`, icons);
+      });
+      out.end();
     }
-    nodesOut += `<g class="pele-node pele-entity${classes}" data-id="${escText(node.label)}"${srcAttrs(node.written)} transform="translate(${num(
-      c.x
-    )},${num(c.y)})">${body}</g>`;
+    out.end();
   }
 
   // Self-relationships share the side they loop out of, squeezed together if it is too short for them.
@@ -469,17 +450,16 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
     }
   }
 
-  let edgesOut = '';
-  let casings = '';
-  let labelsOut = '';
   for (let i = 0; i < cedges.length; i++) {
     const ce = cedges[i];
     const edge = drawn[i];
     const label = edgeLabels[i];
     let d: string;
-    let start: string;
-    let end: string;
-    // The route as routePath kept its numbers, which a scene takes instead of path data.
+    // Where each end's marker sits and which way it points: x, y, dx, dy for the start, then the end.
+    let ends: number[];
+    // A self-loop's path, drawn from numbers.
+    let curve: Pen | undefined;
+    // The route as routePath kept its numbers, for a scene to take instead of path data.
     let tokens: number[] | undefined;
     const loop = loopOf[i];
     if (loop) {
@@ -490,21 +470,21 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       if (view.below) {
         const x = c.x + loop.at;
         const y = c.y + view.h / 2;
-        const turn = num(y + MARKER_LENGTH);
-        const out = num(y + MARKER_LENGTH + LOOP);
-        d = `M${num(x - spread)},${num(y)}V${turn}C${num(x - spread)},${out} ${num(x + spread)},${out} ${num(x + spread)},${turn}V${num(y)}`;
-        start = erMarker(edge.arrowTypeStart, x - spread, y, 0, -1);
-        end = erMarker(edge.arrowTypeEnd, x + spread, y, 0, -1);
+        const turn = y + MARKER_LENGTH;
+        const bulge = y + MARKER_LENGTH + LOOP;
+        d = `M${num(x - spread)},${num(y)}V${num(turn)}C${num(x - spread)},${num(bulge)} ${num(x + spread)},${num(bulge)} ${num(x + spread)},${num(turn)}V${num(y)}`;
+        curve = out.pen().M(x - spread, y).V(turn).C(x - spread, bulge, x + spread, bulge, x + spread, turn).V(y);
+        ends = [x - spread, y, 0, -1, x + spread, y, 0, -1];
         ce.labelX = x;
         ce.labelY = y + far + label.height / 2;
       } else {
         const x = c.x + view.w / 2;
         const y = c.y + loop.at;
-        const turn = num(x + MARKER_LENGTH);
-        const out = num(x + MARKER_LENGTH + LOOP);
-        d = `M${num(x)},${num(y - spread)}H${turn}C${out},${num(y - spread)} ${out},${num(y + spread)} ${turn},${num(y + spread)}H${num(x)}`;
-        start = erMarker(edge.arrowTypeStart, x, y - spread, -1, 0);
-        end = erMarker(edge.arrowTypeEnd, x, y + spread, -1, 0);
+        const turn = x + MARKER_LENGTH;
+        const bulge = x + MARKER_LENGTH + LOOP;
+        d = `M${num(x)},${num(y - spread)}H${num(turn)}C${num(bulge)},${num(y - spread)} ${num(bulge)},${num(y + spread)} ${num(turn)},${num(y + spread)}H${num(x)}`;
+        curve = out.pen().M(x, y - spread).H(turn).C(bulge, y - spread, bulge, y + spread, turn, y + spread).H(x);
+        ends = [x, y - spread, -1, 0, x, y + spread, -1, 0];
         ce.labelX = x + far + label.width / 2;
         ce.labelY = y;
       }
@@ -520,78 +500,45 @@ function draw(db: ErDb, config: Config, options: RenderOptions, turned: boolean)
       const stub = direct ? 0 : MARKER_LENGTH;
       const path = routePath(route, undefined, stub, stub);
       d = stub > 0 ? `M${num(path.sx)},${num(path.sy)}L${path.d.slice(1)}L${num(path.ex)},${num(path.ey)}` : path.d;
-      if (sink) {
-        // The stub is drawn as the line from the untrimmed start to the trimmed one, and on to the end.
-        const t = path.tokens ?? [];
-        tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
-      }
-      start = erMarker(edge.arrowTypeStart, path.sx, path.sy, path.sdx, path.sdy);
-      end = erMarker(edge.arrowTypeEnd, path.ex, path.ey, path.edx, path.edy);
+      // The stub is drawn as the line from the untrimmed start to the trimmed one, and on to the end.
+      const t = path.tokens ?? [];
+      tokens = stub > 0 ? [77, 2, path.sx, path.sy, 76, 2, t[2], t[3], ...t.slice(4), 76, 2, path.ex, path.ey] : t;
+      ends = [path.sx, path.sy, path.sdx, path.sdy, path.ex, path.ey, path.edx, path.edy];
     }
-    const under = fillUnder(d, [], fills, tokens);
+    const under = fillUnder(d, [], fills);
     const over = under ? edgeInk(under) : under;
-    const cmds = sink ? (tokens ? tokensToCmds(tokens) : parsePathData(d)) : [];
-    if (sink && over === '') {
-      sink.into('casings', CASING_ATTRS, () => {
-        sink.begin(undefined, '');
-        sink.shape(cmds);
-        sink.fragment(start + end);
-        sink.end();
+    if (over === '') {
+      // A wider page-colored stroke under the edge; its markers drop their class so marker styles skip it.
+      out.into('casings', '', () => {
+        out.path(curve ?? d, '', tokens);
+        drawErMarker(out, edge.arrowTypeStart, ends[0], ends[1], ends[2], ends[3], 'var(--_bg)', false);
+        drawErMarker(out, edge.arrowTypeEnd, ends[4], ends[5], ends[6], ends[7], 'var(--_bg)', false);
       });
-    } else if (over === '') casings += casing(d, start + end);
-    if (under && over) {
-      start = hollowOn(start, under);
-      end = hollowOn(end, under);
     }
+    // Rings and the parent diamond take the fill's color where the edge runs over one.
+    const hollow = (under && over && /[";]fill:([^;"]*)/.exec(under.shape)?.[1].trim()) || 'var(--_bg)';
     const dashed = edge.pattern === 'dashed';
-    if (sink) {
-      sink.section('edges', ' fill="none" stroke="var(--_l)"');
-      sink.begin(edge.id, `pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}`, 0, 0, over ? ` stroke="${over}"` : '', edge.written);
-      sink.shape(cmds, parseLook(dashed ? ' stroke-dasharray="4 3"' : ''));
-      sink.fragment(start + end);
-      sink.end();
-    } else edgesOut +=
-      `<g class="pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}" data-id="${escText(edge.id)}"${srcAttrs(edge.written)}${over ? ` stroke="${over}"` : ''}>` +
-      `<path d="${d}"${dashed ? ' stroke-dasharray="4 3"' : ''}/>` +
-      start +
-      end +
-      '</g>';
+    out.section('edges');
+    out.group({ cls: `pele-edge pele-er-${dashed ? 'non-identifying' : 'identifying'}`, id: edge.id, source: edge.written, attrs: over ? ` stroke="${over}"` : '' });
+    out.path(curve ?? d, dashed ? ' stroke-dasharray="4 3"' : '', tokens);
+    drawErMarker(out, edge.arrowTypeStart, ends[0], ends[1], ends[2], ends[3], hollow);
+    drawErMarker(out, edge.arrowTypeEnd, ends[4], ends[5], ends[6], ends[7], hollow);
+    out.end();
     if (label.width > 0) {
       const x = ce.labelX;
       const y = ce.labelY;
-      if (sink) {
-        // As edgeLabelSvg: the label on a patch of the page color.
-        sink.section('labels', ` font-size="${smallSize}"`);
-        sink.begin(edge.id, 'pele-edge-label');
-        sink.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
-        labelSvg(label, x, y, '', icons);
-        sink.end();
-      } else labelsOut += edgeLabelSvg(edge.id, label, x, y, '', icons);
+      out.section('labels');
+      out.group({ cls: 'pele-edge-label', id: edge.id });
+      out.rect(x - (label.width + 8) / 2, y - label.height / 2, label.width + 8, label.height, ' rx="3" fill="var(--_bg)"');
+      out.label(label, x, y, '', icons);
+      out.end();
     }
   }
 
-  if (sink) {
-    sink.section('title');
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
-    return { svg: '', width, height, links, scene: sink.finish(SCENE_ORDER, width, height) };
-  }
-
-  const svg = svgDocument(
-    'er',
-    width,
-    height,
-    size,
-    options,
-    db,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-      casingsSvg(casings) +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${smallSize}">${labelsOut}</g>` : '') +
-      `<g class="pele-nodes">${nodesOut}</g>`
-  );
-
-  return { svg, width, height, links };
+  out.section('title');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.done(width, height);
+  return { width, height, links };
 }
 
 function straighten(route: number[]): number[] {

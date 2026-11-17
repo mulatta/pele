@@ -1,4 +1,5 @@
-import { labelSvg, num, type IconResolver } from '../../svg/builder.js';
+import type { Out } from '../../draw/out.js';
+import type { IconResolver } from '../../svg/builder.js';
 import { ROUNDED } from '../../svg/theme.js';
 import type { Label } from '../../text/label.js';
 
@@ -10,6 +11,7 @@ const STACK = 5;
 const CAP = 6;
 const SHAPE = ' fill="var(--_s)" stroke="var(--_b)"';
 const LINE = ' fill="none" stroke="var(--_b)"';
+const SHAPE_ROUNDED = SHAPE + ROUNDED;
 
 const KINDS = new Set(['participant', 'actor', 'boundary', 'control', 'entity', 'database', 'collections', 'queue']);
 const FIGURES = new Set(['actor', 'boundary', 'control', 'entity', 'database']);
@@ -37,44 +39,36 @@ export function actorSize(kind: string, label: Label, minW: number, minH: number
   };
 }
 
-function figure(kind: string, cx: number, top: number): string {
-  const x = num(cx);
-  const y = (dy: number): string => num(top + dy);
+function drawFigure(out: Out, kind: string, cx: number, top: number): void {
   switch (kind) {
     case 'actor':
-      return (
-        `<circle cx="${x}" cy="${y(7)}" r="6"${SHAPE}/>` +
-        `<path d="M${x},${y(13)}V${y(24)}M${num(cx - 10)},${y(17)}H${num(cx + 10)}M${num(cx - 8)},${y(34)}L${x},${y(24)}L${num(
-          cx + 8
-        )},${y(34)}"${LINE}/>`
-      );
+      out.circle(cx, top + 7, 6, SHAPE);
+      out.path(out.pen().M(cx, top + 13).V(top + 24).M(cx - 10, top + 17).H(cx + 10).M(cx - 8, top + 34).L(cx, top + 24).L(cx + 8, top + 34), LINE);
+      return;
     case 'boundary':
-      return (
-        `<path d="M${num(cx - 19)},${y(6)}V${y(28)}M${num(cx - 19)},${y(17)}H${num(cx - 8)}"${LINE}/>` +
-        `<circle cx="${num(cx + 3)}" cy="${y(17)}" r="11"${SHAPE}/>`
-      );
+      out.path(out.pen().M(cx - 19, top + 6).V(top + 28).M(cx - 19, top + 17).H(cx - 8), LINE);
+      out.circle(cx + 3, top + 17, 11, SHAPE);
+      return;
     case 'control':
-      return (
-        `<circle cx="${x}" cy="${y(21)}" r="11"${SHAPE}/>` +
-        `<path d="M${num(cx + 5)},${y(5)}L${num(cx - 1)},${y(10)}L${num(cx + 5)},${y(15)}"${LINE}/>`
-      );
+      out.circle(cx, top + 21, 11, SHAPE);
+      out.path(out.pen().M(cx + 5, top + 5).L(cx - 1, top + 10).L(cx + 5, top + 15), LINE);
+      return;
     case 'entity':
-      return (
-        `<circle cx="${x}" cy="${y(15)}" r="11"${SHAPE}/>` + `<path d="M${num(cx - 11)},${y(30)}H${num(cx + 11)}"${LINE}/>`
-      );
+      out.circle(cx, top + 15, 11, SHAPE);
+      out.path(out.pen().M(cx - 11, top + 30).H(cx + 11), LINE);
+      return;
     default: {
-      const l = num(cx - 14);
-      const r = num(cx + 14);
-      return (
-        `<path d="M${l},${y(7)}V${y(27)}A14,5 0 0 0 ${r},${y(27)}V${y(7)}A14,5 0 0 0 ${l},${y(7)}Z"${SHAPE}/>` +
-        `<path d="M${l},${y(7)}A14,5 0 0 0 ${r},${y(7)}"${LINE}/>`
-      );
+      const l = cx - 14;
+      const r = cx + 14;
+      out.path(out.pen().M(l, top + 7).V(top + 27).A(14, 5, 0, 0, 0, r, top + 27).V(top + 7).A(14, 5, 0, 0, 0, l, top + 7).Z(), SHAPE);
+      out.path(out.pen().M(l, top + 7).A(14, 5, 0, 0, 0, r, top + 7), LINE);
     }
   }
 }
 
 // Draws a participant whose bounding box has its top center at (cx, top).
 export function drawActor(
+  out: Out,
   kind: string,
   cx: number,
   top: number,
@@ -83,33 +77,33 @@ export function drawActor(
   icons: IconResolver | undefined,
   // The fill attribute for a figure's label, which sits on whatever is behind the figure.
   ink = ''
-): string {
+): void {
   const { w, h } = size;
   const text = ' class="pele-label"';
   if (isFigure(kind)) {
-    return figure(kind, cx, top) + labelSvg(label, cx, top + GLYPH + GLYPH_GAP + label.height / 2, text + ink, icons);
+    drawFigure(out, kind, cx, top);
+    out.label(label, cx, top + GLYPH + GLYPH_GAP + label.height / 2, text + ink, icons);
+    return;
   }
   const left = cx - w / 2;
   if (kind === 'collections') {
     const bw = w - STACK;
     const bh = h - STACK;
-    const back = `<rect x="${num(left + STACK)}" y="${num(top)}" width="${num(bw)}" height="${num(bh)}"${SHAPE}${ROUNDED}/>`;
-    const front = `<rect x="${num(left)}" y="${num(top + STACK)}" width="${num(bw)}" height="${num(bh)}"${SHAPE}${ROUNDED}/>`;
-    return back + front + labelSvg(label, left + bw / 2, top + STACK + bh / 2, text, icons);
+    out.rect(left + STACK, top, bw, bh, SHAPE_ROUNDED);
+    out.rect(left, top + STACK, bw, bh, SHAPE_ROUNDED);
+    out.label(label, left + bw / 2, top + STACK + bh / 2, text, icons);
+    return;
   }
   if (kind === 'queue') {
-    const l = num(left + CAP);
-    const r = num(left + w - CAP);
-    const b = num(top + h);
-    const ry = num(h / 2);
-    return (
-      `<path d="M${l},${num(top)}H${r}A${CAP},${ry} 0 0 1 ${r},${b}H${l}A${CAP},${ry} 0 0 1 ${l},${num(top)}Z"${SHAPE}/>` +
-      `<path d="M${r},${num(top)}A${CAP},${ry} 0 0 0 ${r},${b}"${LINE}/>` +
-      labelSvg(label, cx - CAP / 2, top + h / 2, text, icons)
-    );
+    const l = left + CAP;
+    const r = left + w - CAP;
+    const b = top + h;
+    const ry = h / 2;
+    out.path(out.pen().M(l, top).H(r).A(CAP, ry, 0, 0, 1, r, b).H(l).A(CAP, ry, 0, 0, 1, l, top).Z(), SHAPE);
+    out.path(out.pen().M(r, top).A(CAP, ry, 0, 0, 0, r, b), LINE);
+    out.label(label, cx - CAP / 2, top + h / 2, text, icons);
+    return;
   }
-  return (
-    `<rect x="${num(left)}" y="${num(top)}" width="${num(w)}" height="${num(h)}"${SHAPE}${ROUNDED}/>` +
-    labelSvg(label, cx, top + h / 2, text, icons)
-  );
+  out.rect(left, top, w, h, SHAPE_ROUNDED);
+  out.label(label, cx, top + h / 2, text, icons);
 }

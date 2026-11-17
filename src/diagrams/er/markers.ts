@@ -1,4 +1,4 @@
-import { num } from '../../svg/builder.js';
+import { Paint, type Out } from '../../draw/out.js';
 
 // How far a marker reaches back along its line from the box it touches.
 export const MARKER_LENGTH = 18;
@@ -8,28 +8,42 @@ const FOOT = 6;
 const FOOT_LENGTH = 10;
 const RING = 3.5;
 
+const MARKER = { cls: 'pele-marker' };
+const HOLLOW = new Paint(' fill="var(--_bg)"');
+
 // Draws a crow's foot cardinality marker over the end of a line that meets a box at (x, y)
 // while travelling along the unit vector (dx, dy). Types are Mermaid's lower-cased cardinalities.
-export function erMarker(type: string, x: number, y: number, dx: number, dy: number): string {
-  const at = (back: number, side: number): string =>
-    num(x - dx * back - dy * side) + ',' + num(y - dy * back + dx * side);
-  const bar = (back: number): string => `M${at(back, -BAR)}L${at(back, BAR)}`;
-  const foot = `M${at(0, -FOOT)}L${at(FOOT_LENGTH, 0)}L${at(0, FOOT)}`;
-  const ring = (back: number): string =>
-    `<circle class="pele-marker" cx="${num(x - dx * back)}" cy="${num(y - dy * back)}" r="${RING}" fill="var(--_bg)"/>`;
-  const path = (d: string): string => `<path class="pele-marker" d="${d}"/>`;
-
+// `hollow` is the color inside rings; a casing drops the marker's class so marker styles skip it.
+export function drawErMarker(out: Out, type: string, x: number, y: number, dx: number, dy: number, hollow = 'var(--_bg)', cls = true): void {
+  const item = cls ? MARKER : undefined;
+  const pen = out.pen();
+  // A point `back` along the line from the box and `side` across it.
+  const px = (back: number, side: number): number => x - dx * back - dy * side;
+  const py = (back: number, side: number): number => y - dy * back + dx * side;
+  const fill = hollow === 'var(--_bg)' ? HOLLOW : ` fill="${hollow}"`;
   switch (type) {
     case 'only_one':
-      return path(bar(6) + bar(10));
+      pen.M(px(6, -BAR), py(6, -BAR)).L(px(6, BAR), py(6, BAR)).M(px(10, -BAR), py(10, -BAR)).L(px(10, BAR), py(10, BAR));
+      out.path(pen, '', undefined, item);
+      return;
     case 'zero_or_one':
-      return path(bar(6)) + ring(13.5);
+      pen.M(px(6, -BAR), py(6, -BAR)).L(px(6, BAR), py(6, BAR));
+      out.path(pen, '', undefined, item);
+      out.circle(x - dx * 13.5, y - dy * 13.5, RING, fill, item);
+      return;
     case 'one_or_more':
-      return path(foot + bar(FOOT_LENGTH + 3.5));
-    case 'zero_or_more':
-      return path(foot) + ring(FOOT_LENGTH + RING + 0.5);
+      pen.M(px(0, -FOOT), py(0, -FOOT)).L(px(FOOT_LENGTH, 0), py(FOOT_LENGTH, 0)).L(px(0, FOOT), py(0, FOOT));
+      pen.M(px(FOOT_LENGTH + 3.5, -BAR), py(FOOT_LENGTH + 3.5, -BAR)).L(px(FOOT_LENGTH + 3.5, BAR), py(FOOT_LENGTH + 3.5, BAR));
+      out.path(pen, '', undefined, item);
+      return;
+    case 'zero_or_more': {
+      pen.M(px(0, -FOOT), py(0, -FOOT)).L(px(FOOT_LENGTH, 0), py(FOOT_LENGTH, 0)).L(px(0, FOOT), py(0, FOOT));
+      out.path(pen, '', undefined, item);
+      const back = FOOT_LENGTH + RING + 0.5;
+      out.circle(x - dx * back, y - dy * back, RING, fill, item);
+      return;
+    }
     case 'md_parent':
-      return `<path class="pele-marker" d="M${at(0, 0)}L${at(6, 4)}L${at(12, 0)}L${at(6, -4)}Z" fill="var(--_bg)"/>`;
+      out.path(pen.M(px(0, 0), py(0, 0)).L(px(6, 4), py(6, 4)).L(px(12, 0), py(12, 0)).L(px(6, -4), py(6, -4)).Z(), fill, undefined, item);
   }
-  return '';
 }

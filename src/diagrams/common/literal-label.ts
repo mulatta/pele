@@ -1,4 +1,5 @@
-import { esc, labelSvg, num, sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
+import type { Out, Run } from '../../draw/out.js';
+import { sharedStyle, spanStyle, textStyle } from '../../svg/builder.js';
 import { withHeights, type Label } from '../../text/label.js';
 import type { TextMeasurer } from '../../text/measurer.js';
 
@@ -76,26 +77,32 @@ export function breakLabel(label: Label, measurer: TextMeasurer, room: number): 
   return label.heights ? withHeights(broken) : broken;
 }
 
-// Writes a label with every line starting at x. A line is anchored at its start and keeps its
+const LEFT = ' text-anchor="start" xml:space="preserve"';
+// Draws a label with every line starting at x. A line is anchored at its start and keeps its
 // spaces, so that where it begins does not depend on how its text was measured.
-export function leftLabelSvg(label: Label, x: number, top: number, attrs: string): string {
+export function leftLabel(out: Out, label: Label, x: number, top: number, attrs: string): void {
   const shared = sharedStyle(label);
-  const open = '<text' + textStyle(attrs, shared);
-  let body = '';
+  const style = textStyle(attrs, shared);
   for (let i = 0; i < label.lines.length; i++) {
     const spans = label.lines[i];
     const cy = top + (i + 0.5) * label.lineHeight;
     if (spans.some(span => span.icon !== undefined)) {
       const width = label.widths[i];
-      body += labelSvg({ ...label, lines: [spans], widths: [width], width, height: label.lineHeight }, x + width / 2, cy, attrs);
+      out.label({ ...label, lines: [spans], widths: [width], width, height: label.lineHeight }, x + width / 2, cy, attrs);
       continue;
     }
-    let text = '';
+    // Plain text is one call with no runs to build.
+    if (spans.length === 1 && !spanStyle(spans[0].style & ~shared)) {
+      if (spans[0].text !== '') out.text(x, cy + label.size * 0.35, spans[0].text, style, LEFT);
+      continue;
+    }
+    const runs: Run[] = [];
+    let any = false;
     for (const span of spans) {
       const own = spanStyle(span.style & ~shared);
-      text += own ? `<tspan${own}>${esc(span.text)}</tspan>` : esc(span.text);
+      runs.push(own ? { text: span.text, attrs: own } : { text: span.text });
+      if (span.text !== '' || own) any = true;
     }
-    if (text !== '') body += `${open} x="${num(x)}" y="${num(cy + label.size * 0.35)}" text-anchor="start" xml:space="preserve">${text}</text>`;
+    if (any) out.spans(x, cy + label.size * 0.35, runs, style, LEFT);
   }
-  return body;
 }

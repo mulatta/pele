@@ -1,21 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
 import { NOTATIONS, corpusFor, grammar } from '../support/railroad-oracle.js';
-
-const options = { measurer: metricsMeasurer };
+import { assertSafe, draw, items, textOf, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -74,7 +66,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"railroad": {"arcRadius": "${quoted(p)}", "strokeWidth": "${quoted(p)}"}, "themeVariables": {"fontFamily": "${quoted(p)}"}}}%%\nrailroad-ebnf-beta\nr = a+ ;`,
 ];
 
-describe('inert railroad output', () => {
+describe('safe railroad scenes', () => {
   it('holds for every corpus input', () => {
     for (const notation of NOTATIONS) for (const src of corpusFor(notation).corpus) check(src);
   }, 60_000);
@@ -89,17 +81,13 @@ describe('inert railroad output', () => {
     expect(rendered).toBeGreaterThan(700);
   }, 60_000);
 
-  it('escapes what it shows', () => {
-    const { svg } = render(
-      'railroad-beta\ntitle <b onclick=alert(1)>T</b>\nr = sequence(terminal("<img src=x onerror=alert(1)>"), nonterminal("\\"><script>alert(1)</script>"), special("</text></g></svg><script>a&b</script>")) ;',
-      options
+  it('shows markup as text', () => {
+    const { scene } = draw(
+      'railroad-beta\ntitle <b onclick=alert(1)>T</b>\nr = sequence(terminal("<img src=x onerror=alert(1)>"), nonterminal("\\"><script>alert(1)</script>"), special("</text></g></svg><script>a&b</script>")) ;'
     );
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('onclick');
-    expect(svg).toContain('&lt;img src=x onerror=alert(1)&gt;');
-    expect(svg).toContain('data-id="&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"');
-    expect(svg).toContain('a&amp;b');
+    expect(textOf(scene)).toContain('<img src=x onerror=alert(1)>');
+    expect(items(scene).map((i) => i.id)).toContain('"><script>alert(1)</script>');
+    expect(textOf(scene)).toContain('a&b');
   });
 
   it('holds for hostile option values', () => {
@@ -125,9 +113,9 @@ describe('inert railroad output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('railroad-ebnf-beta\n__proto__ = constructor | toString hasOwnProperty ;\nconstructor = "__proto__" ;\n__proto__ = prototype ;', options);
-    render('railroad-beta\nr = sequence(nonterminal("__proto__"), terminal("constructor"), special("__proto__")) ;', options);
-    render('railroad-ebnf-beta\nr = a ;', { ...options, config: { railroad: { __proto__: { arcRadius: 99 }, constructor: 1 } as never } });
+    draw('railroad-ebnf-beta\n__proto__ = constructor | toString hasOwnProperty ;\nconstructor = "__proto__" ;\n__proto__ = prototype ;');
+    draw('railroad-beta\nr = sequence(nonterminal("__proto__"), terminal("constructor"), special("__proto__")) ;');
+    draw('railroad-ebnf-beta\nr = a ;', { config: { railroad: { __proto__: { arcRadius: 99 }, constructor: 1 } as never } });
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

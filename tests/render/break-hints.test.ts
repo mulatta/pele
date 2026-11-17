@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { render } from '../../src/index.js';
 import { layoutLabel } from '../../src/text/label.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
+import { draw, lines as sceneLines } from '../support/scene.js';
 
 const lines = (raw: string, max: number): string[] =>
   layoutLabel(raw, false, metricsMeasurer, 16, max).lines.map(line => line.map(span => span.text).join(''));
@@ -64,8 +64,10 @@ describe('break hints', () => {
 
   it('splits a hinted sequence message at the hints on a narrow screen', () => {
     const source = `sequenceDiagram\n  participant UE\n  participant gNB\n  participant AMF\n  gNB->>UE: RRCConnection${ZWSP}Reconfiguration${ZWSP}Complete\n  UE->>gNB: ok`;
-    const svg = render(source, { maxWidth: 360, measurer: metricsMeasurer }).svg;
-    const label = [...svg.matchAll(/<tspan\b[^>]*>([^<]*)<\/tspan>/g)].map(m => m[1].replaceAll(ZWSP, ''));
+    const { scene } = draw(source, { maxWidth: 360 });
+    const label = sceneLines(scene)
+      .map(line => line.replaceAll(ZWSP, ''))
+      .filter(line => /RRC|Complete/.test(line));
     expect(label).toEqual(['RRCConnectionReconfiguration', 'Complete']);
   });
 });

@@ -1,12 +1,11 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { marker, markerTrim } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
+import type { Out, Pen } from '../../draw/out.js';
+import { drawMarker, markerTrim } from '../../svg/edges.js';
 import { ROUNDED, seriesColor } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered, SourceInfo } from '../../types.js';
-import { FOLD, HORIZON, backward, cliff, curvePath, ellipsePath, forward, resolveSeed, wave } from './boundaries.js';
+import { FOLD, HORIZON, backward, cliff, curvePen, ellipsePen, forward, resolveSeed, wave } from './boundaries.js';
 import type { CynefinModel, DomainName } from './model.js';
 
 // [domain, column, row, series color]
@@ -61,7 +60,7 @@ function setting(config: Config, key: string, fallback: number, min: number, max
   return typeof value === 'number' && value >= min && value <= max ? value : fallback;
 }
 
-export function renderCynefin(model: CynefinModel, config: Config, options: RenderOptions): Rendered {
+export function renderCynefin(model: CynefinModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const itemSize = Math.round(size * 0.875);
@@ -72,7 +71,6 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
   const amplitude = setting(config, 'boundaryAmplitude', 8, 0, 50);
   const seed = resolveSeed(setting(config, 'seed', 0, -1e15, 1e15), options.idPrefix ?? 'pele');
   const itemLine = Math.round(itemSize * 1.5);
-  const srcAttrs = sourceAttrsFor(options);
   // A domain's region and its block both stand for the domain: its last block, else the first
   // transition that names it.
   const domainSource = (name: DomainName): SourceInfo | undefined => model.domains.get(name)?.source ?? model.named?.get(name);
@@ -145,74 +143,83 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
   const west = wave(x0, cx, cy, seed + 100, amplitude, { ...HORIZON, segments: 4, pinEnd: true });
   const east = wave(cx, right, cy, seed + 200, amplitude, { ...HORIZON, segments: 4, pinStart: true });
   const drop = cliff(cx, cy, bottom, width * 0.03);
-  const at = (curve: number[], end: boolean): string =>
-    end ? `${num(curve[curve.length - 2])},${num(curve[curve.length - 1])}` : `${num(curve[0])},${num(curve[1])}`;
+  const startOf = (pen: Pen, curve: number[], move: boolean): Pen => (move ? pen.M(curve[0], curve[1]) : pen.L(curve[0], curve[1]));
+  const endOf = (pen: Pen, curve: number[]): Pen => pen.L(curve[curve.length - 2], curve[curve.length - 1]);
 
-  const regions = new Map<DomainName, string>([
-    ['complex', `M${num(x0)},${num(y0)}L${at(fold, false)}${forward(fold)}${backward(west)}Z`],
-    ['complicated', `M${at(fold, false)}L${num(right)},${num(y0)}L${at(east, true)}${backward(east)}${backward(fold)}Z`],
-    ['chaotic', `M${at(west, false)}${forward(west)}${forward(drop)}L${num(x0)},${num(bottom)}Z`],
-    ['clear', `M${at(east, false)}${forward(east)}L${num(right)},${num(bottom)}L${at(drop, true)}${backward(drop)}Z`],
+  const regions = new Map<DomainName, Pen>([
+    ['complex', backward(forward(startOf(out.pen().M(x0, y0), fold, false), fold), west).Z()],
+    ['complicated', backward(backward(endOf(startOf(out.pen(), fold, true).L(right, y0), east), east), fold).Z()],
+    ['chaotic', forward(forward(startOf(out.pen(), west, true), west), drop).L(x0, bottom).Z()],
+    ['clear', backward(endOf(forward(startOf(out.pen(), east, true), east).L(right, bottom), drop), drop).Z()],
   ]);
 
-  let fills = '';
-  for (const [name, , , color] of QUADRANTS) {
-    fills += `<path class="pele-cynefin-region" data-id="${name}"${srcAttrs(domainSource(name))} d="${regions.get(name)!}" fill="${seriesColor(color)}" fill-opacity="0.14"/>`;
-  }
-  const boundaries =
-    `<g class="pele-cynefin-boundaries" fill="none" stroke="var(--_b)" stroke-dasharray="6 3">` +
-    `<path d="${curvePath(fold)}"/><path d="${curvePath(west)}"/><path d="${curvePath(east)}"/>` +
-    `<path class="pele-cynefin-cliff" d="${curvePath(drop)}" stroke="var(--_l)" stroke-width="2" stroke-dasharray="none" stroke-linecap="round"/></g>`;
-  const oval = ellipsePath(cx, cy, rx, ry);
-  const ellipse =
-    `<path d="${oval}" fill="var(--_bg)"/>` +
-    `<path class="pele-cynefin-region" data-id="confusion"${srcAttrs(domainSource('confusion'))} d="${oval}" fill="${seriesColor(
-      CONFUSION_COLOR
-    )}" fill-opacity="0.18" stroke="var(--_b)" stroke-dasharray="4 2"/>`;
+  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
+  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
+  out.label(title, x0 + width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
 
-  const drawBlock = (b: Block): string => {
+  out.section('regions', ' class="pele-cynefin-regions"', true);
+  for (const [name, , , color] of QUADRANTS) {
+    out.path(regions.get(name)!, ` fill="${seriesColor(color)}" fill-opacity="0.14"`, undefined, {
+      cls: 'pele-cynefin-region',
+      id: name,
+      source: domainSource(name),
+    });
+  }
+  out.section('boundaries', ' class="pele-cynefin-boundaries" fill="none" stroke="var(--_b)" stroke-dasharray="6 3"');
+  out.path(curvePen(out.pen(), fold), '');
+  out.path(curvePen(out.pen(), west), '');
+  out.path(curvePen(out.pen(), east), '');
+  out.path(curvePen(out.pen(), drop), ' stroke="var(--_l)" stroke-width="2" stroke-dasharray="none" stroke-linecap="round"', undefined, { cls: 'pele-cynefin-cliff' });
+  out.section('ellipse');
+  const confusionPaint = ` fill="${seriesColor(CONFUSION_COLOR)}" fill-opacity="0.18" stroke="var(--_b)" stroke-dasharray="4 2"`;
+  out.path(ellipsePen(out.pen(), cx, cy, rx, ry), ' fill="var(--_bg)"');
+  out.path(ellipsePen(out.pen(), cx, cy, rx, ry), confusionPaint, undefined, { cls: 'pele-cynefin-region', id: 'confusion', source: domainSource('confusion') });
+  out.section('domains');
+
+  const drawBlock = (b: Block): void => {
     let y = b.cy - b.h / 2;
-    let out = labelSvg(b.title, b.cx, y + b.title.height / 2, ' class="pele-label" font-weight="var(--_hw)"');
+    out.group({ cls: 'pele-cynefin-domain', id: b.name, source: domainSource(b.name) });
+    out.label(b.title, b.cx, y + b.title.height / 2, ' class="pele-label" font-weight="var(--_hw)"');
     y += b.title.height;
     for (const s of b.subtitles) {
-      out += labelSvg(s, b.cx, y + s.height / 2, ` class="pele-cynefin-subtitle" font-size="${small}" font-style="italic" fill="var(--_m)"`);
+      out.label(s, b.cx, y + s.height / 2, ` class="pele-cynefin-subtitle" font-size="${small}" font-style="italic" fill="var(--_m)"`);
       y += s.height;
     }
     y += HEAD_GAP - ITEM_GAP;
     for (const item of b.badges) {
       y += ITEM_GAP;
-      out +=
-        `<g class="pele-node${item.overflow ? ' pele-cynefin-overflow' : ''}"${item.overflow ? '' : ` data-id="${escText(item.text)}"${srcAttrs(item.source)}`}>` +
-        `<rect x="${num(b.cx - item.w / 2)}" y="${num(y)}" width="${num(item.w)}" height="${num(
-          item.h
-        )}" fill="var(--_bg)" stroke="var(--_b)"${item.overflow ? ' stroke-dasharray="3 2"' : ''}${ROUNDED}/>` +
-        labelSvg(item.label, b.cx, y + item.h / 2, ` class="pele-label" font-size="${itemSize}"${item.overflow ? ' fill="var(--_m)"' : ''}`, icons) +
-        '</g>';
+      out.group({
+        cls: item.overflow ? 'pele-node pele-cynefin-overflow' : 'pele-node',
+        id: item.overflow ? undefined : item.text,
+        source: item.overflow ? undefined : item.source,
+      });
+      out.rect(b.cx - item.w / 2, y, item.w, item.h, ` fill="var(--_bg)" stroke="var(--_b)"${item.overflow ? ' stroke-dasharray="3 2"' : ''}${ROUNDED}`);
+      out.label(item.label, b.cx, y + item.h / 2, ` class="pele-label" font-size="${itemSize}"${item.overflow ? ' fill="var(--_m)"' : ''}`, icons);
+      out.end();
       y += item.h;
     }
-    return `<g class="pele-cynefin-domain" data-id="${b.name}"${srcAttrs(domainSource(b.name))}>${out}</g>`;
+    out.end();
   };
 
   const blocks = new Map<DomainName, Block>();
-  let domains = '';
   QUADRANTS.forEach(([name, col, row], index) => {
     const b = quadrants[index];
     b.cx = x0 + quadW * (col + 0.5);
     b.cy = y0 + quadH * (row + 0.5);
     blocks.set(name, b);
-    domains += drawBlock(b);
+    drawBlock(b);
   });
   confusion.cx = cx;
   confusion.cy = cy;
   blocks.set('confusion', confusion);
-  domains += drawBlock(confusion);
+  drawBlock(confusion);
 
   const inside = (b: Block, x: number, y: number): boolean =>
     b === confusion
       ? ((x - cx) / (rx + 4)) ** 2 + ((y - cy) / (ry + 4)) ** 2 <= 1
       : Math.abs(x - b.cx) <= b.w / 2 + 8 && Math.abs(y - b.cy) <= b.h / 2 + 8;
 
-  let edges = '';
+  out.section('edges', ' class="pele-edges"');
   const seen = new Map<string, number>();
   for (const transition of model.transitions) {
     const from = blocks.get(transition.from);
@@ -264,39 +271,26 @@ export function renderCynefin(model: CynefinModel, config: Config, options: Rend
     const el = Math.hypot(ex - qx, ey - qy) || 1;
     const ux = (ex - qx) / el;
     const uy = (ey - qy) / el;
-    const head = marker('arrow_point', ex, ey, ux, uy, 'var(--_l)');
+    const [hx, hy] = [ex, ey];
     ex -= ux * markerTrim('arrow_point');
     ey -= uy * markerTrim('arrow_point');
 
-    let text = '';
+    out.group({ cls: 'pele-edge', id: `${transition.from}-${transition.to}`, source: transition.source });
+    out.path(out.pen().M(sx, sy).Q(qx, qy, ex, ey), ' fill="none" stroke="var(--_l)"');
+    drawMarker(out, 'arrow_point', hx, hy, ux, uy, 'var(--_l)');
     if (transition.label) {
       const label = layoutLabel(transition.label, false, measurer, small, ITEM_MAX_WIDTH);
       const [lx, ly] = point((t0 + t1) / 2);
       const away = (Math.abs(nx) * label.width) / 2 + (Math.abs(ny) * label.height) / 2 + 6;
       const half = label.width / 2 + 4;
       const tx = Math.min(Math.max(lx + nx * away, x0 + half), Math.max(right - half, x0 + half));
-      text = labelSvg(label, tx, ly + ny * away, ` class="pele-edge-label" font-size="${small}"`, icons);
+      out.label(label, tx, ly + ny * away, ` class="pele-edge-label" font-size="${small}"`, icons);
     }
-    edges +=
-      `<g class="pele-edge" data-id="${transition.from}-${transition.to}"${srcAttrs(transition.source)}>` +
-      `<path d="M${num(sx)},${num(sy)}Q${num(qx)},${num(qy)} ${num(ex)},${num(ey)}" fill="none" stroke="var(--_l)"/>` +
-      head +
-      text +
-      '</g>';
+    out.end();
   }
 
-  const totalWidth = Math.ceil(Math.max(width, title.width) + 2 * pad);
-  const totalHeight = Math.ceil(height + titleHeight + 2 * pad);
-  const content =
-    labelSvg(title, x0 + width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-    `<g class="pele-cynefin-regions">${fills}</g>` +
-    boundaries +
-    ellipse +
-    domains +
-    (edges ? `<g class="pele-edges">${edges}</g>` : '');
-
+  out.done(totalWidth, totalHeight);
   return {
-    svg: svgDocument('cynefin', totalWidth, totalHeight, size, options, model, content),
     width: totalWidth,
     height: totalHeight,
     links: [],

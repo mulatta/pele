@@ -1,16 +1,14 @@
 import type { Config } from '../../preprocess.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { ARROW, marker, sceneMarker } from '../../svg/edges.js';
+import { ARROW, drawMarker } from '../../svg/edges.js';
 import { ink } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { FONT_MONO, ROUNDED, classNames, resolveStyle, rounded } from '../../svg/theme.js';
 import { layoutLabel, type Label } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
 import type { RenderOptions, Rendered } from '../../types.js';
 import { breakLabel } from '../common/literal-label.js';
 import { tighten, titleRoom } from '../common/fit-width.js';
-import { Z, L, M, activeSink, circleCmds, parseLook, shift, type Scene, type SceneSink } from '../../scene/sink.js';
+import { Paint, type Out, type Pen } from '../../draw/out.js';
 import { actorKind, actorSize, drawActor, isFigure, type ActorSize } from './actors.js';
 import type { SeqDb } from './db.js';
 import { LINETYPE, PLACEMENT, type SeqActor, type SeqBox, type SeqMessage, type SeqNumbering } from './types.js';
@@ -85,8 +83,6 @@ const FRAME_TEXT = 240;
 const BADGE_H = 16;
 const CENTRAL_R = 4;
 const DASH = ' stroke-dasharray="4 4"';
-// Paint layers of a sequence scene, bottom to top, as the SVG stacks its groups.
-const SCENE_ORDER = ['title', 'boxes', 'rects', 'lifelines', 'activations', 'frames', 'edges', 'destroys', 'edge-labels', 'notes', 'nodes'];
 
 export interface Numbering {
   // The number each message line carries, whether or not it is shown. NaN for everything else.
@@ -183,91 +179,50 @@ function option(conf: Config, key: string, fallback: number): number {
   return typeof value === 'number' && value >= 0 && value <= 2000 ? value : fallback;
 }
 
-function half(x: number, y: number, dir: number, up: number, stick: boolean, color: string): string {
-  const bx = num(x - dir * ARROW);
-  if (stick) return `<path class="pele-marker" d="M${num(x)},${num(y)}L${bx},${num(y + up * 5)}"/>`;
-  return `<path class="pele-marker" d="M${num(x)},${num(y)}L${bx},${num(y + up * 4.5)}V${num(y)}Z" fill="${color}" stroke="none"/>`;
+const MARKER = { cls: 'pele-marker' };
+
+function drawHalf(out: Out, x: number, y: number, dir: number, up: number, stick: boolean, color: string): void {
+  const bx = x - dir * ARROW;
+  if (stick) out.path(out.pen().M(x, y).L(bx, y + up * 5), '', undefined, MARKER);
+  else out.path(out.pen().M(x, y).L(bx, y + up * 4.5).V(y).Z(), ` fill="${color}" stroke="none"`, undefined, MARKER);
 }
 
 // Draws the head whose tip is at (x, y) and points along dir. `up` is the side a half head sits on.
-function head(type: Head, x: number, y: number, dir: number, up: number, color: string): string {
+function drawHead(out: Out, type: Head, x: number, y: number, dir: number, up: number, color: string): void {
   switch (type) {
     case Head.Arrow:
-      return marker('arrow_point', x, y, dir, 0, color);
+      drawMarker(out, 'arrow_point', x, y, dir, 0, color);
+      return;
     case Head.Cross:
-      return marker('arrow_cross', x, y, dir, 0, color);
+      drawMarker(out, 'arrow_cross', x, y, dir, 0, color);
+      return;
     case Head.Open:
-      return `<path class="pele-marker" d="M${num(x - dir * ARROW)},${num(y - 4.5)}L${num(x)},${num(y)}L${num(x - dir * ARROW)},${num(
-        y + 4.5
-      )}" stroke-linejoin="round"/>`;
+      out.path(out.pen().M(x - dir * ARROW, y - 4.5).L(x, y).L(x - dir * ARROW, y + 4.5), ' stroke-linejoin="round"', undefined, MARKER);
+      return;
     case Head.HalfSolid:
-      return half(x, y, dir, up, false, color);
+      drawHalf(out, x, y, dir, up, false, color);
+      return;
     case Head.HalfStick:
-      return half(x, y, dir, up, true, color);
-    default:
-      return '';
+      drawHalf(out, x, y, dir, up, true, color);
   }
 }
 
-// The same head, straight into a scene.
-function sceneHead(sink: SceneSink, type: Head, x: number, y: number, dir: number, up: number, color: string): void {
-  const bx = x - dir * ARROW;
-  switch (type) {
-    case Head.Arrow:
-      sceneMarker(sink, 'arrow_point', x, y, dir, 0, color);
-      break;
-    case Head.Cross:
-      sceneMarker(sink, 'arrow_cross', x, y, dir, 0, color);
-      break;
-    case Head.Open:
-      sink.shape([M, bx, y - 4.5, L, x, y, L, bx, y + 4.5]);
-      break;
-    case Head.HalfSolid:
-      sink.shape([M, x, y, L, bx, y + up * 4.5, L, bx, y, Z], { fill: color, stroke: 'none' });
-      break;
-    case Head.HalfStick:
-      sink.shape([M, x, y, L, bx, y + up * 5]);
-      break;
-  }
-}
-
-// A scene drawn from the origin, moved to where the SVG's outer translate puts it: the extent of
-// what is drawn is only known when the drawing is done.
-function moved(scene: Scene, dx: number, dy: number): Scene {
-  const box = (b: { x0: number; y0: number; x1: number; y1: number }): void => {
-    b.x0 += dx;
-    b.x1 += dx;
-    b.y0 += dy;
-    b.y1 += dy;
-  };
-  for (const s of scene.shapes) {
-    // shift copies: a shape's path can be shared with the fragment cache.
-    s.cmds = shift(s.cmds, dx, dy);
-    box(s.box);
-  }
-  for (const t of scene.texts) {
-    t.x += dx;
-    t.y += dy;
-  }
-  for (const it of scene.items) if (it.box) box(it.box);
-  return scene;
-}
+const CENTRAL = { cls: 'pele-central' };
 
 function trim(type: Head): number {
   return type === Head.Arrow ? ARROW - 1 : type === Head.Cross ? 4 : 0;
 }
 
-export function renderSequence(db: SeqDb, config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => draw(db, config, options, tight));
+export function renderSequence(db: SeqDb, config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(options, (tight, o) => draw(o, db, config, options, tight), out);
 }
 
-function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean, hold = 0, byNeed = true): Rendered {
+function draw(out: Out, db: SeqDb, config: Config, options: RenderOptions, tight: boolean, hold = 0, byNeed = true): Rendered {
   const conf = (config.sequence ?? {}) as Config;
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const tiny = Math.round(size * 0.75);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
-  const srcAttrs = sourceAttrsFor(options);
   const monospaced = Array.isArray(options.monospace) && options.monospace.includes('messages');
   const messageMeasurer: TextMeasurer = monospaced ? { width: (t, s, style) => measurer.width(t, s, style | Style.Mono) } : measurer;
   const icons = options.icons;
@@ -605,9 +560,21 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     }
   }
 
-  // Set while drawing a scene: structure and geometry go to it as numbers, not SVG text.
-  const sink = activeSink();
-  sink?.reset({ fill: 'var(--_fg)', 'font-size': String(size) });
+  // Everything is drawn from the origin and moved into place at the end, when the extent of what
+  // is drawn is known. Layers, bottom to top.
+  out.frame(0, 0);
+  const labelsAttrs = ` font-size="${small}"${monospaced ? ` font-family="${FONT_MONO}"` : ''}`;
+  out.section('title');
+  out.section('boxes', ` class="pele-boxes" font-size="${small}"`);
+  out.section('rects', ' class="pele-rects" fill="var(--_a)"');
+  out.section('lifelines', ' class="pele-lifelines" fill="none" stroke="var(--_b)"');
+  out.section('activations', ' class="pele-activations" fill="var(--_s)" stroke="var(--_b)"');
+  out.section('frames', ` class="pele-frames" font-size="${small}" stroke="var(--_b)"`);
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('destroys', ' class="pele-destroys" fill="none" stroke="var(--_l)" stroke-width="1.5" stroke-linecap="round"');
+  out.section('edge-labels', ` class="pele-edge-labels"${labelsAttrs}`);
+  out.section('notes', ` class="pele-notes" font-size="${small}" fill="var(--_a)" stroke="var(--_b)"`);
+  out.section('nodes', ' class="pele-nodes"');
   // Vertical placement, top to bottom, drawing as it goes.
   let boxTitleH = 0;
   for (const run of runs) boxTitleH = Math.max(boxTitleH, run.title.height);
@@ -653,16 +620,14 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     return undefined;
   };
   const under = (l: number, r: number): string => inkOn(fillUnder(l, r));
-  const backed = (label: Label, cx: number, cy: number, frame = false): string => {
-    if (label.width === 0) return '';
+  // A label, on a patch of the page where a lifeline runs behind it.
+  const backed = (label: Label, cx: number, cy: number, frame = false): void => {
+    if (label.width === 0) return;
     const l = cx - label.width / 2;
     const plate = crosses(l, l + label.width);
-    if (sink && plate) sink.rect(l - 3, cy - label.height / 2 + 2, label.width + 6, label.height - 4, ' rx="3" fill="var(--_bg)" stroke="none"');
-    const back = plate && !sink
-      ? `<rect x="${num(l - 3)}" y="${num(cy - label.height / 2 + 2)}" width="${num(label.width + 6)}" height="${num(label.height - 4)}" rx="3" fill="var(--_bg)" stroke="none"/>`
-      : '';
+    if (plate) out.rect(l - 3, cy - label.height / 2 + 2, label.width + 6, label.height - 4, ' rx="3" fill="var(--_bg)" stroke="none"');
     const fill = plate ? '' : under(l, l + label.width);
-    return back + labelSvg(label, cx, cy, frame ? ` class="pele-frame-label"${fill || ' fill="var(--_m)"'} stroke="none"` : fill, icons);
+    out.label(label, cx, cy, frame ? ` class="pele-frame-label"${fill || ' fill="var(--_m)"'} stroke="none"` : fill, icons);
   };
   const leftEdge = (col: Column, extra = 0): number => (col.activations.length + extra > 0 ? col.x - ACT_W / 2 : col.x);
   const rightEdge = (col: Column, extra = 0): number => {
@@ -670,39 +635,19 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     return depth > 0 ? col.x + ACT_W / 2 + (depth - 1) * ACT_STEP : col.x;
   };
 
-  // Shaded blocks and activations close from the inside out. They are written in reverse, so that
-  // the inner ones end up on top.
-  const rectsOut: string[] = [];
-  const activationsOut: string[] = [];
-  // The same, for a scene: what each of them draws, written from the last to the first.
+  // Shaded blocks and activations close from the inside out. They are drawn in reverse at the
+  // end, so that the inner ones end up on top.
   const rectsDraw: (() => void)[] = [];
   const activationsDraw: (() => void)[] = [];
-  let framesOut = '';
-  let edgesOut = '';
-  let labelsOut = '';
-  let notesOut = '';
-  let actorsOut = '';
-  let crossesOut = '';
   const endActivation = (col: Column, end: number): number => {
     const start = col.activations.pop()!;
     const bottom = Math.max(end, start + ACT_MIN);
     const x = col.x - ACT_W / 2 + col.activations.length * ACT_STEP;
     extend(x, x + ACT_W);
-    if (sink) {
-      const h = bottom - start;
-      activationsDraw.push(() => {
-        sink.section('activations', ' fill="var(--_s)" stroke="var(--_b)"');
-        sink.begin(col.id, 'pele-activation');
-        sink.rect(x, start, ACT_W, h, ' rx="2"');
-        sink.end();
-      });
-      return bottom;
-    }
-    activationsOut.push(
-      `<rect class="pele-activation" data-id="${escText(col.id)}" x="${num(x)}" y="${num(start)}" width="${ACT_W}" height="${num(
-        bottom - start
-      )}" rx="2"/>`
-    );
+    activationsDraw.push(() => {
+      out.section('activations');
+      out.rect(x, start, ACT_W, bottom - start, ' rx="2"', { cls: 'pele-activation', id: col.id });
+    });
     return bottom;
   };
   // The lifeline of a destroyed participant ends in a cross a little below the message that ends it.
@@ -710,58 +655,28 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     const cx = col.x;
     const cy = lineY + 16;
     col.lifeEnd = cy;
-    if (sink) {
-      sink.section('destroys', ' fill="none" stroke="var(--_l)" stroke-width="1.5" stroke-linecap="round"');
-      sink.begin(col.id, 'pele-destroy');
-      sink.shape([M, cx - 6, cy - 6, L, cx + 6, cy + 6, M, cx + 6, cy - 6, L, cx - 6, cy + 6]);
-      sink.end();
-      return cy + 6;
-    }
-    crossesOut += `<path class="pele-destroy" data-id="${escText(col.id)}" d="M${num(cx - 6)},${num(cy - 6)}L${num(cx + 6)},${num(
-      cy + 6
-    )}M${num(cx + 6)},${num(cy - 6)}L${num(cx - 6)},${num(cy + 6)}"/>`;
+    out.section('destroys');
+    out.path(out.pen().M(cx - 6, cy - 6).L(cx + 6, cy + 6).M(cx + 6, cy - 6).L(cx - 6, cy + 6), '', undefined, { cls: 'pele-destroy', id: col.id });
     return cy + 6;
   };
-  const actorSvg = (col: Column, top: number, footer: boolean): string => {
+  const drawActorAt = (col: Column, top: number, footer: boolean): void => {
     const cls = col.actor.properties.get('class');
-    const names = `pele-node pele-actor pele-actor-${col.kind}${footer ? ' pele-actor-footer' : ''}${typeof cls === 'string' ? classNames(cls) : ''}`;
-    if (sink) {
-      sink.section('nodes');
-      sink.begin(col.id, names, 0, 0, '', col.actor.source);
-      sink.fragment(drawActor(col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : ''));
-      sink.end();
-      return '';
-    }
-    return (
-      `<g class="${names}" data-id="${escText(col.id)}"${srcAttrs(col.actor.source)}>` +
-      drawActor(col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : '') +
-      '</g>'
-    );
+    out.section('nodes');
+    out.group({
+      cls: `pele-node pele-actor pele-actor-${col.kind}${footer ? ' pele-actor-footer' : ''}${typeof cls === 'string' ? classNames(cls) : ''}`,
+      id: col.id,
+      source: col.actor.source,
+    });
+    drawActor(out, col.kind, col.x, top, col.size, col.label, icons, isFigure(col.kind) ? inkOn(col.actor.box?.fill) : '');
+    out.end();
   };
-  // While a scene is drawn, what a message draws after its line and heads waits here until the
-  // line is known, so that the scene lists shapes in the order the SVG writes them.
-  const labelsAttrs = ` font-size="${small}"${monospaced ? ` font-family="${FONT_MONO}"` : ''}`;
-  const heads: (() => void)[] = [];
-  const marks: (() => void)[] = [];
-  const badge = (i: number, cx: number, cy: number, w: number): string => {
-    if (sink) {
-      const number = layoutLabel(String(numbering.index[i]), false, measurer, tiny, Infinity);
-      marks.push(() => {
-        sink.rect(cx - w / 2, cy - BADGE_H / 2, w, BADGE_H, ` rx="${BADGE_H / 2}" fill="var(--_l)" stroke="none"`);
-        sink.label(number, cx, cy, ' fill="var(--_bg)" stroke="none"');
-      });
-      return '';
-    }
-    return `<g class="pele-sequence-number"><rect x="${num(cx - w / 2)}" y="${num(cy - BADGE_H / 2)}" width="${num(w)}" height="${BADGE_H}" rx="${
-      BADGE_H / 2
-    }" fill="var(--_l)" stroke="none"/><text x="${num(cx)}" y="${num(cy + tiny * 0.35)}" text-anchor="middle" font-size="${tiny}" fill="var(--_bg)" stroke="none">${esc(
-      String(numbering.index[i])
-    )}</text></g>`;
-  };
-  const stamp = (type: Head, x: number, y: number, dir: number, up: number, color: string): string => {
-    if (!sink) return head(type, x, y, dir, up, color);
-    heads.push(() => sceneHead(sink, type, x, y, dir, up, color));
-    return '';
+  const badgeRect = new Paint(` rx="${BADGE_H / 2}" fill="var(--_l)" stroke="none"`);
+  const badgeText = ` text-anchor="middle" font-size="${tiny}" fill="var(--_bg)" stroke="none"`;
+  const badge = (i: number, cx: number, cy: number, w: number): void => {
+    out.group({ cls: 'pele-sequence-number' });
+    out.rect(cx - w / 2, cy - BADGE_H / 2, w, BADGE_H, badgeRect);
+    out.text(cx, cy + tiny * 0.35, String(numbering.index[i]), '', badgeText);
+    out.end();
   };
 
   let y = headBottom + 6;
@@ -790,60 +705,35 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
       stack.pop();
       // Asked for sources, a block is a part too: it has no name, so it goes by its first entry's id.
       const start = messages[frame.dividers[0]];
-      const part = options.sourceInfo ? ` data-id="i${escText(start.id)}"${srcAttrs(start.source)}` : '';
       const bottom = y + 12;
-      const x = num(frame.x0);
-      const w = num(frame.x1 - frame.x0);
-      if (sink) {
-        const sceneId = `i${start.id}`;
-        if (frame.kind === 'rect') {
-          const fill = frame.fill ? resolveStyle([`fill:${frame.fill}`]).shape : '';
-          const [x0, top, width] = [frame.x0, frame.top, frame.x1 - frame.x0];
-          rectsDraw.push(() => {
-            sink.section('rects', ' fill="var(--_a)"');
-            sink.begin(sceneId, 'pele-rect', 0, 0, '', start.source);
-            sink.rect(x0, top, width, bottom - top, rounded((fill ? '' : ' fill-opacity="0.5"') + fill));
-            sink.end();
-          });
-        } else {
-          sink.section('frames', ` font-size="${small}" stroke="var(--_b)"`);
-          sink.begin(sceneId, `pele-frame pele-frame-${frame.kind}`, 0, 0, '', start.source);
-          sink.rect(frame.x0, frame.top, frame.x1 - frame.x0, bottom - frame.top, ` fill="none"${ROUNDED}`);
-          for (let k = 0; k < frame.dividerY.length; k++) {
-            const dy = frame.dividerY[k];
-            const label = frame.dividerLabels[k];
-            sink.shape([M, frame.x0, dy, L, frame.x1, dy], parseLook(DASH));
-            backed(label, frame.x0 + 8 + label.width / 2, dy + 2 + label.height / 2, true);
-          }
-          sink.rect(frame.x0, frame.top, frame.tabW, TAB_H, ` fill="var(--_s)"${ROUNDED}`);
-          sink.label(layoutLabel(frame.kind, false, measurer, tiny, Infinity), frame.x0 + frame.tabW / 2, frame.top + TAB_H / 2, ' font-weight="var(--_hw)" fill="var(--_m)" stroke="none"');
-          backed(frame.title, frame.x0 + frame.tabW + 8 + frame.title.width / 2, frame.top + Math.max(TAB_H, frame.title.height) / 2, true);
-          sink.end();
-        }
-      } else if (frame.kind === 'rect') {
+      if (frame.kind === 'rect') {
         const fill = frame.fill ? resolveStyle([`fill:${frame.fill}`]).shape : '';
-        rectsOut.push(`<rect class="pele-rect"${part} x="${x}" y="${num(frame.top)}" width="${w}" height="${num(bottom - frame.top)}"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>`);
+        const item = { cls: 'pele-rect', id: `i${start.id}`, source: start.source };
+        const top = frame.top;
+        rectsDraw.push(() => {
+          out.section('rects');
+          out.rect(frame.x0, top, frame.x1 - frame.x0, bottom - top, rounded((fill ? '' : ' fill-opacity="0.5"') + fill), item);
+        });
       } else {
-        let inner = `<rect x="${x}" y="${num(frame.top)}" width="${w}" height="${num(bottom - frame.top)}" fill="none"${ROUNDED}/>`;
+        out.section('frames');
+        out.group({ cls: `pele-frame pele-frame-${frame.kind}`, id: `i${start.id}`, source: start.source });
+        out.rect(frame.x0, frame.top, frame.x1 - frame.x0, bottom - frame.top, ` fill="none"${ROUNDED}`);
         for (let k = 0; k < frame.dividerY.length; k++) {
           const dy = frame.dividerY[k];
           const label = frame.dividerLabels[k];
-          inner +=
-            `<path d="M${x},${num(dy)}H${num(frame.x1)}"${DASH}/>` +
-            backed(label, frame.x0 + 8 + label.width / 2, dy + 2 + label.height / 2, true);
+          out.path(out.pen().M(frame.x0, dy).H(frame.x1), DASH);
+          backed(label, frame.x0 + 8 + label.width / 2, dy + 2 + label.height / 2, true);
         }
-        inner +=
-          `<rect x="${x}" y="${num(frame.top)}" width="${num(frame.tabW)}" height="${TAB_H}" fill="var(--_s)"${ROUNDED}/>` +
-          `<text class="pele-frame-kind" x="${num(frame.x0 + frame.tabW / 2)}" y="${num(
-            frame.top + TAB_H / 2 + tiny * 0.35
-          )}" text-anchor="middle" font-size="${tiny}" font-weight="var(--_hw)" fill="var(--_m)" stroke="none">${frame.kind}</text>` +
-          backed(
-            frame.title,
-            frame.x0 + frame.tabW + 8 + frame.title.width / 2,
-            frame.top + Math.max(TAB_H, frame.title.height) / 2,
-            true
-          );
-        framesOut += `<g class="pele-frame pele-frame-${frame.kind}"${part}>${inner}</g>`;
+        out.rect(frame.x0, frame.top, frame.tabW, TAB_H, ` fill="var(--_s)"${ROUNDED}`);
+        out.text(
+          frame.x0 + frame.tabW / 2,
+          frame.top + TAB_H / 2 + tiny * 0.35,
+          frame.kind,
+          ' class="pele-frame-kind"',
+          ` text-anchor="middle" font-size="${tiny}" font-weight="var(--_hw)" fill="var(--_m)" stroke="none"`
+        );
+        backed(frame.title, frame.x0 + frame.tabW + 8 + frame.title.width / 2, frame.top + Math.max(TAB_H, frame.title.height) / 2, true);
+        out.end();
       }
       y = bottom;
     } else if (type === LINETYPE.ALT_ELSE || type === LINETYPE.PAR_AND || type === LINETYPE.CRITICAL_OPTION) {
@@ -861,18 +751,11 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
       if (m.placement === PLACEMENT.RIGHTOF) x += rightEdge(a) - a.x;
       else if (m.placement === PLACEMENT.LEFTOF) x += leftEdge(a) - a.x;
       extend(x, x + view.w);
-      if (sink) {
-        sink.section('notes', ` font-size="${small}" fill="var(--_a)" stroke="var(--_b)"`);
-        sink.begin(`i${m.id}`, 'pele-note', 0, 0, '', m.source);
-        sink.rect(x, top, view.w, h, ROUNDED);
-        labelSvg(view.label, x + view.w / 2, top + h / 2, ' class="pele-label" stroke="none" fill="var(--_fg)"', icons);
-        sink.end();
-      } else
-      notesOut +=
-        `<g class="pele-note" data-id="i${escText(m.id)}"${srcAttrs(m.source)}>` +
-        `<rect x="${num(x)}" y="${num(top)}" width="${num(view.w)}" height="${num(h)}"${ROUNDED}/>` +
-        labelSvg(view.label, x + view.w / 2, top + h / 2, ' class="pele-label" stroke="none" fill="var(--_fg)"', icons) +
-        '</g>';
+      out.section('notes');
+      out.group({ cls: 'pele-note', id: `i${m.id}`, source: m.source });
+      out.rect(x, top, view.w, h, ROUNDED);
+      out.label(view.label, x + view.w / 2, top + h / 2, ' class="pele-label" stroke="none" fill="var(--_fg)"', icons);
+      out.end();
       y = top + h;
     } else if (view) {
       const st = STYLES[type!]!;
@@ -895,62 +778,49 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
       const circleFrom = cc === LINETYPE.CENTRAL_CONNECTION_REVERSE || cc === LINETYPE.CENTRAL_CONNECTION_DUAL;
       let line: string | undefined;
       let color = 'var(--_l)';
-      const circle = (cx: number, cy: number): string => {
-        if (sink) {
-          const paint = color;
-          marks.push(() => sink.shape(circleCmds(cx, cy, CENTRAL_R), { fill: paint, stroke: 'none' }));
-          return '';
-        }
-        return `<circle class="pele-central" cx="${num(cx)}" cy="${num(cy)}" r="${CENTRAL_R}" fill="${color}" stroke="none"/>`;
-      };
+      const circle = (cx: number, cy: number): void => out.circle(cx, cy, CENTRAL_R, ` fill="${color}" stroke="none"`, CENTRAL);
       const tailAtEnd = st.atStart && !st.atEnd;
       const headTrim = trim(st.head);
-      let inner = '';
+      // What follows the line: its heads, then connection circles and the number.
+      const inner: (() => void)[] = [];
+      let heads: () => void;
+      let d: Pen;
       let lineY: number;
-      let route = '';
-      heads.length = 0;
-      marks.length = 0;
 
       if (view.kind === V.Self) {
         const top = y + msgGap + Math.max(0, (label.height - SELF_H) / 2);
         const bottom = top + SELF_H;
         let x0 = circleFrom ? a.x + CENTRAL_R : rightEdge(a);
         let x1 = circleTo ? a.x + CENTRAL_R : rightEdge(a, starting);
-        const out = Math.max(x0, x1) + SELF_W + bw / 2;
-        line = inkOf(fillUnder(a.x, out));
+        const far = Math.max(x0, x1) + SELF_W + bw / 2;
+        line = inkOf(fillUnder(a.x, far));
         color = line ?? color;
-        if (circleFrom) inner += circle(a.x, top);
-        if (circleTo) inner += circle(a.x, bottom);
+        if (circleFrom) inner.push(() => circle(a.x, top));
+        if (circleTo) inner.push(() => circle(a.x, bottom));
         if (bw > 0) {
-          inner += badge(i, tailAtEnd ? x1 : x0, tailAtEnd ? bottom : top, bw);
+          const bx = tailAtEnd ? x1 : x0;
+          inner.push(() => badge(i, bx, tailAtEnd ? bottom : top, bw));
           if (tailAtEnd) x1 += bw / 2;
           else x0 += bw / 2;
         }
         // The loop leaves to the right and comes back heading left, which turns a half head over.
-        const heads = (st.atStart ? stamp(st.head, x0, top, -1, up, color) : '') + (st.atEnd ? stamp(st.head, x1, bottom, -1, -up, color) : '');
-        const from = num(x0 + (st.atStart ? headTrim : 0));
-        const to = num(x1 + (st.atEnd ? headTrim : 0));
-        const d = rightAngles
-          ? `M${from},${num(top)}H${num(out)}V${num(bottom)}H${to}`
-          : `M${from},${num(top)}H${num(out - 6)}A6,6 0 0 1 ${num(out)},${num(top + 6)}V${num(bottom - 6)}A6,6 0 0 1 ${num(out - 6)},${num(
-              bottom
-            )}H${to}`;
-        if (sink) route = d;
-        inner = `<path d="${d}"${attrs}/>` + heads + inner;
-        extend(a.x, out + 8 + label.width);
-        if (label.width > 0 && sink) {
-          sink.section('edge-labels', labelsAttrs);
-          sink.begin(`i${m.id}`, 'pele-edge-label');
-          labelSvg(label, out + 8 + label.width / 2, (top + bottom) / 2, under(out + 8, out + 8 + label.width), icons);
-          sink.end();
-        } else if (label.width > 0) {
-          labelsOut += `<g class="pele-edge-label" data-id="i${escText(m.id)}">${labelSvg(
-            label,
-            out + 8 + label.width / 2,
-            (top + bottom) / 2,
-            under(out + 8, out + 8 + label.width),
-            icons
-          )}</g>`;
+        const hx0 = x0;
+        const hx1 = x1;
+        heads = () => {
+          if (st.atStart) drawHead(out, st.head, hx0, top, -1, up, color);
+          if (st.atEnd) drawHead(out, st.head, hx1, bottom, -1, -up, color);
+        };
+        const from = x0 + (st.atStart ? headTrim : 0);
+        const to = x1 + (st.atEnd ? headTrim : 0);
+        d = rightAngles
+          ? out.pen().M(from, top).H(far).V(bottom).H(to)
+          : out.pen().M(from, top).H(far - 6).A(6, 6, 0, 0, 1, far, top + 6).V(bottom - 6).A(6, 6, 0, 0, 1, far - 6, bottom).H(to);
+        extend(a.x, far + 8 + label.width);
+        if (label.width > 0) {
+          out.section('edge-labels');
+          out.group({ cls: 'pele-edge-label', id: `i${m.id}` });
+          out.label(label, far + 8 + label.width / 2, (top + bottom) / 2, under(far + 8, far + 8 + label.width), icons);
+          out.end();
         }
         // A label taller than the loop reaches below it, so the next row starts under the label.
         lineY = Math.max(bottom, (top + bottom) / 2 + label.height / 2);
@@ -968,53 +838,52 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
           x1 = b.x - dir * (isFigure(b.kind) ? 18 : b.size.w / 2 + 1);
         }
         if (circleFrom) {
-          inner += circle(a.x, lineY);
+          inner.push(() => circle(a.x, lineY));
           x0 = a.x + dir * CENTRAL_R;
         }
         if (circleTo) {
-          inner += circle(b.x, lineY);
+          inner.push(() => circle(b.x, lineY));
           x1 = b.x - dir * CENTRAL_R;
         }
         if (bw > 0) {
           // The number sits on the lifeline at the tail of the arrow, past a connection circle if there is one.
           if (tailAtEnd) {
             const cx = circleTo ? x1 - dir * (bw / 2 + 2) : x1;
-            inner += badge(i, cx, lineY, bw);
+            inner.push(() => badge(i, cx, lineY, bw));
             x1 = cx - (dir * bw) / 2;
           } else {
             const cx = circleFrom ? x0 + dir * (bw / 2 + 2) : x0;
-            inner += badge(i, cx, lineY, bw);
+            inner.push(() => badge(i, cx, lineY, bw));
             x0 = cx + (dir * bw) / 2;
           }
         }
-        const heads =
-          (st.atStart ? stamp(st.head, x0, lineY, -dir, up * dir, color) : '') + (st.atEnd ? stamp(st.head, x1, lineY, dir, up * dir, color) : '');
+        const hx0 = x0;
+        const hx1 = x1;
+        heads = () => {
+          if (st.atStart) drawHead(out, st.head, hx0, lineY, -dir, up * dir, color);
+          if (st.atEnd) drawHead(out, st.head, hx1, lineY, dir, up * dir, color);
+        };
         const from = x0 + (st.atStart ? dir * headTrim : 0);
         const to = x1 - (st.atEnd ? dir * headTrim : 0);
-        if (sink) route = `M${num(from)},${num(lineY)}H${num(to)}`;
-        inner = `<path d="M${num(from)},${num(lineY)}H${num(to)}"${attrs}/>` + heads + inner;
+        d = out.pen().M(from, lineY).H(to);
         if (label.width > 0) {
           const l = Math.min(x0, x1);
           const r = Math.max(x0, x1);
           const cx = align < 0 ? l + msgPad + label.width / 2 : align > 0 ? r - msgPad - label.width / 2 : (l + r) / 2;
           extend(cx - label.width / 2, cx + label.width / 2);
-          if (sink) {
-            sink.section('edge-labels', labelsAttrs);
-            sink.begin(`i${m.id}`, 'pele-edge-label');
-            backed(label, cx, lineY - 4 - label.height / 2);
-            sink.end();
-          } else labelsOut += `<g class="pele-edge-label" data-id="i${escText(m.id)}">${backed(label, cx, lineY - 4 - label.height / 2)}</g>`;
+          out.section('edge-labels');
+          out.group({ cls: 'pele-edge-label', id: `i${m.id}` });
+          backed(label, cx, lineY - 4 - label.height / 2);
+          out.end();
         }
         if (creating) y = lineY + b.size.h / 2 - 6;
       }
-      if (sink) {
-        sink.section('edges', ' fill="none" stroke="var(--_l)" stroke-linecap="round"');
-        sink.begin(`i${m.id}`, 'pele-edge pele-message', 0, 0, line ? ` stroke="${line}"` : '', m.source);
-        sink.path(route, attrs);
-        for (const draw of heads) draw();
-        for (const draw of marks) draw();
-        sink.end();
-      } else edgesOut += `<g class="pele-edge pele-message" data-id="i${escText(m.id)}"${srcAttrs(m.source)}${line ? ` stroke="${line}"` : ''}>${inner}</g>`;
+      out.section('edges');
+      out.group({ cls: 'pele-edge pele-message', id: `i${m.id}`, source: m.source, attrs: line ? ` stroke="${line}"` : '' });
+      out.path(d, attrs);
+      heads();
+      for (const f of inner) f();
+      out.end();
       y = Math.max(y, lineY);
       if (a.destroyAt === i) y = Math.max(y, destroy(a, lineY));
       if (b.destroyAt === i && b !== a) y = Math.max(y, destroy(b, lineY));
@@ -1029,46 +898,31 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     for (const col of cols) {
       if (col.lifeEnd >= 0) continue;
       footH = Math.max(footH, col.size.h);
-      actorsOut += actorSvg(col, y, true);
+      drawActorAt(col, y, true);
     }
     bottom = y + footH;
   }
-  let lifelines = '';
   for (const col of cols) {
-    actorsOut += actorSvg(col, col.top, false);
+    drawActorAt(col, col.top, false);
     const end = col.lifeEnd >= 0 ? col.lifeEnd : y;
-    if (sink && end > col.lifeStart) {
-      sink.section('lifelines', ' fill="none" stroke="var(--_b)"');
-      sink.begin(col.id, 'pele-lifeline', 0, 0, '', col.actor.source);
-      sink.shape([M, col.x, col.lifeStart, L, col.x, end]);
-      sink.end();
-    } else if (end > col.lifeStart) {
-      lifelines += `<path class="pele-lifeline" data-id="${escText(col.id)}"${srcAttrs(col.actor.source)} d="M${num(col.x)},${num(col.lifeStart)}V${num(end)}"/>`;
+    if (end > col.lifeStart) {
+      out.section('lifelines');
+      out.path(out.pen().M(col.x, col.lifeStart).V(end), '', undefined, { cls: 'pele-lifeline', id: col.id, source: col.actor.source });
     }
   }
 
-  let boxesOut = '';
   for (const run of runs) {
     const [x0, x1] = boxEdges(run);
     const fill = run.box.fill === 'transparent' ? '' : resolveStyle([`fill:${run.box.fill}`]).shape;
-    if (sink) {
-      sink.section('boxes', ` font-size="${small}"`);
-      sink.begin(run.box.name || undefined, 'pele-cluster pele-box', 0, 0, '', run.box.source);
-      sink.rect(x0, 0, x1 - x0, bottom + boxPad, ` fill="var(--_a)" stroke="var(--_b)"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}`);
-      labelSvg(run.title, (x0 + x1) / 2, boxPad / 2 + 2 + run.title.height / 2, ` class="pele-cluster-label"${inkOn(run.box.fill) || ' fill="var(--_m)"'}`, icons);
-      sink.end();
-      continue;
-    }
-    boxesOut +=
-      `<g class="pele-cluster pele-box"${run.box.name ? ` data-id="${escText(run.box.name)}"` : ''}${srcAttrs(run.box.source)}>` +
-      `<rect x="${num(x0)}" y="0" width="${num(x1 - x0)}" height="${num(bottom + boxPad)}" fill="var(--_a)" stroke="var(--_b)"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}/>` +
-      labelSvg(run.title, (x0 + x1) / 2, boxPad / 2 + 2 + run.title.height / 2, ` class="pele-cluster-label"${inkOn(run.box.fill) || ' fill="var(--_m)"'}`, icons) +
-      '</g>';
+    out.section('boxes');
+    out.group({ cls: 'pele-cluster pele-box', id: run.box.name || undefined, source: run.box.source });
+    out.rect(x0, 0, x1 - x0, bottom + boxPad, ` fill="var(--_a)" stroke="var(--_b)"${rounded((fill ? '' : ' fill-opacity="0.5"') + fill)}`);
+    out.label(run.title, (x0 + x1) / 2, boxPad / 2 + 2 + run.title.height / 2, ` class="pele-cluster-label"${inkOn(run.box.fill) || ' fill="var(--_m)"'}`, icons);
+    out.end();
   }
   if (runs.length > 0) bottom += boxPad;
 
   let minY = 0;
-  let titleOut = '';
   const room = titleRoom(options);
   const plainTitle = titleLabel(db.title, measurer, size, tight ? room : Infinity);
   const title = tight ? breakLabel(plainTitle, measurer, Math.max(120, room)) : plainTitle;
@@ -1077,43 +931,22 @@ function draw(db: SeqDb, config: Config, options: RenderOptions, tight: boolean,
     const cx = (minX + maxX) / 2;
     extend(cx - title.width / 2, cx + title.width / 2);
     minY = -title.height - 12;
-    if (sink) sink.section('title');
-    titleOut = labelSvg(title, cx, minY + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"', icons);
+    out.section('title');
+    out.label(title, cx, minY + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"', icons);
   }
 
   const width = Math.ceil(maxX - minX + 2 * pad);
   // Retry with equal shares or room for activation notes and rounding.
   if (grown && width > options.maxWidth!) {
-    return draw(db, config, options, tight, uneven ? hold : hold > 0 ? Infinity : width - Math.floor(options.maxWidth!), false);
+    const retry = out.fork();
+    const rendered = draw(retry, db, config, options, tight, uneven ? hold : hold > 0 ? Infinity : width - Math.floor(options.maxWidth!), false);
+    out.adopt(retry);
+    return rendered;
   }
   const height = Math.ceil(bottom - minY + 2 * pad);
-  if (sink) {
-    for (const draw of rectsDraw.reverse()) draw();
-    for (const draw of activationsDraw.reverse()) draw();
-    return { svg: '', width, height, links: [], scene: moved(sink.finish(SCENE_ORDER, width, height), pad - minX, pad - minY) };
-  }
-  const svg = svgDocument(
-    'sequence',
-    width,
-    height,
-    size,
-    options,
-    db,
-    `<g transform="translate(${num(pad - minX)},${num(pad - minY)})">` +
-      titleOut +
-      (boxesOut ? `<g class="pele-boxes" font-size="${small}">${boxesOut}</g>` : '') +
-      (rectsOut.length > 0 ? `<g class="pele-rects" fill="var(--_a)">${rectsOut.reverse().join('')}</g>` : '') +
-      (lifelines ? `<g class="pele-lifelines" fill="none" stroke="var(--_b)">${lifelines}</g>` : '') +
-      (activationsOut.length > 0
-        ? `<g class="pele-activations" fill="var(--_s)" stroke="var(--_b)">${activationsOut.reverse().join('')}</g>`
-        : '') +
-      (framesOut ? `<g class="pele-frames" font-size="${small}" stroke="var(--_b)">${framesOut}</g>` : '') +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (crossesOut ? `<g class="pele-destroys" fill="none" stroke="var(--_l)" stroke-width="1.5" stroke-linecap="round">${crossesOut}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${small}"${monospaced ? ` font-family="${FONT_MONO}"` : ''}>${labelsOut}</g>` : '') +
-      (notesOut ? `<g class="pele-notes" font-size="${small}" fill="var(--_a)" stroke="var(--_b)">${notesOut}</g>` : '') +
-      (actorsOut ? `<g class="pele-nodes">${actorsOut}</g>` : '') +
-      '</g>'
-  );
-  return { svg, width, height, links: [] };
+  for (const draw of rectsDraw.reverse()) draw();
+  for (const draw of activationsDraw.reverse()) draw();
+  out.frame(pad - minX, pad - minY);
+  out.done(width, height);
+  return { width, height, links: [] };
 }

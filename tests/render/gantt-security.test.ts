@@ -1,21 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer, now: new Date(2014, 0, 16, 12) };
+const options = { now: new Date(2014, 0, 16, 12) };
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
-  expect(svg, JSON.stringify(src).slice(0, 160)).not.toMatch(/NaN|Infinity/);
+  const result = tryDraw(src, { ...options, ...extra });
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
+  expect(JSON.stringify(result.scene), where).not.toMatch(/NaN|Infinity/);
   return true;
 }
 
@@ -111,16 +106,15 @@ describe('inert gantt output', () => {
 
   it('never links to a script URL', () => {
     for (const url of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', ' javascript:alert(1)', 'data:text/html,x', 'vbscript:x']) {
-      const { svg, links } = render(`${HEAD}${TASKS}  click a1 href "${url}"\n`, options);
-      expect(svg).not.toMatch(/<a\b/);
+      const { links } = draw(`${HEAD}${TASKS}  click a1 href "${url}"\n`, options);
       expect(links).toEqual([]);
     }
   });
 
   it('does not pollute prototypes', () => {
-    render(`${HEAD}  A :__proto__, 2014-01-01, 3d\n  B :constructor, after __proto__ toString, 2d\n  section __proto__\n  C :hasOwnProperty, 2014-01-02, until constructor\n  click __proto__,constructor href "https://example.com"\n  click toString call __proto__(constructor)\n`, options);
-    render('---\nconfig:\n  gantt:\n    __proto__:\n      polluted: 1\n    constructor: 2\n---\n' + HEAD + TASKS, options);
-    render(`${HEAD}  excludes __proto__ constructor\n  includes toString\n${TASKS}`, options);
+    draw(`${HEAD}  A :__proto__, 2014-01-01, 3d\n  B :constructor, after __proto__ toString, 2d\n  section __proto__\n  C :hasOwnProperty, 2014-01-02, until constructor\n  click __proto__,constructor href "https://example.com"\n  click toString call __proto__(constructor)\n`, options);
+    draw('---\nconfig:\n  gantt:\n    __proto__:\n      polluted: 1\n    constructor: 2\n---\n' + HEAD + TASKS, options);
+    draw(`${HEAD}  excludes __proto__ constructor\n  includes toString\n${TASKS}`, options);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'a1')).toBe(false);
   });

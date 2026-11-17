@@ -1,7 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import { escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { ARROW, marker } from '../../svg/edges.js';
-import { svgDocument } from '../../svg/root.js';
+import { Paint, type Out } from '../../draw/out.js';
+import { ARROW, drawMarker } from '../../svg/edges.js';
 import { ROUNDED } from '../../svg/theme.js';
 import { breakLabel } from '../common/literal-label.js';
 import { layoutLabel, type Label } from '../../text/label.js';
@@ -24,6 +23,11 @@ const HEAD_GAP = 34;
 const TAIL = 28;
 const BOX_PAD_X = 10;
 const BOX_PAD_Y = 5;
+const BONES = new Paint(' fill="none" stroke="var(--_l)"');
+const CATEGORY_BOX = new Paint(` fill="var(--_s)" stroke="var(--_b)"${ROUNDED}`);
+const HEAD_SHAPE = new Paint(' fill="var(--_s)" stroke="var(--_b)" stroke-linejoin="round"');
+const EDGE = new Paint(' fill="none" stroke="var(--_b)"');
+const TITLE = ' class="pele-title" font-weight="var(--_tw)"';
 
 // A cause below a category. Bones at even depths run level, from the slanted bone above them
 // toward the tail; bones at odd depths slant away from the spine, from the level bone above them.
@@ -129,22 +133,20 @@ function arrange(node: IshikawaNode, up: boolean, measurer: TextMeasurer, size: 
   return { node, label, boxW, boxH: label.height + 2 * BOX_PAD_Y, bones, rise: rise + BONE_END, reach };
 }
 
-export function renderIshikawa(model: IshikawaModel, _config: Config, options: RenderOptions): Rendered {
-  return turnToFit(options, (down) => draw(model, _config, options, down));
+export function renderIshikawa(model: IshikawaModel, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return turnToFit(options, (down, o) => draw(o, model, _config, options, down), out);
 }
 
-function draw(model: IshikawaModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: IshikawaModel, _config: Config, options: RenderOptions, down: boolean): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
-  if (down) return verticalCauses(model, options);
+  if (down) return verticalCauses(out, model, options);
   const root = model.root;
   const title = layoutLabel(model.title, false, measurer, size, 4000, Style.Bold);
   const titleHeight = title.height > 0 ? title.height + 12 : 0;
 
-  let body = '';
   let minX = 0;
   let maxX = 0;
   let minY = 0;
@@ -179,7 +181,11 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
     minX = tail;
     minY = -headH / 2;
     maxY = headH / 2;
-    let groups = '';
+    // The drawing is moved by where its extent ends up, known only after it is drawn.
+    out.frame(0, 0);
+    out.section('body');
+    out.path(out.pen().M(tail, 0).H(-(ARROW - 1)), BONES, undefined, { cls: 'pele-ishikawa-spine' });
+    drawMarker(out, 'arrow_point', 0, 0, 1, 0, 'var(--_l)');
     categories.forEach((category, i) => {
       const sign = i % 2 === 0 ? -1 : 1;
       const ax = xs[i];
@@ -188,18 +194,18 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
       const endY = sign * category.rise;
       // The bone stops short of the spine to leave its arrowhead a clean point.
       const trim = ARROW - 1;
-      let d = `M${num(ax - (SLANT / LENGTH) * trim)},${num((sign * trim) / LENGTH)}L${num(endX)},${num(endY)}`;
-      let texts = '';
+      const d = out.pen().M(ax - (SLANT / LENGTH) * trim, (sign * trim) / LENGTH).L(endX, endY);
+      const texts: { label: Label; x: number; y: number; attrs: string }[] = [];
       for (const bone of category.bones) {
         const y = sign * bone.rise;
         if (bone.depth % 2 === 0) {
-          d += `M${num(px(bone.at, bone.rise))},${num(y)}H${num(px(bone.textEnd + TEXT_GAP, bone.rise))}`;
+          d.M(px(bone.at, bone.rise), y).H(px(bone.textEnd + TEXT_GAP, bone.rise));
         } else {
           const from = category.bones[bone.parent].rise;
-          d += `M${num(px(bone.at, from))},${num(sign * from)}L${num(px(bone.at, bone.rise))},${num(y)}`;
+          d.M(px(bone.at, from), sign * from).L(px(bone.at, bone.rise), y);
         }
         const right = px(bone.textEnd, bone.rise);
-        texts += labelSvg(bone.label, right - bone.label.width / 2, y, bone.depth > 2 ? ' fill="var(--_m)"' : '');
+        if (bone.label.lines.length > 0) texts.push({ label: bone.label, x: right - bone.label.width / 2, y, attrs: bone.depth > 2 ? ' fill="var(--_m)"' : '' });
         minX = Math.min(minX, right - bone.label.width);
       }
       const boxY = endY + sign * (category.boxH / 2);
@@ -207,27 +213,24 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
       maxX = Math.max(maxX, endX + category.boxW / 2);
       minY = Math.min(minY, boxY - category.boxH / 2);
       maxY = Math.max(maxY, boxY + category.boxH / 2);
-      groups +=
-        `<g class="pele-ishikawa-category" data-id="${escText(category.node.text)}"${srcAttrs(category.node.source)}>` +
-        `<path class="pele-ishikawa-bones" d="${d}" fill="none" stroke="var(--_l)"/>` +
-        marker('arrow_point', ax, 0, SLANT / LENGTH, -sign / LENGTH, 'var(--_l)') +
-        `<rect x="${num(endX - category.boxW / 2)}" y="${num(boxY - category.boxH / 2)}" width="${num(category.boxW)}" height="${num(
-          category.boxH
-        )}" fill="var(--_s)" stroke="var(--_b)"${ROUNDED}/>` +
-        labelSvg(category.label, endX, boxY, ' class="pele-label"') +
-        (texts ? `<g class="pele-ishikawa-causes" font-size="${small}">${texts}</g>` : '') +
-        '</g>';
+      out.group({ cls: 'pele-ishikawa-category', id: category.node.text, source: category.node.source });
+      out.path(d, BONES, undefined, { cls: 'pele-ishikawa-bones' });
+      drawMarker(out, 'arrow_point', ax, 0, SLANT / LENGTH, -sign / LENGTH, 'var(--_l)');
+      out.rect(endX - category.boxW / 2, boxY - category.boxH / 2, category.boxW, category.boxH, CATEGORY_BOX);
+      out.label(category.label, endX, boxY, ' class="pele-label"');
+      if (texts.length > 0) {
+        out.group({ cls: 'pele-ishikawa-causes', attrs: ` font-size="${small}"` });
+        for (const t of texts) out.label(t.label, t.x, t.y, t.attrs);
+        out.end();
+      }
+      out.end();
     });
 
     const r = headH / 2;
-    body =
-      `<path class="pele-ishikawa-spine" d="M${num(tail)},0H${num(-(ARROW - 1))}" fill="none" stroke="var(--_l)"/>` +
-      marker('arrow_point', 0, 0, 1, 0, 'var(--_l)') +
-      groups +
-      `<g class="pele-ishikawa-head" data-id="${escText(root.text)}"${srcAttrs(root.source)}>` +
-      `<path d="M0,${num(-r)}H${num(headW - r)}A${num(r)},${num(r)} 0 0 1 ${num(headW - r)},${num(r)}H0Z" fill="var(--_s)" stroke="var(--_b)" stroke-linejoin="round"/>` +
-      labelSvg(head, 12 + head.width / 2, 0, ' class="pele-label" font-weight="var(--_hw)"') +
-      '</g>';
+    out.group({ cls: 'pele-ishikawa-head', id: root.text, source: root.source });
+    out.path(out.pen().M(0, -r).H(headW - r).A(r, r, 0, 0, 1, headW - r, r).H(0).Z(), HEAD_SHAPE);
+    out.label(head, 12 + head.width / 2, 0, ' class="pele-label" font-weight="var(--_hw)"');
+    out.end();
   }
 
   const inner = Math.max(maxX - minX, title.width);
@@ -235,21 +238,14 @@ function draw(model: IshikawaModel, _config: Config, options: RenderOptions, dow
   const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
   const ox = pad + (inner - (maxX - minX)) / 2 - minX;
   const oy = pad + titleHeight - minY;
-  const svg = svgDocument(
-    'ishikawa',
-    width,
-    height,
-    size,
-    options,
-    {},
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      (body ? `<g transform="translate(${num(ox)},${num(oy)})">${body}</g>` : '')
-  );
-  return { svg, width, height, links: [] };
+  if (root) out.frame(ox, oy);
+  out.section('main');
+  out.label(title, width / 2, pad + title.height / 2, TITLE);
+  out.done(width, height);
+  return { width, height, links: [] };
 }
 
-function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function verticalCauses(out: Out, model: IshikawaModel, options: RenderOptions): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
@@ -268,7 +264,8 @@ function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered 
   }
   const indent = Math.min(20, Math.max(2, (room - 120) / Math.max(1, depth)));
   let y = pad + (title.height ? title.height + 12 : 0), width = title.width;
-  let nodes = '', edges = '';
+  out.section('edges');
+  out.section('nodes');
   for (const entry of order) {
     entry.x = pad + entry.depth * indent;
     const labelRoom = Math.max(60, room - entry.depth * indent - 20);
@@ -279,16 +276,25 @@ function verticalCauses(model: IshikawaModel, options: RenderOptions): Rendered 
     y += entry.h + 12;
     width = Math.max(width, entry.x - pad + entry.w);
     const framed = entry.depth < 2;
-    nodes += `<g class="pele-node ${entry.depth === 0 ? 'pele-ishikawa-head' : entry.depth === 1 ? 'pele-ishikawa-category' : 'pele-ishikawa-cause'}" data-id="${escText(entry.node.text)}"${srcAttrs(entry.node.source)}>` +
-      (framed ? `<rect x="${num(entry.x)}" y="${num(entry.y)}" width="${num(entry.w)}" height="${num(entry.h)}" rx="${entry.depth === 0 ? 12 : 4}" fill="var(--_s)" stroke="var(--_b)"/>` : '') +
-      labelSvg(entry.label, entry.x + entry.w / 2, entry.y + entry.h / 2, ` class="pele-label"${entry.depth < 2 ? ' font-weight="var(--_hw)"' : ''}${entry.depth > 1 ? ` font-size="${small}"` : ''}`) + '</g>';
+    out.section('nodes');
+    out.group({
+      cls: `pele-node ${entry.depth === 0 ? 'pele-ishikawa-head' : entry.depth === 1 ? 'pele-ishikawa-category' : 'pele-ishikawa-cause'}`,
+      id: entry.node.text,
+      source: entry.node.source,
+    });
+    if (framed) out.rect(entry.x, entry.y, entry.w, entry.h, ` rx="${entry.depth === 0 ? 12 : 4}" fill="var(--_s)" stroke="var(--_b)"`);
+    out.label(entry.label, entry.x + entry.w / 2, entry.y + entry.h / 2, ` class="pele-label"${entry.depth < 2 ? ' font-weight="var(--_hw)"' : ''}${entry.depth > 1 ? ` font-size="${small}"` : ''}`);
+    out.end();
     if (entry.parent >= 0) {
       const parent = order[entry.parent];
       const gx = parent.x + indent / 2;
-      edges += `<path class="pele-edge" d="M${num(gx)},${num(parent.y + parent.h)}V${num(entry.y + entry.h / 2)}H${num(entry.x)}" fill="none" stroke="var(--_b)"/>`;
+      out.section('edges');
+      out.path(out.pen().M(gx, parent.y + parent.h).V(entry.y + entry.h / 2).H(entry.x), EDGE, undefined, { cls: 'pele-edge' });
     }
   }
   const totalWidth = Math.ceil(width + 2 * pad), height = Math.ceil(Math.max(pad + title.height, y - 12) + pad);
-  const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + edges + nodes;
-  return { svg: svgDocument('ishikawa', totalWidth, height, size, options, {}, content), width: totalWidth, height, links: [] };
+  out.section('main');
+  out.label(title, totalWidth / 2, pad + title.height / 2, TITLE);
+  out.done(totalWidth, height);
+  return { width: totalWidth, height, links: [] };
 }

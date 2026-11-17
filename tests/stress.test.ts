@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render } from '../src/index.js';
+import { PeleError, parse, renderScene } from '../src/index.js';
 import { tokenize } from '../src/diagrams/flowchart/lexer.js';
 import { encodeEntities, preprocess } from '../src/preprocess.js';
 import { metricsMeasurer } from '../src/text/measurer.js';
@@ -19,12 +19,12 @@ const CASES: [string, () => unknown][] = [
   [
     'edges that each cross 1,000 nested subgraph borders',
     () =>
-      render(
+      renderScene(
         'flowchart TD\n' + repeat(1000, (i) => `subgraph g${i}\n`) + 'inner\n' + 'end\n'.repeat(1000) + repeat(2000, (i) => `out${i % 50} --> inner\n`),
         big
       ),
   ],
-  ['a markdown label that is already bold, with 10,000 markers', () => render('flowchart TD\n  A["`' + '**a** '.repeat(5000) + '`"]\n  style A font-weight:bold\n', big)],
+  ['a markdown label that is already bold, with 10,000 markers', () => renderScene('flowchart TD\n  A["`' + '**a** '.repeat(5000) + '`"]\n  style A font-weight:bold\n', big)],
   ['comment stripping over blank lines', () => preprocess('graph TD\n' + ('\n' + ' '.repeat(4)).repeat(10000) + '%% c\nA')],
   ['unterminated comment markers', () => preprocess('graph TD\nA\n%%' + 'x%%'.repeat(16000))],
   ['tag-like text with no closing bracket', () => preprocess('graph TD\nA["' + '<a'.repeat(N / 2) + '"]')],
@@ -39,26 +39,26 @@ const CASES: [string, () => unknown][] = [
   ['ellipse text of spaces and tildes', () => tokenize('graph TD;A(-' + ' ~'.repeat(N / 2) + '-)')],
   ['runs of dashes, dots, equals', () => tokenize('graph TD;A' + '-'.repeat(N) + '.'.repeat(N) + '='.repeat(N))],
   ['20,000 nested subgraphs', () => parse('graph TD\n' + 'subgraph s\n'.repeat(20000) + 'A\n' + 'end\n'.repeat(20000), big)],
-  ['3,000 nested subgraphs, rendered', () => render('graph TD\n' + repeat(3000, (i) => `subgraph s${i}\n`) + 'A-->B\n' + 'end\n'.repeat(3000), big)],
+  ['3,000 nested subgraphs, rendered', () => renderScene('graph TD\n' + repeat(3000, (i) => `subgraph s${i}\n`) + 'A-->B\n' + 'end\n'.repeat(3000), big)],
   ['deeply bracketed metadata', () => parse('graph TD\nA@{ a: ' + '['.repeat(20000) + ' }\n', big)],
   ['unclosed metadata over many lines', () => parse('graph TD\nA@{\n a: {\n' + ' b: 1,\n'.repeat(5000) + '}\n', big)],
-  ['5,000 sibling subgraphs', () => render('graph TD\n' + repeat(5000, (i) => `subgraph s${i}\nn${i}\nend\n`), big)],
-  ['chain of 5,000', () => render('graph TD\n' + repeat(5000, (i) => `n${i}-->n${i + 1}\n`), big)],
-  ['star of 5,000', () => render('graph TD\n' + repeat(5000, (i) => `c-->n${i}\n`), big)],
-  ['3,000 long edges over a chain of 3,000', () => render('graph TD\n' + repeat(3000, (i) => `n${i}-->n${i + 1}\nn0-->n${i + 2}\n`), big)],
+  ['5,000 sibling subgraphs', () => renderScene('graph TD\n' + repeat(5000, (i) => `subgraph s${i}\nn${i}\nend\n`), big)],
+  ['chain of 5,000', () => renderScene('graph TD\n' + repeat(5000, (i) => `n${i}-->n${i + 1}\n`), big)],
+  ['star of 5,000', () => renderScene('graph TD\n' + repeat(5000, (i) => `c-->n${i}\n`), big)],
+  ['3,000 long edges over a chain of 3,000', () => renderScene('graph TD\n' + repeat(3000, (i) => `n${i}-->n${i + 1}\nn0-->n${i + 2}\n`), big)],
   ['complete graph of 60', () => {
     let s = 'graph TD\n';
     for (let i = 0; i < 60; i++) for (let j = i + 1; j < 60; j++) s += `n${i}-->n${j}\n`;
-    return render(s, big);
+    return renderScene(s, big);
   }],
-  ['2,000 parallel edges and 2,000 self loops', () => render('graph TD\n' + 'A-->B\n'.repeat(2000) + 'A-->A\n'.repeat(2000), big)],
-  ['one 50,000 character label', () => render('graph TD\nA["' + 'word '.repeat(N / 5) + '"]', big)],
-  ['label of emphasis markers', () => render('graph TD\nA["`' + '*a _b '.repeat(N / 6) + '`"]', big)],
-  ['label of entities and line breaks', () => render('graph TD\nA["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
-  ['label of unclosed entity placeholders', () => render('graph TD\nA["' + 'ﬂ°'.repeat(N / 2) + '¶x"]', big)],
+  ['2,000 parallel edges and 2,000 self loops', () => renderScene('graph TD\n' + 'A-->B\n'.repeat(2000) + 'A-->A\n'.repeat(2000), big)],
+  ['one 50,000 character label', () => renderScene('graph TD\nA["' + 'word '.repeat(N / 5) + '"]', big)],
+  ['label of emphasis markers', () => renderScene('graph TD\nA["`' + '*a _b '.repeat(N / 6) + '`"]', big)],
+  ['label of entities and line breaks', () => renderScene('graph TD\nA["' + '#35;&amp;<br>'.repeat(N / 13) + '"]', big)],
+  ['label of unclosed entity placeholders', () => renderScene('graph TD\nA["' + 'ﬂ°'.repeat(N / 2) + '¶x"]', big)],
   ['metadata key followed by spaces', () => parse('graph TD\nA@{\n a' + ' '.repeat(N) + '\n}\n', big)],
-  ['link wrapped in layers of entity encoding', () => render('graph TD\nA\nclick A "&' + '#38;'.repeat(N / 4) + 'x"', big)],
-  ['1,000 edges of length ten', () => render('graph TD\n' + repeat(1000, (i) => `n${i} ------------> n${i + 1}\n`), big)],
+  ['link wrapped in layers of entity encoding', () => renderScene('graph TD\nA\nclick A "&' + '#38;'.repeat(N / 4) + 'x"', big)],
+  ['1,000 edges of length ten', () => renderScene('graph TD\n' + repeat(1000, (i) => `n${i} ------------> n${i + 1}\n`), big)],
 ];
 
 describe('worst cases', () => {
@@ -80,26 +80,26 @@ describe('worst cases', () => {
     const product = `${ids('a', 2000)} --> ${ids('b', 2000)}`;
     for (const source of [`flowchart LR\n${product}`, `agentflow-beta LR\n${product}`]) {
       const started = performance.now();
-      expect(() => render(source, { measurer: metricsMeasurer }), source.slice(0, 14)).toThrow(/Edge limit exceeded.*limit is 5000/);
+      expect(() => renderScene(source, { measurer: metricsMeasurer }), source.slice(0, 14)).toThrow(/Edge limit exceeded.*limit is 5000/);
       expect(performance.now() - started, source.slice(0, 14)).toBeLessThan(2000);
     }
     const chain = (count: number): string => 'flowchart LR\n' + repeat(count, (i) => `N${i} --> N${i + 1}\n`);
-    expect(render(chain(5000), { measurer: metricsMeasurer, limit: Infinity }).svg).toContain('<svg');
-    expect(() => render(chain(5001), { measurer: metricsMeasurer, limit: Infinity })).toThrow(PeleError);
-    expect(() => render(chain(11), { measurer: metricsMeasurer, maxEdges: 10 })).toThrow('Edge limit exceeded. The limit is 10.');
+    expect(renderScene(chain(5000), { measurer: metricsMeasurer, limit: Infinity }).scene.shapes.length).toBeGreaterThan(0);
+    expect(() => renderScene(chain(5001), { measurer: metricsMeasurer, limit: Infinity })).toThrow(PeleError);
+    expect(() => renderScene(chain(11), { measurer: metricsMeasurer, maxEdges: 10 })).toThrow('Edge limit exceeded. The limit is 10.');
     expect(() => parse(chain(11), { maxEdges: 10 })).toThrow(/limit is 10\b/);
     try {
-      render(chain(11), { maxEdges: 10 });
+      renderScene(chain(11), { maxEdges: 10 });
     } catch (error) {
       expect((error as PeleError).code).toBe('limit');
     }
     // A diagram cannot raise the limit for itself.
     const raised = `---\nconfig:\n  maxEdges: 100000\n  flowchart:\n    maxEdges: 100000\n---\n%%{init: {'maxEdges': 100000}}%%\n${chain(11)}`;
-    expect(() => render(raised, { measurer: metricsMeasurer, maxEdges: 10 })).toThrow(/limit is 10\b/);
+    expect(() => renderScene(raised, { measurer: metricsMeasurer, maxEdges: 10 })).toThrow(/limit is 10\b/);
   });
 
   it('refuses source over the default limit', () => {
-    expect(() => render('graph TD\n' + 'A-->B\n'.repeat(10000))).toThrow(/limit of 50000/);
-    expect(render('graph TD\n' + 'A-->B\n'.repeat(10000), big).svg).toContain('<svg');
+    expect(() => renderScene('graph TD\n' + 'A-->B\n'.repeat(10000))).toThrow(/limit of 50000/);
+    expect(renderScene('graph TD\n' + 'A-->B\n'.repeat(10000), big).scene.shapes.length).toBeGreaterThan(0);
   });
 });

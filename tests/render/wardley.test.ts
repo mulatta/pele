@@ -1,9 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { PeleError, parse, supports } from '../../src/index.js';
+import type { Scene, SceneShape } from '../../src/draw/scene.js';
+import { draw, itemById, items, lines, sceneProblem, shapesOf, textOf, textsOf } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-const count = (svg: string, re: RegExp): number => svg.match(re)?.length ?? 0;
+// What is drawn, without where in the source each part was written.
+const picture = (scene: Scene): string => JSON.stringify([scene.shapes, scene.texts]);
+
+// Lines of no item in a dash pattern: the stage dividers are dashed 4 and 4, the optional grid 2 and 6.
+const dashed = (scene: Scene, dash: number[]): SceneShape[] =>
+  scene.shapes.filter((s) => s.kind === 'stroke' && s.item === -1 && s.dash?.join() === dash.join());
+const stages = (scene: Scene): SceneShape[] => dashed(scene, [4, 4]);
+const grid = (scene: Scene): SceneShape[] => dashed(scene, [2, 6]);
+
+// The left end of the horizontal axis, from which the stages are laid out.
+const originX = (scene: Scene): number => scene.shapes.find((s) => s.kind === 'stroke' && s.item === -1 && s.paint === 'var(--_l)')!.cmds[1];
+
+// The middle of a component's circle, which is the first thing it draws.
+function at(scene: Scene, id: string): [number, number] {
+  const { box } = shapesOf(scene, itemById(scene, id, 'pele-wardley-component')!)[0];
+  return [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2];
+}
+
+// Where a component's label starts.
+const labelX = (src: string): number => {
+  const { scene } = draw(src);
+  return textsOf(scene, itemById(scene, 'A', 'pele-wardley-component')!)[0].x;
+};
 
 const TEA =
   'wardley-beta\ntitle Tea Shop\nanchor Business [0.95, 0.63]\ncomponent Cup of Tea [0.79, 0.61]\ncomponent Tea [0.63, 0.81]\n' +
@@ -12,33 +34,29 @@ const TEA =
 
 describe('wardley rendering', () => {
   it('draws axes, stages, components, links, evolution, and notes', () => {
-    const { svg, type } = render(TEA, options);
+    const result = draw(TEA);
+    const { scene, type } = result;
     expect(type).toBe('wardley');
     expect(supports(TEA)).toBe(true);
-    expect(svg).toContain('class="pele-wardley-axis"');
-    expect(count(svg, /class="pele-wardley-stage"/g)).toBe(3);
-    for (const stage of ['Genesis', 'Custom Built', 'Product', 'Commodity', 'Evolution', 'Visibility']) expect(svg).toContain(`>${stage}<`);
-    expect(count(svg, /class="pele-node pele-wardley-component"/g)).toBe(4);
-    expect(count(svg, /class="pele-node pele-wardley-anchor"/g)).toBe(1);
-    expect(count(svg, /class="pele-edge"/g)).toBe(4);
-    expect(count(svg, /class="pele-wardley-trend"/g)).toBe(2);
-    expect(svg).toContain('class="pele-wardley-note"');
-    expect(svg).toContain('>Tea Shop<');
-    expect(svg).toContain('data-id="Cup of Tea"');
-    expect(svg).not.toContain('NaN');
+    expect(stages(scene)).toHaveLength(3);
+    for (const stage of ['Genesis', 'Custom Built', 'Product', 'Commodity', 'Evolution', 'Visibility']) expect(lines(scene)).toContain(stage);
+    expect(items(scene, 'pele-wardley-component')).toHaveLength(4);
+    expect(items(scene, 'pele-wardley-anchor')).toHaveLength(1);
+    expect(items(scene, 'pele-edge')).toHaveLength(4);
+    expect(items(scene, 'pele-wardley-trend')).toHaveLength(2);
+    expect(lines(scene)).toContain('Standardising power');
+    expect(lines(scene)).toContain('Tea Shop');
+    expect(itemById(scene, 'Cup of Tea', 'pele-wardley-component')).toBeDefined();
+    expect(sceneProblem(result)).toBeUndefined();
   });
 
   it('places components by evolution across and visibility up', () => {
-    const at = (src: string, id: string): [number, number] => {
-      const m = new RegExp(`data-id="${id}"><circle cx="([\\d.]+)" cy="([\\d.]+)"`).exec(render(src, options).svg)!;
-      return [Number(m[1]), Number(m[2])];
-    };
-    const src = 'wardley-beta\ncomponent Low [0.1, 0.2]\ncomponent High [0.9, 0.8]\ncomponent Percent [90.0, 80.0]\n';
-    const low = at(src, 'Low');
-    const high = at(src, 'High');
+    const { scene } = draw('wardley-beta\ncomponent Low [0.1, 0.2]\ncomponent High [0.9, 0.8]\ncomponent Percent [90.0, 80.0]\n');
+    const low = at(scene, 'Low');
+    const high = at(scene, 'High');
     expect(high[0]).toBeGreaterThan(low[0]);
     expect(high[1]).toBeLessThan(low[1]);
-    expect(at(src, 'Percent')).toEqual(high);
+    expect(at(scene, 'Percent')).toEqual(high);
   });
 
   it('exposes the model in percentages', () => {
@@ -55,57 +73,65 @@ describe('wardley rendering', () => {
   });
 
   it('draws custom stages, dual labels, and stage widths', () => {
-    const { svg } = render('wardley-beta\nevolution Genesis@0.3 / Concept -> Custom@0.5 -> Product@0.9 -> Utility@1.0\ncomponent A [0.5, 0.5]\n', options);
-    expect(svg).toContain('Genesis / Concept');
-    expect(svg).toContain('>Utility<');
-    const xs = [...svg.matchAll(/class="pele-wardley-stage" d="M([\d.]+),/g)].map((m) => Number(m[1]));
+    const { scene } = draw('wardley-beta\nevolution Genesis@0.3 / Concept -> Custom@0.5 -> Product@0.9 -> Utility@1.0\ncomponent A [0.5, 0.5]\n');
+    expect(lines(scene)).toContain('Genesis / Concept');
+    expect(lines(scene)).toContain('Utility');
+    const xs = stages(scene).map((s) => s.cmds[1] - originX(scene));
     expect(xs).toHaveLength(3);
     expect(xs[0] / xs[1]).toBeCloseTo(0.6, 5);
   });
 
   it('draws sourcing strategies and inertia', () => {
-    const { svg } = render(
-      'wardley-beta\ncomponent A [0.9, 0.1] (build)\ncomponent B [0.7, 0.4] (buy) inertia\ncomponent C [0.5, 0.7] (outsource)\ncomponent D [0.3, 0.9] (market) (inertia)\n',
-      options
+    const { scene } = draw(
+      'wardley-beta\ncomponent A [0.9, 0.1] (build)\ncomponent B [0.7, 0.4] (buy) inertia\ncomponent C [0.5, 0.7] (outsource)\ncomponent D [0.3, 0.9] (market) (inertia)\n'
     );
-    for (const strategy of ['build', 'buy', 'outsource', 'market']) expect(svg).toContain(`class="pele-wardley-${strategy}"`);
-    expect(count(svg, /class="pele-wardley-inertia"/g)).toBe(2);
+    // Each strategy fills the circle in its own paint.
+    const circle = (id: string): SceneShape => shapesOf(scene, itemById(scene, id, 'pele-wardley-component')!)[0];
+    expect(['A', 'B', 'C', 'D'].map((id) => circle(id).paint)).toEqual(['var(--_s)', 'var(--_a)', 'var(--_m)', 'var(--_bg)']);
+    // A market adds a triangle of circles inside its own.
+    expect(shapesOf(scene, itemById(scene, 'D', 'pele-wardley-component')!).length).toBeGreaterThan(shapesOf(scene, itemById(scene, 'A', 'pele-wardley-component')!).length);
+    // Inertia is a bar at the right of the component, a fill of three line segments.
+    const bars = items(scene, 'pele-wardley-component').filter((c) => shapesOf(scene, c).some((s) => s.kind === 'fill' && s.paint === 'var(--_l)' && s.cmds.length === 13));
+    expect(bars.map((c) => c.id)).toEqual(['B', 'D']);
   });
 
   it('draws flows, dashed links, and link labels', () => {
     const src = "wardley-beta\ncomponent A [0.9, 0.1]\ncomponent B [0.5, 0.5]\ncomponent C [0.1, 0.9]\nA +> B\nB +< C\nA +<> C\nA -.-> B; note here\nB +'cash'> C\nA -> Missing\nA -> A\n";
-    const { svg } = render(src, options);
-    expect(count(svg, /class="pele-edge[ "]/g)).toBe(5);
-    expect(count(svg, /class="pele-marker"/g)).toBe(5);
-    expect(count(svg, /class="pele-edge pele-wardley-dashed"/g)).toBe(1);
-    expect(svg).toContain('>note here</text>');
-    expect(svg).toContain('>cash</text>');
+    const { scene } = draw(src);
+    const edges = items(scene, 'pele-edge');
+    expect(edges).toHaveLength(5);
+    // An arrowhead is a filled triangle of its edge.
+    const heads = edges.flatMap((e) => shapesOf(scene, e)).filter((s) => s.kind === 'fill');
+    expect(heads).toHaveLength(5);
+    expect(items(scene, 'pele-wardley-dashed')).toHaveLength(1);
+    expect(items(scene, 'pele-wardley-dashed')[0].id).toBe('A-B');
+    expect(lines(scene)).toContain('note here');
+    expect(lines(scene)).toContain('cash');
   });
 
   it('draws pipelines around their components and moves the parent onto the box', () => {
     const src = 'wardley-beta\ncomponent Kettle [0.45, 0.57]\ncomponent Water [0.8, 0.8]\npipeline Kettle {\n  component Campfire Kettle [0.35]\n  component Electric Kettle [0.53]\n}\nWater -> Electric Kettle\nCampfire Kettle -> Kettle\n';
-    const { svg } = render(src, options);
-    expect(count(svg, /class="pele-wardley-pipeline"/g)).toBe(1);
-    expect(count(svg, /class="pele-node pele-wardley-pipeline-component"/g)).toBe(2);
-    expect(count(svg, /class="pele-node pele-wardley-pipeline-parent"/g)).toBe(1);
-    expect(svg).toContain('data-id="Water-Kettle_Electric Kettle"');
-    expect(count(svg, /class="pele-edge"/g)).toBe(1);
+    const { scene } = draw(src);
+    expect(items(scene, 'pele-wardley-pipeline')).toHaveLength(1);
+    expect(items(scene, 'pele-wardley-pipeline-component')).toHaveLength(2);
+    expect(items(scene, 'pele-wardley-pipeline-parent')).toHaveLength(1);
+    expect(itemById(scene, 'Water-Kettle_Electric Kettle', 'pele-edge')).toBeDefined();
+    expect(items(scene, 'pele-edge')).toHaveLength(1);
     const model = parse(src);
     if (model.type === 'wardley') expect(model.pipelines).toEqual([{ nodeId: 'Kettle', componentIds: ['Kettle_Campfire Kettle', 'Kettle_Electric Kettle'] }]);
   });
 
   it('draws annotations, listing their texts in the box or under the map', () => {
     const body = 'annotation 2,[0.5, 0.5] "Second"\nannotation 1,[0.6, 0.65] "First"\n';
-    const boxed = render('wardley-beta\nannotations [0.9, 0.1]\n' + body, options);
-    const below = render('wardley-beta\n' + body, options);
-    expect(count(boxed.svg, /class="pele-wardley-annotation"/g)).toBe(2);
-    expect(boxed.svg.indexOf('1. First')).toBeLessThan(boxed.svg.indexOf('2. Second'));
-    expect(below.svg).toContain('2. Second');
+    const boxed = draw('wardley-beta\nannotations [0.9, 0.1]\n' + body);
+    const below = draw('wardley-beta\n' + body);
+    expect(items(boxed.scene, 'pele-wardley-annotation')).toHaveLength(2);
+    expect(lines(boxed.scene).indexOf('1. First')).toBeLessThan(lines(boxed.scene).indexOf('2. Second'));
+    expect(lines(below.scene)).toContain('2. Second');
     expect(below.height).toBeGreaterThan(boxed.height);
   });
 
   it('moves a label out of the way of a link that leaves up and to the right', () => {
-    const labelX = (src: string): number => Number(/data-id="A">.*?<text[^>]*><tspan x="([\d.-]+)"/.exec(render(src, options).svg)![1]);
     const alone = labelX('wardley-beta\ncomponent A [0.5, 0.5]\ncomponent B [0.2, 0.2]\nA -> B\n');
     const blocked = labelX('wardley-beta\ncomponent A [0.5, 0.5]\ncomponent B [0.8, 0.8]\ncomponent C [0.2, 0.8]\nA -> B\nA -> C\n');
     const moved = labelX('wardley-beta\ncomponent A [0.5, 0.5] label [30, 30]\ncomponent B [0.8, 0.8]\nA -> B\n');
@@ -114,41 +140,40 @@ describe('wardley rendering', () => {
   });
 
   it('draws accelerators and deaccelerators', () => {
-    const { svg } = render('wardley-beta\naccelerator "AI Adoption" [0.55, 0.25]\ndeaccelerator Legacy [0.15, 0.75]\n', options);
-    expect(svg).toContain('class="pele-wardley-accelerator" data-id="AI Adoption"');
-    expect(svg).toContain('class="pele-wardley-deaccelerator" data-id="Legacy"');
+    const { scene } = draw('wardley-beta\naccelerator "AI Adoption" [0.55, 0.25]\ndeaccelerator Legacy [0.15, 0.75]\n');
+    expect(items(scene, 'pele-wardley-accelerator').map((i) => i.id)).toEqual(['AI Adoption']);
+    expect(items(scene, 'pele-wardley-deaccelerator').map((i) => i.id)).toEqual(['Legacy']);
   });
 
   it('honours size, label offsets, and the grid option, and keeps labels inside the picture', () => {
-    const base = render('wardley-beta\ncomponent A [0.5, 0.5]\n', options);
-    const sized = render('wardley-beta\nsize [1100, 800]\ncomponent A [0.5, 0.5]\n', options);
+    const base = draw('wardley-beta\ncomponent A [0.5, 0.5]\n');
+    const sized = draw('wardley-beta\nsize [1100, 800]\ncomponent A [0.5, 0.5]\n');
     expect(sized.width - base.width).toBe(200);
     expect(sized.height - base.height).toBe(200);
-    const edge = render('wardley-beta\ncomponent A long label at the right edge [0.5, 1.0]\n', options);
+    const edge = draw('wardley-beta\ncomponent A long label at the right edge [0.5, 1.0]\n');
     expect(edge.width).toBeGreaterThan(base.width + 100);
-    const moved = render('wardley-beta\ncomponent A [0.5, 0.5] label [-40, 30]\n', options).svg;
-    expect(moved).not.toBe(base.svg);
-    expect(render('---\nconfig:\n  wardley-beta:\n    showGrid: true\n---\nwardley-beta\ncomponent A [0.5, 0.5]\n', options).svg).toContain('pele-wardley-grid');
-    expect(base.svg).not.toContain('pele-wardley-grid');
+    const moved = draw('wardley-beta\ncomponent A [0.5, 0.5] label [-40, 30]\n');
+    expect(picture(moved.scene)).not.toBe(picture(base.scene));
+    expect(grid(draw('---\nconfig:\n  wardley-beta:\n    showGrid: true\n---\nwardley-beta\ncomponent A [0.5, 0.5]\n').scene)).toHaveLength(3);
+    expect(grid(base.scene)).toHaveLength(0);
   });
 
-  it('draws titles and accessible names', () => {
-    const { svg } = render('---\ntitle: Front\n---\nwardley-beta\naccTitle: Acc\naccDescr: Described\n', options);
-    expect(svg).toContain('>Front<');
-    expect(svg).toContain('<title id="pele-title">Acc</title>');
-    expect(svg).toContain('<desc id="pele-desc">Described</desc>');
-    expect(render('---\ntitle: Front\n---\nwardley-beta\ntitle Own\n', options).svg).toContain('>Own<');
+  it('draws titles', () => {
+    expect(lines(draw('---\ntitle: Front\n---\nwardley-beta\naccTitle: Acc\naccDescr: Described\n').scene)).toContain('Front');
+    const own = draw('---\ntitle: Front\n---\nwardley-beta\ntitle Own\n').scene;
+    expect(lines(own)).toContain('Own');
+    expect(textOf(own)).not.toContain('Front');
   });
 
   it("rejects what Mermaid rejects, with Mermaid's messages", () => {
-    expect(() => render('wardley-beta\ncomponent A [150.5, 0.5]\n', options)).toThrow(
+    expect(() => draw('wardley-beta\ncomponent A [150.5, 0.5]\n')).toThrow(
       'Component "A" visibility must be between 0-1 (decimal) or 0-100 (percentage). Received: 150.5'
     );
-    expect(() => render('wardley-beta\npipeline Nope {\n component A [0.5]\n}\n', options)).toThrow(
+    expect(() => draw('wardley-beta\npipeline Nope {\n component A [0.5]\n}\n')).toThrow(
       'Pipeline "Nope" must reference an existing component with coordinates.'
     );
     for (const src of ['wardley-beta\ncomponent market [0.1, 0.2]', 'wardley-beta\ncomponent A [1, 2]', 'wardley-beta\nA B', 'wardley-beta\nnote text [0.1, 0.2]']) {
-      expect(() => render(src, options), src).toThrow(PeleError);
+      expect(() => draw(src), src).toThrow(PeleError);
     }
   });
 });

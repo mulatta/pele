@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, textOf, tryDraw } from '../support/scene.js';
 
 function check(src: string): boolean {
-  let svg: string;
-  try {
-    svg = render(src, options).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src);
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
   return true;
 }
 
@@ -48,10 +41,10 @@ describe('treeView output is inert', () => {
   it('for names that are object keys', () => {
     for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
       const src = `---\nconfig:\n  treeView:\n    showIcons: true\n    defaultIconPack: p\n---\ntreeView-beta\n  ${key}\n  x.${key}\n  y icon(${key})\n`;
-      const svg = render(src, options).svg;
-      assertInert(svg, key);
-      expect(svg).not.toContain('function');
-      expect(svg).not.toContain('[object');
+      const result = draw(src);
+      assertSafe(result, key);
+      expect(textOf(result.scene)).not.toContain('function');
+      expect(textOf(result.scene)).not.toContain('[object');
     }
   });
 

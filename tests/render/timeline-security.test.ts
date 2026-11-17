@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
-  expect(svg, JSON.stringify(src).slice(0, 160)).not.toMatch(/NaN|Infinity/);
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -62,12 +53,11 @@ describe('inert timeline output', () => {
     expect(rendered).toBeGreaterThan(500);
   });
 
-  it('shows markup as escaped text', () => {
-    const { svg } = render('timeline\n  title <script>alert(1)</script>\n  section "><img src=x onerror=alert(1)>\n  <svg onload=alert(1)> : </text><script>x</script>', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('&lt;script&gt;');
-    expect(svg).toContain('data-id="&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"');
+  it('shows markup as text', () => {
+    const result = draw('timeline\n  title <script>alert(1)</script>\n  section "><img src=x onerror=alert(1)>\n  <svg onload=alert(1)> : </text><script>x</script>');
+    assertSafe(result, 'hostile timeline');
+    expect(lines(result.scene)).toContain('<script>alert(1)</script>');
+    expect(itemById(result.scene, '"><img src=x onerror=alert(1)>', 'pele-section')).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
@@ -88,8 +78,8 @@ describe('inert timeline output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('timeline\n  section __proto__\n  __proto__ : constructor : toString\n  constructor : __proto__\n  section constructor\n  hasOwnProperty', options);
-    render('---\nconfig:\n  timeline:\n    __proto__:\n      polluted: true\n---\ntimeline\n  2001 : a', options);
+    draw('timeline\n  section __proto__\n  __proto__ : constructor : toString\n  constructor : __proto__\n  section constructor\n  hasOwnProperty');
+    draw('---\nconfig:\n  timeline:\n    __proto__:\n      polluted: true\n---\ntimeline\n  2001 : a');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

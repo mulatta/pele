@@ -1,24 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
+import type { SceneResult } from '../../src/index.js';
 import { SankeyDb } from '../../src/diagrams/sankey/db.js';
 import { renderSankey } from '../../src/diagrams/sankey/render.js';
 import type { Config } from '../../src/preprocess.js';
+import { SceneOut } from '../../src/draw/scene.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
+}
+
+function drawModel(db: SankeyDb, config: Config): SceneResult {
+  const out = new SceneOut();
+  const { width, height, links } = renderSankey(db, config, { measurer: metricsMeasurer }, out);
+  if (!out.scene) throw new Error('sankey drew no scene');
+  return { type: 'sankey', mermaidType: 'sankey', scene: out.scene, width, height, links };
 }
 
 const BODY = 'a,b,2\nb,c,1\n';
@@ -62,21 +64,20 @@ describe('inert sankey output', () => {
     expect(rendered).toBeGreaterThan(450);
   }, 120_000);
 
-  it('escapes what it shows', () => {
-    const { svg } = render('sankey\n<script>alert(1)</script>,"<img src=x onerror=alert(1)>",1\n', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('data-id="&lt;script&gt;alert(1)&lt;/script&gt;"');
+  it('shows markup as text', () => {
+    const { scene } = draw('sankey\n<script>alert(1)</script>,"<img src=x onerror=alert(1)>",1\n');
+    expect(lines(scene)).toEqual(['<script>alert(1)</script> 1', '<img src=x onerror=alert(1)> 1']);
+    expect(itemById(scene, '<script>alert(1)</script>', 'pele-sankey-node')).toBeDefined();
   });
 
-  it('escapes markup in Unicode node names', () => {
+  it('shows markup in Unicode node names as text', () => {
     const from = '<script>Доход 🏠</script>';
     const to = '収入" onload="alert(1)';
     const src = `sankey\n${quoted(from)},${quoted(to)},1\n`;
     expect(check(src)).toBe(true);
-    const { svg } = render(src, options);
-    expect(svg).toContain('data-id="&lt;script&gt;Доход 🏠&lt;/script&gt;"');
-    expect(svg).toContain('data-id="収入&quot; onload=&quot;alert(1)"');
+    const { scene } = draw(src);
+    expect(itemById(scene, from, 'pele-sankey-node')).toBeDefined();
+    expect(itemById(scene, to, 'pele-sankey-node')).toBeDefined();
   });
 
   it('holds for hostile option values and configuration given by the host', () => {
@@ -116,9 +117,9 @@ describe('inert sankey output', () => {
       db.addLink(b, c, NaN);
       db.addLink(a, c, Infinity);
       db.addLink(a, c, -1);
-      assertInert(renderSankey(db, { sankey: { prefix: payload, linkColor: payload } }, options).svg, JSON.stringify(payload));
+      assertSafe(drawModel(db, { sankey: { prefix: payload, linkColor: payload } }), JSON.stringify(payload));
     }
-    assertInert(renderSankey(new SankeyDb(), {}, options).svg, 'empty model');
+    assertSafe(drawModel(new SankeyDb(), {}), 'empty model');
   });
 
   it('holds for mutated inputs', () => {
@@ -133,7 +134,7 @@ describe('inert sankey output', () => {
   }, 600_000);
 
   it('does not pollute prototypes', () => {
-    render('---\nconfig:\n  sankey:\n    nodeColors:\n      __proto__: red\n      constructor: blue\n---\nsankey\n__proto__,constructor,1\nconstructor,toString,2\nhasOwnProperty,__proto__,3\n', options);
+    draw('---\nconfig:\n  sankey:\n    nodeColors:\n      __proto__: red\n      constructor: blue\n---\nsankey\n__proto__,constructor,1\nconstructor,toString,2\nhasOwnProperty,__proto__,3\n');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

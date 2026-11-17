@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -67,7 +59,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"state": {"rankSpacing": "${p}"}, "themeVariables": {"fontFamily": "${p}"}}}%%\nstateDiagram-v2\n  a --> b`,
 ];
 
-describe('inert state diagram output', () => {
+describe('safe state diagram scenes', () => {
   it('holds for every corpus input', () => {
     for (const src of loadCorpus('state', /stateDiagram/)) check(src);
   }, 120_000);
@@ -105,16 +97,15 @@ describe('inert state diagram output', () => {
   it('never emits a script-capable link', () => {
     // The last two spell characters as Mermaid entity codes, which are resolved before the check.
     for (const url of ['javascript:alert(1)', ' JaVaScRiPt:alert(1)', 'data:text/html,x', 'vbscript:x', 'jav#9;ascript:alert(1)', '#106;avascript#colon;alert(1)']) {
-      const { svg, links } = render(`stateDiagram-v2\n  a --> b\n  click a "${url}" "t"\n`, options);
-      expect(svg).not.toMatch(/<a\b/);
+      const { links } = draw(`stateDiagram-v2\n  a --> b\n  click a "${url}" "t"\n`);
       expect(links).toEqual([]);
     }
   });
 
   it('does not pollute prototypes', () => {
-    render('stateDiagram-v2\n  __proto__ --> constructor\n  constructor --> toString\n  class __proto__ constructor\n  classDef constructor fill:red', options);
-    render('stateDiagram-v2\n  state __proto__ {\n  hasOwnProperty --> valueOf\n  }\n  note right of __proto__ : x\n  style __proto__ fill:red', options);
-    render('stateDiagram-v2\n  state "x" as __proto__:polluted\n  click __proto__ "x" "y"\n', options);
+    draw('stateDiagram-v2\n  __proto__ --> constructor\n  constructor --> toString\n  class __proto__ constructor\n  classDef constructor fill:red');
+    draw('stateDiagram-v2\n  state __proto__ {\n  hasOwnProperty --> valueOf\n  }\n  note right of __proto__ : x\n  style __proto__ fill:red');
+    draw('stateDiagram-v2\n  state "x" as __proto__:polluted\n  click __proto__ "x" "y"\n');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import type { RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, textOf, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -81,12 +74,11 @@ describe('inert ER output', () => {
     expect(rendered).toBeGreaterThan(450);
   });
 
-  it('escapes what it shows', () => {
-    const { svg } = render('erDiagram\n  "<img src=x onerror=alert(1)>" {\n    `<script>` `a&b` PK "</text><script>alert(1)</script>"\n  }', options);
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('<script');
-    expect(svg).toContain('a&amp;b');
-    expect(svg).toContain('data-id="&lt;img src=x onerror=alert(1)&gt;"');
+  it('shows hostile text as text', () => {
+    const { scene } = draw('erDiagram\n  "<img src=x onerror=alert(1)>" {\n    `<script>` `a&b` PK "</text><script>alert(1)</script>"\n  }');
+    expect(textOf(scene)).not.toContain('<script');
+    expect(textOf(scene)).toContain('a&b');
+    expect(itemById(scene, '<img src=x onerror=alert(1)>')).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
@@ -106,16 +98,15 @@ describe('inert ER output', () => {
     }
   }, 600_000);
 
-  it('never gives an unsafe href to an internal link', () => {
-    const { svg, links } = render('erDiagram\n  "javascript:alert(1)":::internal-link', options);
-    expect(svg).toContain('<a class="internal-link" data-href="javascript:alert(1)">');
+  it('reports an internal link as written, for the host to look up', () => {
+    const { links } = draw('erDiagram\n  "javascript:alert(1)":::internal-link');
     expect(links).toEqual([{ id: 'javascript:alert(1)', href: 'javascript:alert(1)', internal: true }]);
   });
 
   it('does not pollute prototypes', () => {
-    render('erDiagram\n  __proto__ ||--o{ constructor : toString\n  __proto__ {\n    __proto__ __proto__ PK "__proto__"\n  }', options);
-    render('erDiagram\n  A\n  classDef __proto__ fill:red\n  class A __proto__\n  class __proto__ constructor\n  style __proto__ fill:red\n', options);
-    render('erDiagram\n  subgraph __proto__ [constructor]\n  hasOwnProperty\n  end\n  __proto__ ||--|| prototype : x', options);
+    draw('erDiagram\n  __proto__ ||--o{ constructor : toString\n  __proto__ {\n    __proto__ __proto__ PK "__proto__"\n  }');
+    draw('erDiagram\n  A\n  classDef __proto__ fill:red\n  class A __proto__\n  class __proto__ constructor\n  style __proto__ fill:red\n');
+    draw('erDiagram\n  subgraph __proto__ [constructor]\n  hasOwnProperty\n  end\n  __proto__ ||--|| prototype : x');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.keys(Object.prototype)).toEqual([]);
   });

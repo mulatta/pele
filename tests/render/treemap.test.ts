@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { formatter } from '../../src/diagrams/treemap/format.js';
 import { layoutTreemap, type Box } from '../../src/diagrams/treemap/layout.js';
 import type { TreemapNode } from '../../src/diagrams/treemap/model.js';
-import { parse, render, supports } from '../../src/index.js';
+import { parse, supports } from '../../src/index.js';
+import type { Scene, SceneShape } from '../../src/draw/scene.js';
 import { Style, metricsMeasurer } from '../../src/text/measurer.js';
-import { elements } from '../support/xml.js';
-
-const options = { measurer: metricsMeasurer };
+import { draw, itemById, items, lineOf, lines, shapesOf, textsOf } from '../support/scene.js';
 
 const BASIC = 'treemap-beta\n"Category A"\n    "Item A1": 10\n    "Item A2": 20\n"Category B"\n    "Item B1": 15\n    "Item B2": 25\n';
 
@@ -20,18 +19,25 @@ interface Rect {
   y: number;
   w: number;
   h: number;
-  attrs: Map<string, string>;
 }
 
-function rects(svg: string): Rect[] {
-  const out: Rect[] = [];
-  let id = '';
-  for (const el of elements(svg)) {
-    if (el.name === 'g' && el.attrs.has('data-id')) id = el.attrs.get('data-id')!;
-    if (el.name !== 'rect') continue;
-    const n = (key: string): number => Number(el.attrs.get(key));
-    out.push({ id, x: n('x'), y: n('y'), w: n('width'), h: n('height'), attrs: el.attrs });
-  }
+// The box of every node that fills one, in drawing order. An item's own box also covers its text,
+// which may run past the fill.
+function rects(scene: Scene): Rect[] {
+  return items(scene, 'pele-node').flatMap((item) => {
+    const fill = shapesOf(scene, item).find((s) => s.kind === 'fill');
+    return fill ? [{ id: item.id, x: fill.box.x0, y: fill.box.y0, w: fill.box.x1 - fill.box.x0, h: fill.box.y1 - fill.box.y0 }] : [];
+  });
+}
+
+// What fills a node: its first fill.
+const fillOf = (scene: Scene, id: string): SceneShape => shapesOf(scene, itemById(scene, id, 'pele-node')!).find((s) => s.kind === 'fill')!;
+
+// Corner radii of a path, from its arcs (op 4: rx ry rotation large sweep x y).
+function radii(shape: SceneShape): number[] {
+  const out: number[] = [];
+  const args = [2, 2, 6, 4, 7, 0];
+  for (let i = 0; i < shape.cmds.length; i += 1 + args[shape.cmds[i]]) if (shape.cmds[i] === 4) out.push(shape.cmds[i + 1]);
   return out;
 }
 
@@ -183,32 +189,35 @@ describe('treemap value formats', () => {
 
 describe('treemap rendering', () => {
   it('draws sections with a header and leaves with a name and a value', () => {
-    const { svg, type, width, height } = render(BASIC, options);
+    const { scene, type, width, height } = draw(BASIC);
     expect(type).toBe('treemap');
     expect(supports('treemap\n"a": 1')).toBe(true);
     expect([width, height]).toEqual([656, 416]);
-    expect(svg.match(/class="pele-node pele-section"/g)?.length).toBe(2);
-    expect(svg.match(/class="pele-node pele-leaf"/g)?.length).toBe(4);
-    expect(svg).toContain('font-weight="var(--_hw)">Category A<');
-    expect(svg).toContain('>Item B2<');
-    expect(svg).toContain('>25<');
+    expect(items(scene, 'pele-section').length).toBe(2);
+    expect(items(scene, 'pele-leaf').length).toBe(4);
+    const header = textsOf(scene, itemById(scene, 'Category A')!);
+    expect(header[0]).toMatchObject({ weight: 700, anchor: 'start' });
+    expect(lineOf(header[0])).toBe('Category A');
+    expect(lines(scene)).toContain('Item B2');
+    expect(lines(scene)).toContain('25');
     // The value of a section is the sum of its leaves.
-    expect(svg).toMatch(/class="pele-value"[^>]*>40</);
+    expect(lineOf(header[1])).toBe('30');
+    expect(lineOf(textsOf(scene, itemById(scene, 'Category B')!)[1])).toBe('40');
   });
 
   it('colors each top-level section and what is inside it with one series color', () => {
-    const all = rects(render(BASIC, options).svg);
-    const fill = (id: string): string => all.find((r) => r.id === id)!.attrs.get('fill')!;
+    const { scene } = draw(BASIC);
+    const fill = (id: string): string => fillOf(scene, id).paint;
     expect(fill('Category A')).toContain('--pele-series-1');
     expect(fill('Item A1')).toBe(fill('Category A'));
     expect(fill('Category B')).toContain('--pele-series-2');
     expect(fill('Item B2')).toBe(fill('Category B'));
-    expect(all.find((r) => r.id === 'Category A')!.attrs.get('fill-opacity')).toBe('0.12');
-    expect(all.find((r) => r.id === 'Item A1')!.attrs.has('fill-opacity')).toBe(false);
+    expect(fillOf(scene, 'Category A').opacity).toBe(0.12);
+    expect(fillOf(scene, 'Item A1').opacity).toBe(1);
   });
 
   it('sizes leaves by value and keeps them inside their section', () => {
-    const all = rects(render(BASIC, options).svg);
+    const all = rects(draw(BASIC).scene);
     const get = (id: string): Rect => all.find((r) => r.id === id)!;
     expect(get('Item B2').w * get('Item B2').h).toBeGreaterThan(get('Item B1').w * get('Item B1').h);
     expect(get('Category B').w * get('Category B').h).toBeGreaterThan(get('Category A').w * get('Category A').h);
@@ -232,84 +241,70 @@ describe('treemap rendering', () => {
   });
 
   it('applies classDef styles to boxes and their text', () => {
-    const { svg } = render(
-      'treemap\n"S":::frame\n  "a": 1:::hot\n  "b": 2\nclassDef hot fill:red,color:blue,stroke:#FFD600;\nclassDef frame fill:#eee,stroke-width:2px',
-      options
-    );
-    expect(svg).toContain('class="pele-node pele-leaf hot" data-id="a"');
-    expect(svg).toMatch(/data-id="a"><rect[^>]* style="rx:var\(--_r\);fill:red;stroke:#FFD600;"\/><text[^>]* style="fill:blue;">a</);
-    const frame = rects(svg).find((r) => r.id === 'S')!;
-    expect(frame.attrs.get('style')).toBe('rx:var(--_r);fill:#eee;stroke-width:2px;');
-    expect(frame.attrs.has('fill-opacity')).toBe(false);
-    expect(svg).toContain('class="pele-node pele-section frame"');
+    const { scene } = draw('treemap\n"S":::frame\n  "a": 1:::hot\n  "b": 2\nclassDef hot fill:red,color:blue,stroke:#FFD600;\nclassDef frame fill:#eee,stroke-width:2px');
+    const hot = itemById(scene, 'a', 'hot')!;
+    expect(hot.kind).toBe('pele-node pele-leaf hot');
+    expect(shapesOf(scene, hot).map((s) => [s.kind, s.paint])).toEqual([['fill', 'red'], ['stroke', '#FFD600']]);
+    expect(textsOf(scene, hot).map((t) => t.paint)).toEqual(['blue', 'blue']);
+    const frame = itemById(scene, 'S', 'frame')!;
+    expect(frame.kind).toBe('pele-node pele-section frame');
+    const [fill, stroke] = shapesOf(scene, frame);
+    expect(fill).toMatchObject({ kind: 'fill', paint: '#eee', opacity: 1 });
+    expect(stroke).toMatchObject({ kind: 'stroke', width: 2 });
   });
 
   it('picks a contrasting text color on fills a style sets', () => {
-    const { svg } = render(
-      'treemap\n"Section":::frame\n  "a": 10:::dark\n  "b": 20:::own\n  "c": 30\nclassDef frame fill:#FFF9C4\nclassDef dark fill:navy\nclassDef own fill:navy,color:#ddd',
-      { ...options, config: { treemap: { showValues: true } } }
-    );
-    const group = (id: string): string => new RegExp(`data-id="${id}">(.*?)</g>`).exec(svg)![1];
-    expect(group('Section')).toMatch(/<text[^>]* font-weight="var\(--_hw\)" fill="var\(--pele-fg-on-light,#1f1f1f\)">Section</);
-    expect(group('Section')).toMatch(/<text class="pele-value"[^>]* fill="var\(--pele-fg-on-light,#1f1f1f\)">/);
-    expect(group('a')).toMatch(/<text[^>]* fill="var\(--pele-fg-on-dark,#fff\)">a</);
-    expect(group('b')).not.toContain('--pele-fg-on');
-    expect(group('c')).not.toContain('--pele-fg-on');
+    const { scene } = draw('treemap\n"Section":::frame\n  "a": 10:::dark\n  "b": 20:::own\n  "c": 30\nclassDef frame fill:#FFF9C4\nclassDef dark fill:navy\nclassDef own fill:navy,color:#ddd', {
+      config: { treemap: { showValues: true } },
+    });
+    const paints = (id: string): string[] => textsOf(scene, itemById(scene, id)!).map((t) => t.paint);
+    expect(paints('Section')).toEqual(['var(--pele-fg-on-light,#1f1f1f)', 'var(--pele-fg-on-light,#1f1f1f)']);
+    expect(paints('a')).toEqual(['var(--pele-fg-on-dark,#fff)', 'var(--pele-fg-on-dark,#fff)']);
+    expect(paints('b').join()).not.toContain('--pele-fg-on');
+    expect(paints('c').join()).not.toContain('--pele-fg-on');
   });
 
   it('reads class names that start with title', () => {
-    const { svg } = render('treemap\n"S":::titles\n  "a": 1:::title_2\nclassDef title_2 fill:red', options);
-    expect(svg).toContain('class="pele-node pele-section titles"');
-    expect(svg).toContain('class="pele-node pele-leaf title_2" data-id="a"');
+    const { scene } = draw('treemap\n"S":::titles\n  "a": 1:::title_2\nclassDef title_2 fill:red');
+    expect(itemById(scene, 'S')!.kind).toBe('pele-node pele-section titles');
+    expect(itemById(scene, 'a')!.kind).toBe('pele-node pele-leaf title_2');
   });
 
   it('honours showValues, padding, nodeWidth, nodeHeight, diagramPadding and valueFormat', () => {
-    const base = render(BASIC, options);
-    const bare = render(config('    showValues: false', BASIC), options).svg;
-    expect(bare).not.toContain('pele-value');
-    expect(bare).toContain('>Item A1<');
+    const base = draw(BASIC);
+    const bare = draw(config('    showValues: false', BASIC)).scene;
+    expect(lines(bare).filter((line) => /^\d+$/.test(line))).toEqual([]);
+    expect(lines(bare)).toContain('Item A1');
 
-    const sized = render(config('    nodeWidth: 30\n    nodeHeight: 20', BASIC), options);
+    const sized = draw(config('    nodeWidth: 30\n    nodeHeight: 20', BASIC));
     expect([sized.width, sized.height]).toEqual([316, 216]);
-    const padded = render(config('    diagramPadding: 50', BASIC), options);
+    const padded = draw(config('    diagramPadding: 50', BASIC));
     expect(padded.width - base.width).toBe(84);
-    expect(render(config('    diagramPadding: 50', BASIC), { ...options, padding: 0 }).width).toBe(640);
+    expect(draw(config('    diagramPadding: 50', BASIC), { padding: 0 }).width).toBe(640);
 
-    const gap = (svg: string): number => {
-      const all = rects(svg);
+    const gap = (scene: Scene): number => {
+      const all = rects(scene);
       const a = all.find((r) => r.id === 'Category B')!;
       const b = all.find((r) => r.id === 'Category A')!;
       return b.x - (a.x + a.w);
     };
-    expect(gap(base.svg)).toBe(4);
-    expect(gap(render(config('    padding: 20', BASIC), options).svg)).toBe(20);
+    expect(gap(base.scene)).toBe(4);
+    expect(gap(draw(config('    padding: 20', BASIC)).scene)).toBe(20);
 
-    const money = render(config("    valueFormat: '$0,0'", 'treemap\n"Budget"\n  "Salaries": 700000\n  "Equipment": 200000'), options).svg;
-    expect(money).toContain('>$700,000<');
-    expect(money).toContain('>$900,000<');
+    const money = lines(draw(config("    valueFormat: '$0,0'", 'treemap\n"Budget"\n  "Salaries": 700000\n  "Equipment": 200000')).scene);
+    expect(money).toContain('$700,000');
+    expect(money).toContain('$900,000');
   });
 
   it('shrinks, shortens, or hides text that does not fit', () => {
-    const { svg } = render(
-      'treemap\n"A section with a very long name indeed"\n  "big": 1000\n  "A leaf with quite a long name": 60\n  "tiny": 12\n"other": 3000',
-      options
-    );
-    expect(svg).toMatch(/font-weight="var\(--_hw\)">A sect[^<]*…</);
-    expect(svg).toMatch(/font-size="(9|1[0-5])">A leaf with[^<]*</);
-    expect(svg).not.toMatch(/<text[^>]*>tiny</);
-    expect(rects(svg).some((r) => r.id === 'tiny')).toBe(true);
-    expect(svg).toContain('<title>tiny</title>');
-    expect(svg).toContain('<title>A section with a very long name indeed</title>');
-    expect(svg).not.toContain('<title>other</title>');
-  });
-
-  it('names a section drawn without a header in the tooltips of what covers it', () => {
-    const { svg } = render(config('    nodeHeight: 3', 'treemap\n"A & B"\n  "Inner"\n    "Leaf": 1'), options);
-    expect(svg).toContain('<title>A &amp; B › Inner</title>');
-    expect(svg).toContain('<title>A &amp; B › Inner › Leaf</title>');
-    expect(render(BASIC, options).svg).not.toContain('<title>');
-    const unprintable = render(config('    nodeHeight: 3', 'treemap\n"#1;"\n  "Leaf": 1'), options).svg;
-    expect(unprintable).not.toContain('<title>');
+    const { scene } = draw('treemap\n"A section with a very long name indeed"\n  "big": 1000\n  "A leaf with quite a long name": 60\n  "tiny": 12\n"other": 3000');
+    const header = textsOf(scene, itemById(scene, 'A section with a very long name indeed')!)[0];
+    expect(lineOf(header)).toMatch(/^A sect.*…$/);
+    const leaf = textsOf(scene, itemById(scene, 'A leaf with quite a long name')!)[0];
+    expect(leaf.size).toBeGreaterThanOrEqual(9);
+    expect(leaf.size).toBeLessThanOrEqual(15);
+    expect(lines(scene)).not.toContain('tiny');
+    expect(itemById(scene, 'tiny')).toBeDefined();
   });
 
   it('draws every node of a large, deep tree', () => {
@@ -325,13 +320,13 @@ describe('treemap rendering', () => {
         for (let k = 0; k < 8; k++, leaves++) src += `      "leaf ${i}.${j}.${k}": ${1 + ((i * 64 + j * 8 + k) % 37) ** 3}\n`;
       }
     }
-    const { svg } = render(src, options);
-    expect(svg.match(/class="pele-node pele-leaf"/g)?.length).toBe(leaves);
-    expect(svg.match(/class="pele-node pele-section"/g)?.length).toBe(sections);
+    const { scene } = draw(src);
+    expect(items(scene, 'pele-leaf').length).toBe(leaves);
+    expect(items(scene, 'pele-section').length).toBe(sections);
   });
 
   it('spaces a crowded treemap more tightly, with one gap throughout', () => {
-    const boxes = rects(render(deepTree(), options).svg);
+    const boxes = rects(draw(deepTree()).scene);
     const top = boxes.find((r) => r.id === 'top 0')!;
     expect(Math.min(...boxes.filter((r) => r.id.startsWith('mid 0.')).map((r) => r.x)) - top.x).toBe(3);
     const gaps = new Set([smallestGap(boxes.filter((r) => r.id.startsWith('top ')))]);
@@ -344,7 +339,7 @@ describe('treemap rendering', () => {
   });
 
   it('keeps the spacing of a roomy treemap', () => {
-    const boxes = rects(render(BUDGET, options).svg);
+    const boxes = rects(draw(BUDGET).scene);
     const id = (name: string): Rect => boxes.find((r) => r.id === name)!;
     expect(id('Operations').x - id('Budget').x).toBe(6);
     expect(id('Operations').y - id('Budget').y).toBe(28);
@@ -353,46 +348,49 @@ describe('treemap rendering', () => {
   });
 
   it('uses the padding an author sets as the gap', () => {
-    const crowded = rects(render(config('    padding: 6', deepTree()), options).svg);
+    const crowded = rects(draw(config('    padding: 6', deepTree())).scene);
     expect(smallestGap(crowded.filter((r) => r.id.startsWith('top ')))).toBe(6);
-    const roomy = rects(render(config('    padding: 1', BUDGET), options).svg);
+    const roomy = rects(draw(config('    padding: 1', BUDGET)).scene);
     expect(smallestGap(roomy.filter((r) => ['Salaries', 'Equipment', 'Supplies'].includes(r.id)))).toBe(1);
   });
 
   it('draws no box for a section without a header', () => {
-    const { svg } = render(config('    nodeHeight: 3', 'treemap\n"Section"\n  "Leaf": 1'), options);
-    expect(svg).toMatch(/data-id="Section"><title>Section<\/title><rect [^>]*fill="none"\/><\/g>/);
+    const { scene } = draw(config('    nodeHeight: 3', 'treemap\n"Section"\n  "Leaf": 1'));
+    const section = itemById(scene, 'Section')!;
+    expect(shapesOf(scene, section)).toEqual([]);
+    expect(textsOf(scene, section)).toEqual([]);
+    expect(lines(scene)).toEqual(['Leaf']);
   });
 
   it('gives a small section a short header', () => {
-    const { svg } = render(config('    nodeHeight: 4', 'treemap\n"Section"\n  "Leaf": 1'), options);
-    const boxes = rects(svg);
-    expect(svg).toMatch(/font-size="12">Section</);
+    const { scene } = draw(config('    nodeHeight: 4', 'treemap\n"Section"\n  "Leaf": 1'));
+    const boxes = rects(scene);
+    expect(textsOf(scene, itemById(scene, 'Section')!)[0]).toMatchObject({ size: 12 });
+    expect(lines(scene)).toContain('Section');
     expect(boxes.find((r) => r.id === 'Leaf')!.y - boxes.find((r) => r.id === 'Section')!.y).toBe(18);
-    const tall = render(config('    nodeHeight: 4', 'treemap\n"Section":::big\n  "Leaf": 1\nclassDef big font-size:14.4px'), options).svg;
-    expect(tall).not.toMatch(/<text[^>]*>Section</);
+    const tall = draw(config('    nodeHeight: 4', 'treemap\n"Section":::big\n  "Leaf": 1\nclassDef big font-size:14.4px')).scene;
+    expect(lines(tall)).not.toContain('Section');
   });
 
   it('keeps the corners of a small box within a quarter of its shorter side', () => {
-    const { svg } = render('treemap\n"big": 1000\n"small": 4', options);
-    const small = rects(svg).find((r) => r.id === 'small')!;
-    expect(small.attrs.get('style')).toBe(`rx:min(var(--_r),${Math.min(small.w, small.h) / 4}px)`);
-    expect(rects(svg).find((r) => r.id === 'big')!.attrs.get('style')).toBe('rx:var(--_r)');
+    const { scene } = draw('treemap\n"big": 1000\n"small": 4');
+    const small = rects(scene).find((r) => r.id === 'small')!;
+    for (const radius of radii(fillOf(scene, 'small'))) expect(radius).toBeLessThanOrEqual(Math.min(small.w, small.h) / 4);
+    expect(radii(fillOf(scene, 'big')).length).toBeGreaterThan(0);
   });
 
   it('fits text at the font size a class sets', () => {
-    const { svg } = render(
-      'treemap\n"A section with a long name":::head\n  "A leaf with a fairly long name": 30:::big\n  "Another leaf with a long name": 20:::big\n  "rest": 400\nclassDef big font-size:20px\nclassDef head font-size:18px',
-      options
+    const { scene } = draw(
+      'treemap\n"A section with a long name":::head\n  "A leaf with a fairly long name": 30:::big\n  "Another leaf with a long name": 20:::big\n  "rest": 400\nclassDef big font-size:20px\nclassDef head font-size:18px'
     );
-    const groups = [...svg.matchAll(/<g class="pele-node pele-(leaf|section) (big|head)"[^>]*>(.*?)<\/g>/g)];
-    expect(groups.length).toBe(3);
-    for (const [, kind, , body] of groups) {
-      const w = Number(/<rect[^>]* width="([\d.]+)"/.exec(body)![1]);
-      const texts = [...body.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+    const nodes = [...items(scene, 'big'), ...items(scene, 'head')];
+    expect(nodes.length).toBe(3);
+    for (const node of nodes) {
+      const w = node.box!.x1 - node.box!.x0;
+      const texts = textsOf(scene, node).map(lineOf);
       expect(texts.length).toBeGreaterThan(0);
       for (const text of texts) {
-        const width = kind === 'leaf' ? metricsMeasurer.width(text, 20, 0) : metricsMeasurer.width(text, 18, Style.Bold);
+        const width = node.kind.includes('pele-leaf') ? metricsMeasurer.width(text, 20, 0) : metricsMeasurer.width(text, 18, Style.Bold);
         expect(width, text).toBeLessThanOrEqual(w - 8);
       }
     }
@@ -400,40 +398,37 @@ describe('treemap rendering', () => {
 
   it('keeps section names at large font sizes that fit the header', () => {
     const tree = 'treemap\n"Section"\n  "Leaf": 1';
-    expect(render(tree, { ...options, fontSize: 24 }).svg).toMatch(/<text[^>]*>Section</);
-    expect(render(`${tree}\nclassDef big font-size:20px`.replace('"Section"', '"Section":::big'), options).svg).toMatch(/<text[^>]*>Section</);
-    const tall = render(`${tree}\nclassDef big font-size:32px`.replace('"Section"', '"Section":::big'), options).svg;
-    expect(tall).not.toMatch(/<text[^>]*>Section</);
-    expect(tall).toContain('<title>Section</title>');
+    expect(lines(draw(tree, { fontSize: 24 }).scene)).toContain('Section');
+    expect(lines(draw(`${tree}\nclassDef big font-size:20px`.replace('"Section"', '"Section":::big')).scene)).toContain('Section');
+    const tall = draw(`${tree}\nclassDef big font-size:32px`.replace('"Section"', '"Section":::big')).scene;
+    expect(lines(tall)).not.toContain('Section');
   });
 
   it('draws a label at a fractional class font size when it fits', () => {
-    const { svg } = render(config('    nodeHeight: 2', 'treemap\n"Label": 1:::frac\nclassDef frac font-size:12.5px'), options);
-    expect(svg).toMatch(/<text[^>]*>Label</);
+    const { scene } = draw(config('    nodeHeight: 2', 'treemap\n"Label": 1:::frac\nclassDef frac font-size:12.5px'));
+    expect(lines(scene)).toContain('Label');
   });
 
   it('draws the title above, from the diagram or the front matter', () => {
-    const titled = render('---\ntitle: From front matter\n---\n' + BASIC, options);
-    expect(titled.svg).toContain('>From front matter<');
+    const titled = draw('---\ntitle: From front matter\n---\n' + BASIC);
+    expect(lines(titled.scene)).toContain('From front matter');
     expect(titled.height).toBeGreaterThan(416);
-    const own = render('---\ntitle: From front matter\n---\ntreemap\ntitle Own\n"a": 1', options).svg;
-    expect(own).toContain('>Own<');
+    const own = lines(draw('---\ntitle: From front matter\n---\ntreemap\ntitle Own\n"a": 1').scene);
+    expect(own).toContain('Own');
     expect(own).not.toContain('From front matter');
   });
 
   it('renders an empty treemap and one with nothing to size', () => {
     for (const src of ['treemap', 'treemap\n"Only a section"', 'treemap\n"a": 0\n"b": .', 'treemap\n"a": ' + '9'.repeat(400)]) {
-      const { svg } = render(src, options);
-      expect(svg, src).toContain('<svg');
-      expect(svg, src).not.toMatch(/NaN|Infinity|pele-node/);
+      const { scene } = draw(src);
+      expect(items(scene, 'pele-node'), src).toEqual([]);
+      expect(JSON.stringify(scene), src).not.toMatch(/NaN|Infinity/);
     }
   });
 
-  it('writes accessible names and ignores unusable config', () => {
-    const { svg } = render('treemap\naccTitle: Name\naccDescr: Text\n"a": 1', options);
-    expect(svg).toContain('<title id="pele-title">Name</title>');
-    expect(svg).toContain('<desc id="pele-desc">Text</desc>');
-    const odd = render(config('    nodeWidth: -3\n    nodeHeight: "x"\n    padding: 100000\n    valueFormat: 7', BASIC), options);
-    expect(odd.svg).not.toMatch(/NaN|Infinity|width="-/);
+  it('ignores unusable config', () => {
+    const odd = draw(config('    nodeWidth: -3\n    nodeHeight: "x"\n    padding: 100000\n    valueFormat: 7', BASIC));
+    expect(JSON.stringify(odd.scene)).not.toMatch(/NaN|Infinity/);
+    for (const s of odd.scene.shapes) expect(s.box.x1 - s.box.x0).toBeGreaterThanOrEqual(0);
   });
 });

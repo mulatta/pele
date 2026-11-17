@@ -1,16 +1,20 @@
 import type { Config } from '../../preprocess.js';
+import { Paint, type Out } from '../../draw/out.js';
 import { titleLabel } from '../../svg/title.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor, textStyle, type IconResolver } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
+import { num, textStyle, type IconResolver } from '../../svg/builder.js';
 import { CRITICAL, ROUNDED, classNames } from '../../svg/theme.js';
 import { labelLine, layoutLabel, lineMiddle, withHeights, type Label, type Span } from '../../text/label.js';
 import { Style, defaultMeasurer, type TextMeasurer } from '../../text/measurer.js';
-import { linkUrl, relAttr, safeUrl } from '../../util/url.js';
+import { linkUrl, safeUrl } from '../../util/url.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
 import { titleRoom } from '../common/fit-width.js';
 import { iconMarkup } from '../../text/icons.js';
 import { iconSvg } from '../common/icon.js';
 import type { KanbanModel, KanbanNode } from './db.js';
+
+// Read once, however many columns and cards use them.
+const COLUMN = new Paint(` fill="var(--_s)"${ROUNDED}`);
+const CARD = new Paint(` fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}`);
 
 const COLUMN_GAP = 12;
 const COLUMN_PAD = 8;
@@ -88,22 +92,18 @@ function fitLabel(
   return label.heights ? withHeights(fitted) : fitted;
 }
 
-// Writes a label with every line starting at x, or ending there, and the first line's box starting at y.
-function textBlock(label: Label, x: number, y: number, attrs: string, icons: IconResolver | undefined, end = false): string {
-  let out = '';
+// Draws a label with every line starting at x, or ending there, and the first line's box starting at y.
+function textBlock(out: Out, label: Label, x: number, y: number, attrs: string, icons: IconResolver | undefined, end = false): void {
   for (let i = 0; i < label.lines.length; i++) {
     const line = label.lines[i];
     const cy = y + lineMiddle(label, i);
     if (line.length === 1 && line[0].icon === undefined && line[0].math === undefined && (line[0].style & (Style.Sub | Style.Sup | Style.Underline)) === 0) {
-      out += `<text${textStyle(attrs, line[0].style)} x="${num(x)}" y="${num(cy + label.size * 0.35)}"${end ? ' text-anchor="end"' : ''}>${esc(
-        line[0].text
-      )}</text>`;
+      out.text(x, cy + label.size * 0.35, line[0].text, textStyle(attrs, line[0].style), end ? ' text-anchor="end"' : '');
     } else {
       const width = label.widths[i];
-      out += labelSvg(labelLine(label, i), x + (end ? -width : width) / 2, cy, attrs, icons);
+      out.label(labelLine(label, i), x + (end ? -width : width) / 2, cy, attrs, icons);
     }
   }
-  return out;
 }
 
 interface Card {
@@ -118,8 +118,7 @@ interface Card {
 
 const has = (name: string | undefined): boolean => !!name && iconMarkup(name) !== '';
 
-export function renderKanban(model: KanbanModel, config: Config, options: RenderOptions): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+export function renderKanban(model: KanbanModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.875);
   const line = Math.round(size * 1.5);
@@ -216,18 +215,25 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
   const left = pad + (width - boardWidth) / 2;
   const edge = columnWidth - COLUMN_PAD - 4;
 
-  let out = '';
+  const totalWidth = Math.ceil(width + 2 * pad);
+  const totalHeight = Math.ceil(boardHeight + titleHeight + 2 * pad);
+  out.label(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+
   for (let index = 0; index < sections.length; index++) {
     const section = sections[index];
     const row = Math.floor(index / perRow);
-    let body =
-      `<rect width="${columnWidth}" height="${num(rowHeights[row])}" fill="var(--_s)"${ROUNDED}/>` +
-      textBlock(titles[index], COLUMN_PAD + 4, COLUMN_PAD, ' class="pele-cluster-label" font-weight="var(--_hw)"', icons) +
-      `<text class="pele-count" x="${edge}" y="${num(
-        COLUMN_PAD + line / 2 + small * 0.35
-      )}" text-anchor="end" font-size="${small}" fill="var(--_m)">${section.items.length}</text>`;
+    out.group({
+      cls: 'pele-cluster pele-column' + classNames(section.cssClasses ?? ''),
+      id: section.id,
+      source: section.source,
+      x: left + (index % perRow) * (columnWidth + COLUMN_GAP),
+      y: pad + titleHeight + rowTops[row],
+    });
+    out.rect(null, null, columnWidth, rowHeights[row], COLUMN);
+    textBlock(out, titles[index], COLUMN_PAD + 4, COLUMN_PAD, ' class="pele-cluster-label" font-weight="var(--_hw)"', icons);
+    out.text(edge, COLUMN_PAD + line / 2 + small * 0.35, String(section.items.length), ' class="pele-count"', ` text-anchor="end" font-size="${small}" fill="var(--_m)"`);
     if (has(section.icon)) {
-      body += iconSvg(section.icon!, edge - countWidths[index] - ICON_GAP - glyph, COLUMN_PAD + (line - glyph) / 2, glyph, icons);
+      out.opaque(iconSvg(section.icon!, edge - countWidths[index] - ICON_GAP - glyph, COLUMN_PAD + (line - glyph) / 2, glyph, icons), 'icon');
     }
 
     let y = headHeight;
@@ -235,57 +241,45 @@ export function renderKanban(model: KanbanModel, config: Config, options: Render
       const item = card.item;
       const priority = (item.priority ?? '').trim().toLowerCase();
       const color = PRIORITY.get(priority);
-      let inner = `<rect width="${cardWidth}" height="${num(card.height)}" fill="var(--_bg)" stroke="var(--_b)"${ROUNDED}/>`;
+      // The transform comes before the font size, which a group's own move would not.
+      out.group({
+        cls: `pele-node pele-card${color === undefined ? '' : ' pele-priority-' + priority.replace(' ', '-')}${classNames(item.cssClasses ?? '')}`,
+        id: item.id,
+        source: item.source,
+        attrs: ` transform="translate(${COLUMN_PAD},${num(y)})" font-size="${small}"`,
+      });
+      out.rect(null, null, cardWidth, card.height, CARD);
       if (color !== undefined) {
-        inner += `<path class="pele-priority" d="M2.5,5V${num(card.height - 5)}" fill="none" ${color} stroke-width="3" stroke-linecap="round"/>`;
+        out.path(out.pen().M(2.5, 5).V(card.height - 5), ` fill="none" ${color} stroke-width="3" stroke-linecap="round"`, undefined, { cls: 'pele-priority' });
       }
-      inner += textBlock(card.label, CARD_PAD, CARD_PAD, ' class="pele-label"', icons);
+      textBlock(out, card.label, CARD_PAD, CARD_PAD, ' class="pele-label"', icons);
       if (has(item.icon)) {
-        inner += iconSvg(item.icon!, cardWidth - CARD_PAD - glyph, CARD_PAD + (smallLine - glyph) / 2, glyph, icons);
+        out.opaque(iconSvg(item.icon!, cardWidth - CARD_PAD - glyph, CARD_PAD + (smallLine - glyph) / 2, glyph, icons), 'icon');
       }
       const bottom = card.height - CARD_PAD;
       if (item.ticket) {
         const top = bottom - card.meta;
         const href = baseUrl ? linkUrl(safeUrl(baseUrl.replace('#TICKET#', () => item.ticket!)), options) : undefined;
         if (href === undefined) {
-          inner += textBlock(card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_m)"', icons);
+          textBlock(out, card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_m)"', icons);
         } else {
-          inner +=
-            `<a href="${esc(href)}" target="_blank"${relAttr(options)}>` +
-            textBlock(card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_c)"', icons) +
-            '</a>';
+          out.link();
+          textBlock(out, card.ticket, CARD_PAD, top, ' class="pele-ticket" fill="var(--_c)"', icons);
+          out.end();
           links.push({ id: item.id, href, internal: false });
         }
       }
       if (item.assigned) {
-        inner += textBlock(
-          card.assigned,
-          cardWidth - CARD_PAD,
-          bottom - card.assigned.height,
-          ' class="pele-assigned" fill="var(--_m)"',
-          icons,
-          true
-        );
+        textBlock(out, card.assigned, cardWidth - CARD_PAD, bottom - card.assigned.height, ' class="pele-assigned" fill="var(--_m)"', icons, true);
       }
-      body +=
-        `<g class="pele-node pele-card${color === undefined ? '' : ' pele-priority-' + priority.replace(' ', '-')}${classNames(
-          item.cssClasses ?? ''
-        )}" data-id="${escText(item.id)}"${srcAttrs(item.source)} transform="translate(${COLUMN_PAD},${num(y)})" font-size="${small}">${inner}</g>`;
+      out.end();
       y += card.height + CARD_GAP;
     }
-
-    out +=
-      `<g class="pele-cluster pele-column${classNames(section.cssClasses ?? '')}" data-id="${escText(section.id)}"${srcAttrs(section.source)} transform="translate(${num(
-        left + (index % perRow) * (columnWidth + COLUMN_GAP)
-      )},${num(pad + titleHeight + rowTops[row])})">${body}</g>`;
+    out.end();
   }
 
-  const totalWidth = Math.ceil(width + 2 * pad);
-  const totalHeight = Math.ceil(boardHeight + titleHeight + 2 * pad);
-  const content = labelSvg(title, totalWidth / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') + out;
-
+  out.done(totalWidth, totalHeight);
   return {
-    svg: svgDocument('kanban', totalWidth, totalHeight, size, options, {}, content),
     width: totalWidth,
     height: totalHeight,
     links,

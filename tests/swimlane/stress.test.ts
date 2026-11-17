@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
+import { PeleError, renderScene } from '../../src/index.js';
+import { sceneProblem } from '../support/scene.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
 const options = { measurer: metricsMeasurer, limit: Infinity };
@@ -9,8 +10,7 @@ function timed(name: string, src: string): void {
   it(name, { timeout: 120000 }, () => {
     const started = performance.now();
     try {
-      const { svg } = render(src, options);
-      expect(svg).not.toMatch(/NaN|Infinity/);
+      expect(sceneProblem(renderScene(src, options))).toBeUndefined();
     } catch (error) {
       if (!(error instanceof PeleError)) throw error;
     }

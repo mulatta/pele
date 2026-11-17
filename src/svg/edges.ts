@@ -1,8 +1,6 @@
+import { Paint, type Out } from '../draw/out.js';
 import { ease } from '../layout/layered.js';
-import { Z, L, M, activeSink, circleCmds, type SceneSink } from '../scene/sink.js';
-import type { Label } from '../text/label.js';
-import type { IconResolver } from '../types.js';
-import { escText, labelSvg, num } from './builder.js';
+import { num } from './builder.js';
 import { ink } from './ink.js';
 
 export const ARROW = 8;
@@ -57,7 +55,9 @@ export function routePath(
   startTrim: number,
   endTrim: number,
   startReach = startTrim > 0 ? startTrim + LEAD : 0,
-  endReach = endTrim > 0 ? endTrim + LEAD : 0
+  endReach = endTrim > 0 ? endTrim + LEAD : 0,
+  // Whether to write the path data; without it, `d` is empty and `tokens` holds the path.
+  text = true
 ): EdgePath {
   const linear = curve === 'linear';
   const stepped = curve === 'step' || curve === 'stepBefore' || curve === 'stepAfter';
@@ -138,10 +138,8 @@ export function routePath(
     last++;
   }
 
-  // Keep tokens to avoid parsing d when checking fills. A scene takes the tokens alone, so the
-  // path data is not written while one is drawn.
+  // Keep tokens to avoid parsing d when checking fills.
   const tokens: number[] = [];
-  const text = activeSink() === null;
   const tok = (v: number): string => {
     tokens.push(written(v));
     return text ? num(v) : '';
@@ -233,31 +231,30 @@ function markerShape(type: string, x: number, y: number, dx: number, dy: number)
   return undefined;
 }
 
-// Draws a marker whose tip is at (x, y), pointing along (dx, dy).
-export function marker(type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): string {
-  const m = markerShape(type, x, y, dx, dy);
-  if (!m) return '';
-  if (m.kind === 'point') {
-    return `<path class="pele-marker" d="M${num(m.x)},${num(m.y)}L${num(m.ax)},${num(m.ay)}L${num(m.bx)},${num(m.by)}Z" fill="${color}" stroke="${stroke}"/>`;
+const MARKER = { cls: 'pele-marker' };
+
+// A marker's paint, by fill and stroke, made once: a scene reads each only once.
+const markerPaints = new Map<string, Map<string, Paint>>();
+function markerPaint(color: string, stroke: string): Paint {
+  let byStroke = markerPaints.get(color);
+  if (!byStroke) {
+    if (markerPaints.size > 100) markerPaints.clear();
+    markerPaints.set(color, (byStroke = new Map()));
   }
-  if (m.kind === 'circle') {
-    return `<circle class="pele-marker" cx="${num(m.cx)}" cy="${num(m.cy)}" r="3.5" fill="${color}" stroke="${stroke}"/>`;
-  }
-  return `<path class="pele-marker" d="M${num(m.x0)},${num(m.y0)}L${num(m.x1)},${num(m.y1)}M${num(m.x2)},${num(m.y2)}L${num(m.x3)},${num(m.y3)}"/>`;
+  let paint = byStroke.get(stroke);
+  if (!paint) byStroke.set(stroke, (paint = new Paint(` fill="${color}" stroke="${stroke}"`)));
+  return paint;
 }
 
-// The same marker, straight into a scene.
-export function sceneMarker(sink: SceneSink, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none'): void {
+// Draws a marker whose tip is at (x, y), pointing along (dx, dy). Without `cls` it is drawn without
+// its class, for a casing that marker styles must skip.
+export function drawMarker(o: Out, type: string, x: number, y: number, dx: number, dy: number, color: string, stroke = 'none', cls = true): void {
   const m = markerShape(type, x, y, dx, dy);
   if (!m) return;
-  if (m.kind === 'point') {
-    sink.shape([M, m.x, m.y, L, m.ax, m.ay, L, m.bx, m.by, Z], { fill: color, stroke });
-  } else if (m.kind === 'circle') {
-    sink.shape(circleCmds(m.cx, m.cy, m.r), { fill: color, stroke });
-  } else {
-    // A cross is only a stroke, in the edge's color.
-    sink.shape([M, m.x0, m.y0, L, m.x1, m.y1, M, m.x2, m.y2, L, m.x3, m.y3], { fill: 'none' });
-  }
+  const item = cls ? MARKER : undefined;
+  if (m.kind === 'point') o.path(o.pen().M(m.x, m.y).L(m.ax, m.ay).L(m.bx, m.by).Z(), markerPaint(color, stroke), undefined, item);
+  else if (m.kind === 'circle') o.circle(m.cx, m.cy, 3.5, markerPaint(color, stroke), item);
+  else o.path(o.pen().M(m.x0, m.y0).L(m.x1, m.y1).M(m.x2, m.y2).L(m.x3, m.y3), '', undefined, item);
 }
 
 const TENS = Array.from({ length: 23 }, (_, i) => Number(`1e${i}`));
@@ -473,12 +470,6 @@ export function edgeInk(fill: Fill, line = ''): string {
   return (/[";]stroke:/.test(line) ? undefined : ink(fill.shape)) ?? '';
 }
 
-// Markers with the page color inside them, with the fill's color there instead.
-export function hollowOn(markers: string, fill: Fill): string {
-  const color = /[";]fill:([^;"]*)/.exec(fill.shape)?.[1].trim();
-  return color ? markers.replace(/ fill="var\(--_bg\)"/g, ` fill="${color}"`) : markers;
-}
-
 // The ink of the innermost fill that holds the whole edge, '' for a casing where it crosses a border, or undefined off fills.
 export function overFills(d: string, tips: number[], fills: Fill[], line = '', tokens?: number[]): string | undefined {
   const fill = fillUnder(d, tips, fills, tokens);
@@ -507,41 +498,19 @@ export function casingAttrs(line = '', thick = false): string | undefined {
   return attrs + (style ? ` style="${style}"` : '');
 }
 
-// A wider page-colored stroke under an edge, as faint as it; markers drop their class so marker styles skip it.
-export function casing(d: string, markers: string, line = '', thick = false): string {
+// A wider page-colored stroke under an edge, as faint as it, with its markers.
+export function drawCasing(o: Out, path: EdgePath, startType: string, endType: string, line = '', thick = false): void {
   const attrs = casingAttrs(line, thick);
-  if (attrs === undefined) return '';
-  const body = `<path d="${d}"/>` + markers.replace(/ class="pele-marker"/g, '');
-  return attrs ? `<g${attrs}>${body}</g>` : body;
+  if (attrs === undefined) return;
+  if (attrs) o.group({ attrs });
+  o.path(path.d, '', path.tokens);
+  drawMarker(o, startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)', false);
+  drawMarker(o, endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)', false);
+  if (attrs) o.end();
 }
 
-export function edgeCasing(path: EdgePath, startType: string, endType: string, line = '', thick = false): string {
-  return casing(
-    path.d,
-    marker(startType, path.sx, path.sy, path.sdx, path.sdy, 'var(--_bg)', 'var(--_bg)') +
-      marker(endType, path.ex, path.ey, path.edx, path.edy, 'var(--_bg)', 'var(--_bg)'),
-    line,
-    thick
-  );
-}
-
-export function casingsSvg(casings: string): string {
-  return casings
-    ? `<g class="pele-casings" fill="none" stroke="var(--_bg)" stroke-width="${1 + CASE}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none">${casings}</g>`
-    : '';
-}
-
-// An edge label on a patch of the background, so the line does not run through the text.
-export function edgeLabelSvg(id: string, label: Label, x: number, y: number, attrs: string, icons?: IconResolver): string {
-  const w = label.width + 8;
-  const h = label.height;
-  return (
-    `<g class="pele-edge-label" data-id="${escText(id)}">` +
-    `<rect x="${num(x - w / 2)}" y="${num(y - h / 2)}" width="${num(w)}" height="${num(h)}" rx="3" fill="var(--_bg)"/>` +
-    labelSvg(label, x, y, attrs, icons) +
-    '</g>'
-  );
-}
+// The attributes of the group that holds the casings.
+export const CASINGS_ATTRS = ` class="pele-casings" fill="none" stroke="var(--_bg)" stroke-width="${1 + CASE}" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"`;
 
 // A self-loop beside a node of drawn size w by h: out of the side that lies across the flow and
 // back in. `k` counts the loops already on the node, so each one reaches a little further.

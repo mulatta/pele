@@ -1,6 +1,6 @@
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { svgDocument } from '../../svg/root.js';
+import type { Out } from '../../draw/out.js';
+import { num } from '../../svg/builder.js';
 import { resolveStyle, seriesColor } from '../../svg/theme.js';
 import { decodeEntities } from '../../text/entities.js';
 import { layoutLabel } from '../../text/label.js';
@@ -51,14 +51,13 @@ function fillStyle(color: unknown): string {
   return typeof color === 'string' ? resolveStyle([`fill:${color}`]).shape : '';
 }
 
-export function renderSankey(model: SankeyModel, config: Config, options: RenderOptions): Rendered {
+export function renderSankey(model: SankeyModel, config: Config, options: RenderOptions, out: Out): Rendered {
   const conf = isRecord(config.sankey) ? config.sankey : {};
   const natural = numberOption(conf, 'width', 600, 1, 10000);
-  return fitWidth(options, natural, 160, (chartWidth) => draw(model, conf, options, chartWidth, natural));
+  return fitWidth(options, natural, 160, (chartWidth, _narrow, o) => draw(o, model, conf, options, chartWidth, natural), out);
 }
 
-function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, model: SankeyModel, conf: Config, options: RenderOptions, chartWidth: number, natural: number): Rendered {
   const size = options.fontSize ?? 16;
   const least = Math.round(size * 0.625);
   // Labels shrink with a chart narrowed to fit, as they would if the whole picture were scaled down.
@@ -152,15 +151,26 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
       else bands.set(key, [label]);
     }
   }
-  let labelsOut = '';
-  let nodesOut = '';
+  const title = layoutLabel(model.title, false, measurer, size, titleRoom(options), Style.Bold);
+  const titleHeight = title.height > 0 ? title.height + 12 : 0;
+  const inner = Math.max(maxX - minX, title.width);
+  const ox = pad - minX + (inner - (maxX - minX)) / 2;
+  const oy = pad + titleHeight - minY;
+  const width = Math.ceil(inner + 2 * pad);
+  const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
+
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.frame(ox, oy);
+  // Layers are painted in the order they are made.
+  out.section('links', ' class="pele-sankey-links" fill-opacity="0.4"', true);
+  out.section('nodes', ' class="pele-sankey-nodes"', true);
+  out.section('labels', ` class="pele-labels" font-size="${small}"`, true);
   nodes.forEach((node, i) => {
     const id = model.nodes[i].id;
     const name = decodeEntities(id);
     const height = Math.max(node.height, 1);
-    nodesOut += `<rect class="pele-sankey-node" data-id="${escText(id)}"${srcAttrs(model.nodes[i].written)} x="${num(node.x)}" y="${num(node.y)}" width="${num(
-      nodeWidth
-    )}" height="${num(height)}" rx="${num(Math.min(2, height / 2))}" fill="${seriesColor(i)}"${nodeStyle(i)}/>`;
+    out.section('nodes');
+    out.rect(node.x, node.y, nodeWidth, height, ` rx="${num(Math.min(2, height / 2))}" fill="${seriesColor(i)}"${nodeStyle(i)}`, { cls: 'pele-sankey-node', id, source: model.nodes[i].written });
 
     const label = labels[i];
     const overlapsLabel = (left: number, y: number): boolean => (bands.get(Math.floor(y / lineHeight)) ?? []).some((other) =>
@@ -186,16 +196,17 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
     }
     const { value, after, y } = label;
     const x = after ? node.x + nodeWidth + LABEL_GAP : node.x - LABEL_GAP;
-    const position = ` x="${num(x)}" y="${num(y + small * 0.35)}" text-anchor="${after ? 'start' : 'end'}"`;
-    const text = esc(name) + (value ? ` <tspan class="pele-sankey-value" fill="var(--_m)">${esc(value)}</tspan>` : '');
-    labelsOut +=
-      `<g class="pele-label" data-id="${escText(id)}"${srcAttrs(model.nodes[i].written)}>` +
-      (outlined
-        ? `<text${position} fill="none" stroke="var(--_bg)" stroke-width="3" stroke-linejoin="round">${esc(name)}${
-            value ? ' ' + esc(value) : ''
-          }</text>`
-        : '') +
-      `<text${position}>${text}</text></g>`;
+    const anchor = ` text-anchor="${after ? 'start' : 'end'}"`;
+    out.section('labels');
+    out.group({ cls: 'pele-label', id, source: model.nodes[i].written });
+    if (outlined) {
+      out.text(x, y + small * 0.35, value ? `${name} ${value}` : name, '', `${anchor} fill="none" stroke="var(--_bg)" stroke-width="3" stroke-linejoin="round"`);
+    }
+    // The value is a tspan with a style of its own.
+    if (value) {
+      out.spans(x, y + small * 0.35, [{ text: `${name} ` }, { text: value, attrs: ' class="pele-sankey-value" fill="var(--_m)"' }], '', anchor);
+    } else out.text(x, y + small * 0.35, name, '', anchor);
+    out.end();
   });
 
   const fixed = linkColor === 'gradient' || linkColor === 'source' || linkColor === 'target' ? '' : fillStyle(linkColor);
@@ -203,8 +214,7 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
   // themed copy's gradient. Other characters would end the url() and void the whole fill.
   const idPrefix = options.idPrefix ?? '';
   const gradient = linkColor === 'gradient' && /^[\w-]+$/.test(idPrefix);
-  const gradients = new Map<string, string>();
-  let linksOut = '';
+  out.section('links');
   links.forEach((link, k) => {
     const end = linkColor === 'target' ? link.target : link.source;
     const half = Math.max(link.thickness, 1) / 2;
@@ -218,46 +228,22 @@ function draw(model: SankeyModel, conf: Config, options: RenderOptions, chartWid
         `x1="${num(x0)}" x2="${num(x1)}"><stop offset="0" stop-color="${nodeColor(link.source)}"/>` +
         `<stop offset="1" stop-color="${nodeColor(link.target)}"/>`;
       const id = `${idPrefix}-sankey-${contentId(stops)}`;
-      gradients.set(id, `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" ${stops}</linearGradient>`);
+      out.gradient(id, x0, 0, x1, 0, [
+        [0, nodeColor(link.source)],
+        [1, nodeColor(link.target)],
+      ]);
       paint = `fill="url(#${id}) ${nodeColor(link.source)}"`;
     }
-    const mid = num((x0 + x1) / 2);
-    const from = escText(model.nodes[link.source].id);
-    const to = escText(model.nodes[link.target].id);
-    linksOut +=
-      `<path class="pele-sankey-link" data-id="${from}-&gt;${to}"${srcAttrs(model.links[k].written)} d="M${num(x0)},${num(link.sourceY - half)}C${mid},${num(
-        link.sourceY - half
-      )} ${mid},${num(link.targetY - half)} ${num(x1)},${num(link.targetY - half)}L${num(x1)},${num(
-        link.targetY + half
-      )}C${mid},${num(link.targetY + half)} ${mid},${num(link.sourceY + half)} ${num(x0)},${num(
-        link.sourceY + half
-      )}Z" ${paint}>` +
-      `<title>${from} → ${to}: ${esc(prefix)}${rounded(link.value)}${esc(suffix)}</title></path>`;
+    const mid = (x0 + x1) / 2;
+    const from = model.nodes[link.source].id;
+    const to = model.nodes[link.target].id;
+    const top = link.sourceY - half;
+    const bottom = link.targetY - half;
+    const pen = out.pen().M(x0, top).C(mid, top, mid, bottom, x1, bottom).L(x1, link.targetY + half);
+    pen.C(mid, link.targetY + half, mid, link.sourceY + half, x0, link.sourceY + half).Z();
+    out.path(pen, ' ' + paint, undefined, { cls: 'pele-sankey-link', id: `${from}->${to}`, source: model.links[k].written });
+
   });
-
-  const title = layoutLabel(model.title, false, measurer, size, titleRoom(options), Style.Bold);
-  const titleHeight = title.height > 0 ? title.height + 12 : 0;
-  const inner = Math.max(maxX - minX, title.width);
-  const ox = pad - minX + (inner - (maxX - minX)) / 2;
-  const oy = pad + titleHeight - minY;
-  const width = Math.ceil(inner + 2 * pad);
-  const height = Math.ceil(maxY - minY + titleHeight + 2 * pad);
-
-  const svg = svgDocument(
-    'sankey',
-    width,
-    height,
-    size,
-    options,
-    model,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      `<g transform="translate(${num(ox)},${num(oy)})">` +
-      (gradients.size > 0 ? `<defs>${[...gradients.values()].join('')}</defs>` : '') +
-      `<g class="pele-sankey-links" fill-opacity="0.4">${linksOut}</g>` +
-      `<g class="pele-sankey-nodes">${nodesOut}</g>` +
-      `<g class="pele-labels" font-size="${small}">${labelsOut}</g>` +
-      '</g>'
-  );
-
-  return { svg, width, height, links: [] };
+  out.done(width, height);
+  return { width, height, links: [] };
 }

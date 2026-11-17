@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, items, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  const where = JSON.stringify(src).slice(0, 160);
+  assertSafe(result, where);
   return true;
 }
 
@@ -95,10 +88,9 @@ describe('inert architecture output', () => {
 
   it('treats ids that name object internals as plain ids', () => {
     const src = `${head}group __proto__(cloud)[P]\ngroup constructor[C] in __proto__\nservice toString(server)[A] in __proto__\nservice hasOwnProperty[B] in constructor\njunction valueOf\ntoString:R -- L:hasOwnProperty\nhasOwnProperty:B -- T:valueOf\nalign row toString hasOwnProperty`;
-    const { svg } = render(src, options);
-    expect(svg.match(/class="pele-cluster"/g)?.length).toBe(2);
-    expect(svg.match(/class="pele-node /g)?.length).toBe(3);
-    expect(svg).toContain('data-id="__proto__"');
+    const { scene } = draw(src);
+    expect(items(scene, 'pele-cluster').map((i) => i.id)).toEqual(['__proto__', 'constructor']);
+    expect(items(scene, 'pele-node').map((i) => i.id)).toEqual(['toString', 'hasOwnProperty', 'valueOf']);
     expect(Object.prototype).not.toHaveProperty('polluted');
     expect(Object.keys(Object.prototype)).toHaveLength(0);
   });

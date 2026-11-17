@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import type { RenderOptions } from '../../src/index.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, paints, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+function check(src: string, extra: RenderOptions = {}): boolean {
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -42,7 +35,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"treemap": {"nodeWidth": "${p}", "valueFormat": "${p}"}, "themeVariables": {"cScale0": "${p}"}}}%%\ntreemap\n"a": 1`,
 ];
 
-describe('inert treemap output', () => {
+describe('safe treemap output', () => {
   it('holds for every corpus input', () => {
     for (const src of loadCorpus('treemap', /treemap/)) check(src);
   });
@@ -57,20 +50,17 @@ describe('inert treemap output', () => {
     expect(rendered).toBeGreaterThan(250);
   });
 
-  it('escapes names and drops unsafe style values', () => {
-    const { svg } = render(
-      'treemap\n"<script>x</script>":::bad\n  "<img src=x onerror=alert(1)>": 1:::bad\nclassDef bad fill:url(javascript:alert(1)),stroke:red',
-      options
-    );
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).not.toContain('url(');
-    expect(svg).toContain('style="rx:var(--_r);stroke:red;"');
+  it('keeps names as text and drops unsafe style values', () => {
+    const { scene } = draw('treemap\n"<script>x</script>":::bad\n  "<img src=x onerror=alert(1)>": 1:::bad\nclassDef bad fill:url(javascript:alert(1)),stroke:red');
+    expect(paints(scene).some((paint) => paint.includes('url('))).toBe(false);
+    const leaf = itemById(scene, '<img src=x onerror=alert(1)>', 'bad')!;
+    expect(leaf).toBeDefined();
+    expect(scene.shapes.filter((s) => s.item === scene.items.indexOf(leaf)).map((s) => [s.kind, s.paint])).toContainEqual(['stroke', 'red']);
   });
 
   it('keeps a value format from writing markup', () => {
-    const { svg } = render('---\nconfig:\n  treemap:\n    valueFormat: "<b>"\n---\ntreemap\n"a": 1234', options);
-    expect(svg).toContain('>1,234<');
+    const { scene } = draw('---\nconfig:\n  treemap:\n    valueFormat: "<b>"\n---\ntreemap\n"a": 1234');
+    expect(lines(scene)).toContain('1,234');
   });
 
   it('holds for hostile option values', () => {
@@ -80,7 +70,7 @@ describe('inert treemap output', () => {
   });
 
   it('does not pollute prototypes', () => {
-    render('treemap\n"__proto__":::__proto__\n  "constructor": 1:::constructor\nclassDef __proto__ fill:red\nclassDef constructor fill:blue\nclassDef toString polluted:1', options);
+    draw('treemap\n"__proto__":::__proto__\n  "constructor": 1:::constructor\nclassDef __proto__ fill:red\nclassDef constructor fill:blue\nclassDef toString polluted:1');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(Object.prototype, 'fill')).toBe(false);
   });

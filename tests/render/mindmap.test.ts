@@ -1,23 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
+import { PeleError, parse, supports } from '../../src/index.js';
 import type { MindmapModel } from '../../src/index.js';
+import type { Box, Scene } from '../../src/draw/scene.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { random } from '../support/corpus.js';
+import { draw, itemById, items, lineOf, lines, overlaps, sceneProblem, shapesOf, textOf, textsOf } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
-
-interface Box {
+interface Node {
   id: string;
+  // Where the node's centre is, and how far it reaches.
   x: number;
   y: number;
-  w: number;
-  h: number;
+  box: Box;
 }
 
-// Every node here is drawn as a rectangle, so its group and rect give its bounding box.
-function boxes(svg: string): Box[] {
-  const re = /<g class="pele-node[^"]*" data-id="([^"]*)" transform="translate\(([-\d.]+),([-\d.]+)\)"><rect x="[-\d.]+" y="[-\d.]+" width="([\d.]+)" height="([\d.]+)"/g;
-  return [...svg.matchAll(re)].map((m) => ({ id: m[1], x: +m[2], y: +m[3], w: +m[4], h: +m[5] }));
+// Every node here is drawn as a rectangle, so the area of its item is its bounding box.
+function boxes(scene: Scene): Node[] {
+  return items(scene, 'pele-node').map((i) => ({ id: i.id, x: (i.box!.x0 + i.box!.x1) / 2, y: (i.box!.y0 + i.box!.y1) / 2, box: i.box! }));
 }
 
 function model(src: string): MindmapModel {
@@ -26,38 +25,41 @@ function model(src: string): MindmapModel {
 
 describe('mindmap rendering', () => {
   it('draws a node per line and a link per child', () => {
-    const { svg, type, links } = render('mindmap\n  root((Center))\n    A\n      A1\n      A2\n    B', options);
+    const { scene, type, links } = draw('mindmap\n  root((Center))\n    A\n      A1\n      A2\n    B');
     expect(type).toBe('mindmap');
     expect(supports('mindmap\n  root')).toBe(true);
     expect(links).toEqual([]);
-    expect(svg.match(/class="pele-node/g)?.length).toBe(5);
-    expect(svg.match(/class="pele-edge"/g)?.length).toBe(4);
-    for (const text of ['Center', 'A', 'A1', 'A2', 'B']) expect(svg).toContain(`>${text}</text>`);
-    expect(svg).toContain('data-id="root"');
+    expect(items(scene, 'pele-node')).toHaveLength(5);
+    expect(scene.shapes.filter((h) => h.item === -1)).toHaveLength(4);
+    expect(lines(scene).sort()).toEqual(['A', 'A1', 'A2', 'B', 'Center']);
+    expect(itemById(scene, 'root')).toBeDefined();
   });
 
   it('maps each pair of delimiters to its shape', () => {
-    const { svg } = render(
-      'mindmap\n  root\n    a[Square]\n    b(Rounded)\n    c((Circle))\n    d))Bang((\n    e)Cloud(\n    f{{Hexagon}}\n    Plain',
-      options
-    );
-    for (const shape of ['stadium pele-root', 'rect', 'rounded', 'circle', 'bang', 'cloud', 'hex', 'text']) {
-      expect(svg, shape).toContain(`class="pele-node pele-shape-${shape}"`);
+    const { scene } = draw('mindmap\n  root\n    a[Square]\n    b(Rounded)\n    c((Circle))\n    d))Bang((\n    e)Cloud(\n    f{{Hexagon}}\n    Plain');
+    for (const [id, shape] of [['root', 'stadium pele-root'], ['a', 'rect'], ['b', 'rounded'], ['c', 'circle'], ['d', 'bang'], ['e', 'cloud'], ['f', 'hex'], ['Plain', 'text']]) {
+      expect(itemById(scene, id)!.kind, shape).toBe(`pele-node pele-shape-${shape}`);
     }
     const nodes = model('mindmap\n  root\n    a[x)\n    b(x]\n    c(-x-)\n    -)x(-').nodes;
     expect(nodes.map((node) => node.type)).toEqual([0, 2, 4, 0, 0]);
   });
 
   it('colors each first-level branch and keeps the root neutral', () => {
-    const { svg } = render('mindmap\n  [root]\n    [a]\n      [a1]\n    [b]\n    [c]', options);
-    expect(svg).toMatch(/pele-root" data-id="root"[^>]*><rect[^>]*stroke="var\(--_b\)"/);
-    expect(svg).toMatch(/class="pele-branch pele-section-0"><g class="pele-edges" fill="none" stroke="var\(--pele-series-1,/);
+    const { scene } = draw('mindmap\n  [root]\n    [a]\n      [a1]\n    [b]\n    [c]');
+    const SERIES = /^var\(--pele-series-(\d),/;
+    const series = (paint: string): string | undefined => SERIES.exec(paint)?.[1];
+    expect(shapesOf(scene, itemById(scene, 'root')!).map((h) => h.paint)).toEqual(['var(--_s)', 'var(--_b)']);
+    // The links to a branch's nodes are drawn in its color.
+    expect(scene.shapes.filter((h) => h.item === -1).map((h) => series(h.paint))).toEqual(['1', '1', '2', '3']);
     // A shaped node is filled with a tint of its branch's color, as a pill is, and outlined in that color.
-    expect(svg).toMatch(/data-id="a1"[^>]*><rect[^>]*fill="var\(--pele-series-1,[^"]*\)" fill-opacity="0.22" stroke="var\(--pele-series-1,/);
-    expect(svg).toMatch(/data-id="b"[^>]*><rect[^>]*fill="var\(--pele-series-2,[^"]*\)" fill-opacity="0.22" stroke="var\(--pele-series-2,/);
-    expect(svg).toMatch(/data-id="c"[^>]*><rect[^>]*fill="var\(--pele-series-3,[^"]*\)" fill-opacity="0.22" stroke="var\(--pele-series-3,/);
+    for (const [id, n] of [['a1', '1'], ['b', '2'], ['c', '3']]) {
+      const [fill, stroke] = shapesOf(scene, itemById(scene, id)!);
+      expect([series(fill.paint), fill.opacity, series(stroke.paint)], id).toEqual([n, 0.22, n]);
+    }
     // So is a pill, which the source gave no shape.
-    expect(render('mindmap\n  root\n    a\n      b', options).svg).toMatch(/pele-shape-branch" data-id="a"[^>]*><rect[^>]*fill-opacity="0.22" stroke="var\(--pele-series-1,/);
+    const pill = draw('mindmap\n  root\n    a\n      b').scene;
+    const [fill, stroke] = shapesOf(pill, itemById(pill, 'a', 'pele-shape-branch')!);
+    expect([series(fill.paint), fill.opacity, series(stroke.paint)]).toEqual(['1', 0.22, '1']);
   });
 
   it('wraps section numbers after eleven branches, as Mermaid does', () => {
@@ -71,8 +73,8 @@ describe('mindmap rendering', () => {
 
   it('puts branches on both sides of the root, balanced by height', () => {
     const src = 'mindmap\n  [root]\n    [a]\n      [a1]\n      [a2]\n      [a3]\n    [b]\n    [c]\n    [d]';
-    const all = boxes(render(src, options).svg);
-    const at = (id: string): Box => all.find((box) => box.id === id)!;
+    const all = boxes(draw(src).scene);
+    const at = (id: string): Node => all.find((node) => node.id === id)!;
     expect(at('a').x).toBeGreaterThan(at('root').x);
     expect(at('a1').x).toBeGreaterThan(at('a').x);
     for (const id of ['b', 'c', 'd']) expect(at(id).x).toBeLessThan(at('root').x);
@@ -81,8 +83,8 @@ describe('mindmap rendering', () => {
     expect(at('b').y).toBeLessThan(at('c').y);
     expect(at('c').y).toBeCloseTo(at('root').y, 1);
 
-    const single = boxes(render('mindmap\n  [root]\n    [a]\n      [b]', options).svg);
-    expect(single.map((box) => box.id)).toEqual(['a', 'b', 'root']);
+    const single = boxes(draw('mindmap\n  [root]\n    [a]\n      [b]').scene);
+    expect(single.map((node) => node.id)).toEqual(['a', 'b', 'root']);
     expect(single[2].x).toBeLessThan(single[0].x);
     expect(single[0].x).toBeLessThan(single[1].x);
   });
@@ -90,8 +92,8 @@ describe('mindmap rendering', () => {
   it('keeps branch sides when a growing final branch reaches a balanced tie', () => {
     const start = 'mindmap\n  [root]\n    [Build]\n      [Prototype]\n      [Iterate]\n    [Review]\n      [Test]\n      [Refine]';
     for (const tail of ['', '\n    [Ship]', '\n    [Ship]\n      [Launch]', '\n    [Ship]\n      [Launch]\n      [Learn]']) {
-      const all = boxes(render(start + tail, options).svg);
-      const x = (id: string): number => all.find(box => box.id === id)!.x;
+      const all = boxes(draw(start + tail).scene);
+      const x = (id: string): number => all.find((node) => node.id === id)!.x;
       expect(x('Build')).toBeGreaterThan(x('root'));
       expect(x('Review')).toBeLessThan(x('root'));
       if (tail) expect(x('Ship')).toBeLessThan(x('root'));
@@ -109,14 +111,11 @@ describe('mindmap rendering', () => {
         const label = 'word '.repeat(1 + Math.floor(rnd() * 12)).trim();
         src += `${' '.repeat(depth)}n${i}[${label}]\n`;
       }
-      const all = boxes(render(src, options).svg);
+      const all = boxes(draw(src).scene);
       expect(all.length).toBe(count);
       for (let i = 0; i < all.length; i++) {
         for (let j = i + 1; j < all.length; j++) {
-          const a = all[i];
-          const b = all[j];
-          const apart = Math.abs(a.x - b.x) >= (a.w + b.w) / 2 || Math.abs(a.y - b.y) >= (a.h + b.h) / 2;
-          expect(apart, `${a.id} and ${b.id} in ${JSON.stringify(src)}`).toBe(true);
+          expect(overlaps(all[i].box, all[j].box), `${all[i].id} and ${all[j].id} in ${JSON.stringify(src)}`).toBe(false);
         }
       }
     }
@@ -131,40 +130,39 @@ describe('mindmap rendering', () => {
   });
 
   it('rejects a second root with Mermaid\'s message', () => {
-    const second = (): unknown => render('mindmap\n  root\n  other', options);
+    const second = (): unknown => draw('mindmap\n  root\n  other');
     expect(second).toThrow(PeleError);
     expect(second).toThrow('There can be only one root. No parent could be found for ("other")');
-    expect(() => render('mindmap\n    root\n  shallower', options)).toThrow(/only one root/);
+    expect(() => draw('mindmap\n    root\n  shallower')).toThrow(/only one root/);
   });
 
   it('ignores a decoration that comes before any node', () => {
-    expect(render('mindmap\n::icon(fa fa-book)\n:::big\nroot', options).svg).toContain('>root</text>');
+    expect(lines(draw('mindmap\n::icon(fa fa-book)\n:::big\nroot').scene)).toEqual(['root']);
   });
 
   it('draws icons and applies classes', () => {
     const src = 'mindmap\n  root\n    A\n    ::icon(fa fa-book)\n    :::urgent large\n    B';
-    const plain = render(src, options);
-    expect(plain.svg).toContain('class="pele-node pele-shape-text urgent large" data-id="A"');
-    expect(plain.svg).not.toContain('pele-icon');
-    expect(plain.width).toBe(render('mindmap\n  root\n    A\n    B', options).width);
-    const drawn = render(src, { ...options, icons: (name) => (name === 'fa fa-book' ? '<path d="M0,0H24"/>' : null) });
-    expect(drawn.svg).toContain('<svg class="pele-icon" data-icon="fa fa-book"');
-    expect(drawn.svg).toContain('stroke-linejoin="round"><path d="M0,0H24"/></svg>');
+    const plain = draw(src);
+    expect(itemById(plain.scene, 'A')!.kind).toBe('pele-node pele-shape-text urgent large');
+    expect(shapesOf(plain.scene, itemById(plain.scene, 'A')!)).toEqual([]);
+    expect(plain.width).toBe(draw('mindmap\n  root\n    A\n    B').width);
+    const drawn = draw(src, { icons: (name: string) => (name === 'fa fa-book' ? '<path d="M0,0H24"/>' : null) });
+    expect(shapesOf(drawn.scene, itemById(drawn.scene, 'A')!).map((h) => h.paint)).toEqual(['var(--_fg)']);
     expect(drawn.width).toBeGreaterThan(plain.width);
   });
 
   it('formats markdown and breaks lines', () => {
-    const { svg } = render('mindmap\n  id1["`**Root** with\na second line`"]\n    id2[One<br/>Two]\n    id3[*emphasis*]', options);
-    expect(svg).toContain(' font-weight="var(--_w)">Root</tspan><tspan> with</tspan>');
-    expect(svg).toContain('a second line');
-    expect(svg).toMatch(/>One<\/tspan><tspan[^>]*>Two</);
-    expect(svg).toMatch(/<text[^>]* font-style="italic"[^>]*><tspan[^>]*>emphasis</);
+    const { scene } = draw('mindmap\n  id1["`**Root** with\na second line`"]\n    id2[One<br/>Two]\n    id3[*emphasis*]');
+    const spans = (id: string) => textsOf(scene, itemById(scene, id)!).map((t) => t.spans);
+    expect(spans('id1')).toEqual([[{ text: 'Root', weight: 700, weightVar: '--_w' }, { text: ' with' }], [{ text: 'a second line' }]]);
+    expect(spans('id2')).toEqual([[{ text: 'One' }], [{ text: 'Two' }]]);
+    expect(spans('id3')).toEqual([[{ text: 'emphasis', italic: true }]]);
   });
 
   it('wraps long text at maxNodeWidth', () => {
     const body = 'mindmap\n  root[' + 'several words that go on '.repeat(4) + ']';
-    const normal = render(body, options);
-    const narrow = render('---\nconfig:\n  mindmap:\n    maxNodeWidth: 80\n---\n' + body, options);
+    const normal = draw(body);
+    const narrow = draw('---\nconfig:\n  mindmap:\n    maxNodeWidth: 80\n---\n' + body);
     expect(normal.width).toBeLessThan(260);
     expect(narrow.width).toBeLessThan(normal.width);
     expect(narrow.height).toBeGreaterThan(normal.height);
@@ -176,40 +174,41 @@ describe('mindmap rendering', () => {
   });
 
   it('draws the front matter title', () => {
-    const plain = render('mindmap\n  root\n    A', options);
-    const titled = render('---\ntitle: Plans\n---\nmindmap\n  root\n    A', options);
-    expect(titled.svg).toContain('class="pele-title" font-weight="var(--_tw)"');
-    expect(titled.svg).toContain('>Plans<');
+    const plain = draw('mindmap\n  root\n    A');
+    const titled = draw('---\ntitle: Plans\n---\nmindmap\n  root\n    A');
+    const title = titled.scene.texts.find((t) => lineOf(t) === 'Plans')!;
+    expect([title.item, title.weight]).toEqual([-1, 700]);
     expect(titled.height).toBeGreaterThan(plain.height);
   });
 
   it('renders a mindmap with no nodes and one with only a root', () => {
-    expect(render('mindmap\n\n', options).svg).toContain('<svg');
-    expect(render('mindmap\nroot', options).svg.match(/class="pele-node/g)?.length).toBe(1);
+    const empty = draw('mindmap\n\n').scene;
+    expect([empty.items, empty.texts, empty.shapes]).toEqual([[], [], []]);
+    expect(items(draw('mindmap\nroot').scene, 'pele-node')).toHaveLength(1);
   });
 
   it('sets the levels apart: a pill for a node that branches, plain text for one that ends a branch', () => {
-    const { svg } = render('mindmap\n  root\n    Plan\n      Research\n        Read\n        Ask\n      Build\n    Ship', options);
-    const kinds = new Map([...svg.matchAll(/class="pele-node pele-shape-(\w+)[^"]*" data-id="([^"]*)"/g)].map((m) => [m[2], m[1]]));
-    expect(kinds.get('Plan')).toBe('branch');
-    expect(kinds.get('Research')).toBe('branch');
-    for (const leaf of ['Read', 'Ask', 'Build', 'Ship']) expect(kinds.get(leaf), leaf).toBe('text');
-    expect(svg).toMatch(/pele-shape-branch" data-id="Plan"[^>]*><rect[^>]* fill="var\(--pele-series-\d,[^"]*\)" fill-opacity="0.22" stroke="var\(--pele-series-\d,[^"]*\)"\/>/);
-    expect(svg).toMatch(/pele-shape-text" data-id="Read"[^>]*><text/);
-    expect(svg).not.toContain('pele-marker');
+    const { scene } = draw('mindmap\n  root\n    Plan\n      Research\n        Read\n        Ask\n      Build\n    Ship');
+    const kind = (id: string): string => itemById(scene, id)!.kind;
+    expect(kind('Plan')).toContain('pele-shape-branch');
+    expect(kind('Research')).toContain('pele-shape-branch');
+    for (const leaf of ['Read', 'Ask', 'Build', 'Ship']) expect(kind(leaf), leaf).toContain('pele-shape-text');
+    const [fill, stroke] = shapesOf(scene, itemById(scene, 'Plan')!);
+    expect([fill.opacity, fill.paint.startsWith('var(--pele-series-'), stroke.paint.startsWith('var(--pele-series-')]).toEqual([0.22, true, true]);
+    expect(shapesOf(scene, itemById(scene, 'Read')!)).toEqual([]);
     // Nodes on one level start at the same place, whatever their length.
-    const box = new Map([...svg.matchAll(/data-id="([^"]*)" transform="translate\((-?[\d.]+),[^)]*\)">(?:<rect x="(-?[\d.]+)")?/g)].map((m) => [m[1], Number(m[2])]));
-    const side = Math.sign(box.get('Read')! - box.get('Research')!);
+    const centre = (id: string): number => textsOf(scene, itemById(scene, id)!)[0].x;
+    const side = Math.sign(centre('Read') - centre('Research'));
     expect(side).not.toBe(0);
-    const widths = new Map([['Read', metricsMeasurer.width('Read', 16, 0)], ['Ask', metricsMeasurer.width('Ask', 16, 0)]]);
-    const near = (id: string): number => box.get(id)! - (side * (widths.get(id)! + 12)) / 2;
+    const near = (id: string): number => centre(id) - (side * (metricsMeasurer.width(id, 16, 0) + 12)) / 2;
     expect(near('Read')).toBeCloseTo(near('Ask'), 1);
   });
 
   it('is deterministic and emits only finite numbers', () => {
     const src = 'mindmap\n  root((mindmap))\n    Origins\n      Long history\n      ::icon(fa fa-book)\n    Research\n      On effectiveness<br/>and features\n    Tools\n      Pen and paper';
-    const first = render(src, options).svg;
-    expect(render(src, options).svg).toBe(first);
-    expect(first).not.toMatch(/NaN|Infinity|undefined/);
+    const first = draw(src);
+    expect(JSON.stringify(draw(src).scene)).toBe(JSON.stringify(first.scene));
+    expect(sceneProblem(first)).toBeUndefined();
+    expect(textOf(first.scene)).not.toMatch(/NaN|Infinity|undefined/);
   });
 });

@@ -1,7 +1,7 @@
 {
   "name": "pele",
   "version": "1.13.0",
-  "description": "A fast, lightweight Mermaid renderer that outputs themeable SVG.",
+  "description": "A fast, lightweight Mermaid renderer that outputs vector scenes.",
   "license": "MIT",
   "author": "kepano",
   "keywords": [
@@ -9,7 +9,7 @@
     "diagram",
     "diagrams",
     "flowchart",
-    "svg",
+    "scene",
     "renderer"
   ],
   "homepage": "https://pele.run",
@@ -58,13 +58,10 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --exclude \"tests/website/**\"",
-    "test:website": "vitest run tests/website",
+    "test": "vitest run",
     "prepublishOnly": "npm run typecheck && npm test && npm run build",
-    "test:watch": "vitest --exclude \"tests/website/**\"",
-    "bench": "node scripts/bench.mjs",
-    "bench:mermaid": "node scripts/bench-mermaid.mjs",
-    "website": "cd website && pnpm dev"
+    "test:watch": "vitest",
+    "bench": "node scripts/bench.mjs"
   },
   "engines": {
     "node": ">=20"

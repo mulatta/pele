@@ -1,17 +1,22 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { PeleError, detectType, parse, render } from '../../src/index.js';
+import { PeleError, detectType, parse, renderScene, type RenderOptions, type SceneResult } from '../../src/index.js';
 import { all } from '../../src/diagrams/registry.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, lineOf, lines, options, textOf } from '../support/scene.js';
 
 // A gantt chart marks the present, so the time is given: two drawings a moment apart could differ.
-const options = { measurer: metricsMeasurer, now: Date.UTC(2026, 0, 15, 12) };
+const NOW = Date.UTC(2026, 0, 15, 12);
+
+const drawAt = (source: string | ReturnType<typeof parse>, extra: RenderOptions = {}): SceneResult => renderScene(source, { ...options, now: NOW, ...extra });
 
 const corpora = readdirSync('tests/corpus')
   .filter((file) => file.endsWith('-docs.json'))
   .sort()
   .map((file) => ({ name: file.replace('-docs.json', ''), sources: JSON.parse(readFileSync(`tests/corpus/${file}`, 'utf8')) as string[] }));
+
+// What a scene shows, without where in the source each part was written, which a model from parse() no longer knows.
+const shown = (result: SceneResult): unknown => ({ ...result.scene, items: result.scene.items.map(({ id, kind, role, box }) => ({ id, kind, role, box })) });
 
 const where = (name: string, src: string): string => `${name}: ${JSON.stringify(src).slice(0, 120)}`;
 
@@ -24,10 +29,10 @@ describe('every diagram type', () => {
         ['sequence', `sequenceDiagram\n  Alice->>Bob: ${keyword} view`],
       ];
       for (const [type, source] of sources) {
-        const result = render(source, options);
+        const result = drawAt(source);
         expect(detectType(source)).toBe(type);
         expect(result.type).toBe(type);
-        expect(result.svg).toContain(keyword);
+        expect(textOf(result.scene)).toContain(keyword);
         expect(result.width).toBeGreaterThan(0);
         expect(result.height).toBeGreaterThan(0);
       }
@@ -36,7 +41,7 @@ describe('every diagram type', () => {
 
   it('has documentation examples', () => {
     const drawn = new Set<string>();
-    for (const { sources } of corpora) for (const src of sources) drawn.add(render(src, options).type);
+    for (const { sources } of corpora) for (const src of sources) drawn.add(drawAt(src).type);
     expect([...drawn].sort()).toEqual(all.map((d) => d.type).sort());
   });
 
@@ -45,16 +50,12 @@ describe('every diagram type', () => {
     for (const { name, sources } of corpora) {
       for (const src of sources) {
         const at = where(name, src);
-        const { svg, width, height, type } = render(src, options);
-        assertInert(svg, at);
-        expect(svg, at).not.toMatch(/NaN|Infinity|undefined/);
-        expect(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" class="pele pele-${type}"`), at).toBe(true);
-        // An example that asks Mermaid for a fixed size gets one.
-        const fit = /useMaxWidth: false/.test(src) ? '' : 'max-width:100%;height:auto;';
-        expect(svg, at).toContain(`viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="${fit}--_bg:`);
+        const result = drawAt(src);
+        const { width, height } = result;
+        assertSafe(result, at);
+        expect(textOf(result.scene), at).not.toMatch(/NaN|Infinity|undefined/);
         expect(Number.isInteger(width) && Number.isInteger(height) && width >= 0 && height >= 0, at).toBe(true);
-        expect(render(src, { ...options, responsive: false }).svg, at).not.toContain('max-width');
-        expect(render(src, options).svg, at).toBe(svg);
+        expect(drawAt(src).scene, at).toEqual(result.scene);
         count++;
       }
     }
@@ -67,7 +68,7 @@ describe('every diagram type', () => {
         const at = where(name, src);
         const model = parse(src);
         for (const maxWidth of [undefined, 320, 500, undefined]) {
-          expect(render(model, { ...options, maxWidth }).svg, at).toBe(render(src, { ...options, maxWidth }).svg);
+          expect(shown(drawAt(model, { maxWidth })), at).toEqual(shown(drawAt(src, { maxWidth })));
         }
       }
     }
@@ -77,14 +78,14 @@ describe('every diagram type', () => {
     const src = 'flowchart LR\n  A --> B --> C';
     expect(() => parse(src, { maxEdges: 1 })).toThrow(PeleError);
     expect(() => parse(src, { limit: 5 })).toThrow(PeleError);
-    expect(render(parse(src), { ...options, maxEdges: 1, limit: 5 }).type).toBe('flowchart');
-    const config = { flowchart: { useMaxWidth: false } };
-    expect(render(parse(src, { config }), options).svg).toBe(render(src, { ...options, config }).svg);
-    expect(render(parse(src, { config }), options).svg).not.toBe(render(src, options).svg);
+    expect(drawAt(parse(src), { maxEdges: 1, limit: 5 }).type).toBe('flowchart');
+    const config = { flowchart: { rankSpacing: 200 } };
+    expect(shown(drawAt(parse(src, { config })))).toEqual(shown(drawAt(src, { config })));
+    expect(shown(drawAt(parse(src, { config })))).not.toEqual(shown(drawAt(src)));
   });
 
   it('refuses a model that parse() did not return', () => {
-    expect(() => render({ ...parse('flowchart LR\n  A --> B') }, options)).toThrow(TypeError);
+    expect(() => drawAt({ ...parse('flowchart LR\n  A --> B') })).toThrow(TypeError);
   });
 
   it('draws a title given in front matter', () => {
@@ -105,30 +106,19 @@ describe('every diagram type', () => {
     for (const { name, sources } of corpora) {
       const src = plain[name] ?? sources.find((s) => !s.startsWith('---') && !/^\s*title\b/m.test(s));
       expect(src, name).toBeDefined();
-      const { svg, type } = render(`---\ntitle: Zebra crossing\n---\n${src}`, options);
-      expect(svg, name).toContain('Zebra crossing');
-      assertInert(svg, name);
-      drawn.add(type);
+      const result = drawAt(`---\ntitle: Zebra crossing\n---\n${src}`);
+      expect(lines(result.scene), name).toContain('Zebra crossing');
+      assertSafe(result, name);
+      drawn.add(result.type);
     }
     expect(drawn.size).toBe(all.length);
   });
 
-  it('honours useMaxWidth under the section name Mermaid uses for the type', () => {
-    const fixed = (src: string): boolean => !render(src, options).svg.includes('max-width');
-    expect(fixed('---\nconfig:\n  xyChart:\n    useMaxWidth: false\n---\nxychart\n  x-axis [a, b]\n  bar [1, 2]')).toBe(true);
-    expect(fixed('---\nconfig:\n  wardley-beta:\n    useMaxWidth: false\n---\nwardley-beta\n  component A [0.5, 0.5]')).toBe(true);
-    expect(fixed('---\nconfig:\n  pie:\n    useMaxWidth: false\n---\npie\n  "a": 1')).toBe(true);
-    expect(fixed('---\nconfig:\n  flowchart:\n    useMaxWidth: false\n---\npie\n  "a": 1')).toBe(false);
-  });
-
-  it('only gives ids that start with the prefix, so two diagrams on a page do not clash', () => {
+  it('only names gradients with the prefix, so two diagrams on a page do not clash', () => {
     for (const { name, sources } of corpora) {
       for (const src of sources) {
-        const { svg } = render(src, { ...options, idPrefix: 'one' });
-        for (const m of svg.matchAll(/ id="([^"]*)"/g)) expect(m[1].startsWith('one'), `${where(name, src)}: id ${m[1]}`).toBe(true);
-        for (const m of svg.matchAll(/url\(#([^)]*)\)|href="#([^"]*)"/g)) {
-          expect((m[1] ?? m[2]).startsWith('one'), `${where(name, src)}: reference ${m[0]}`).toBe(true);
-        }
+        const { scene } = drawAt(src, { idPrefix: 'one' });
+        for (const id of Object.keys(scene.gradients ?? {})) expect(id.startsWith('one'), `${where(name, src)}: gradient ${id}`).toBe(true);
       }
     }
   });
@@ -145,14 +135,15 @@ describe('every diagram type', () => {
     ];
     for (const [name, template] of links) {
       for (const hidden of ['#106;avascript:alert(1)', '&#106;avascript:alert(1)', 'java#9;script:alert(1)', '#32;javascript:alert(1)']) {
-        const { svg } = render(template.replace('URL', hidden), options);
-        const hrefs = (svg.match(/href="[^"]*"/g) ?? []).join(' ');
-        expect(hrefs, `${name}: ${hidden}`).not.toMatch(/href="[^"#]*script/i);
-        assertInert(svg, `${name}: ${hidden}`);
+        const result = drawAt(template.replace('URL', hidden));
+        for (const link of result.links) if (!link.internal) expect(link.href.replace(/#.*$/s, ''), `${name}: ${hidden}`).not.toMatch(/script/i);
+        expect(result.scene.skipped.image, `${name}: ${hidden}`).toBeUndefined();
+        assertSafe(result, `${name}: ${hidden}`);
       }
       // C4 keeps the text of a link as written, so a code stays a harmless part of the address.
-      const { svg } = render(template.replace('URL', 'https://example.com/a#35;b'), options);
-      expect(svg, name).toContain(name === 'c4' ? 'href="https://example.com/a#35;b"' : 'href="https://example.com/a#b"');
+      const decoded = drawAt(template.replace('URL', 'https://example.com/a#35;b'));
+      if (name.endsWith('image')) expect(decoded.scene.skipped.image, name).toBe(1);
+      else expect(decoded.links.map((link) => link.href), name).toEqual([name === 'c4' ? 'https://example.com/a#35;b' : 'https://example.com/a#b']);
     }
   });
 
@@ -169,7 +160,13 @@ describe('every diagram type', () => {
     ['c4', 'C4Context\n  Person(a, "A", $link="URL")'],
     ['er', 'erDiagram\n  A["URL"]:::internal-link'],
   ];
-  const hrefs = (svg: string): string[] => (svg.match(/ href="[^"]*"/g) ?? []).map((m) => m.slice(7, -1));
+  // What a host could follow or load: the links, and an image, which a scene leaves to its host
+  // and only counts. An internal link is a name for the host to resolve, not an address.
+  const hrefs = (result: SceneResult, name: string, url: string, internal = true): string[] => {
+    const followed = result.links.filter((link) => internal || !link.internal).map((link) => link.href);
+    return name.endsWith('image') && result.scene.skipped.image ? [...followed, url] : followed;
+  };
+  const named = (name: string): boolean => name.endsWith('note') || name === 'er';
 
   it('only follows web, mail and phone links, and only loads web images', () => {
     const blocked = [
@@ -192,37 +189,35 @@ describe('every diagram type', () => {
       for (const url of blocked) {
         // An ER name cannot hold a percent sign or a backslash.
         if (name === 'er' && /[%\\]/.test(url)) continue;
-        const { svg, links } = render(template.replace('URL', () => url), options);
+        const result = drawAt(template.replace('URL', () => url));
         // Kanban and C4 do not read entity codes in an address, which leaves a relative one.
         const left = name === 'kanban' || name === 'c4' ? /^file#58;.*$/ : /^$/;
-        for (const href of hrefs(svg)) expect(href, `${name}: ${url}`).toMatch(left);
-        for (const link of links) if (!link.internal) expect(link.href, `${name}: ${url}`).toMatch(left);
-        expect(svg, `${name}: ${url}`).not.toContain('about:blank');
-        assertInert(svg, `${name}: ${url}`);
+        for (const href of hrefs(result, name, url, false)) expect(href, `${name}: ${url}`).toMatch(left);
+        assertSafe(result, `${name}: ${url}`);
       }
-      const allowed = name.endsWith('note') || name === 'er' ? ['Note name', 'folder/Note#Heading'] : ['https://example.com/a', 'http://example.com/a', './a/b.html', '/a/b', 'a.html'];
+      const allowed = named(name) ? ['Note name', 'folder/Note#Heading'] : ['https://example.com/a', 'http://example.com/a', './a/b.html', '/a/b', 'a.html'];
       if (name === 'flowchart' || name === 'class') allowed.push('mailto:a@example.com', 'tel:+15550100');
       for (const url of allowed) {
-        const { svg } = render(template.replace('URL', () => url), options);
-        expect(hrefs(svg), `${name}: ${url}`).toEqual([url]);
+        expect(hrefs(drawAt(template.replace('URL', () => url)), name, url), `${name}: ${url}`).toEqual([url]);
       }
     }
   });
 
   it('lets the host allow more schemes', () => {
     for (const [name, template] of LINKS) {
+      if (named(name)) continue;
       const image = name.endsWith('image');
       const url = 'obsidian://open?vault=x';
       const src = template.replace('URL', () => url);
-      expect(hrefs(render(src, { ...options, [image ? 'imageSchemes' : 'linkSchemes']: ['obsidian'] }).svg), name).toEqual([url]);
-      expect(hrefs(render(src, { ...options, [image ? 'linkSchemes' : 'imageSchemes']: ['obsidian'] }).svg), name).not.toContain(url);
+      expect(hrefs(drawAt(src, { [image ? 'imageSchemes' : 'linkSchemes']: ['obsidian'] }), name, url), name).toEqual([url]);
+      expect(hrefs(drawAt(src, { [image ? 'linkSchemes' : 'imageSchemes']: ['obsidian'] }), name, url), name).not.toContain(url);
       // Naming the schemes replaces the defaults.
       const web = template.replace('URL', 'https://example.com/a');
-      expect(hrefs(render(web, { ...options, linkSchemes: [], imageSchemes: [] }).svg), name).not.toContain('https://example.com/a');
+      expect(hrefs(drawAt(web, { linkSchemes: [], imageSchemes: [] }), name, 'https://example.com/a'), name).not.toContain('https://example.com/a');
     }
     for (const scheme of ['javascript', 'data', 'vbscript']) {
-      const { svg } = render(`flowchart LR\n  A --> B\n  click A "${scheme}:alert(1)"`, { ...options, linkSchemes: [scheme] });
-      expect(hrefs(svg), scheme).toEqual([]);
+      const { links } = drawAt(`flowchart LR\n  A --> B\n  click A "${scheme}:alert(1)"`, { linkSchemes: [scheme] });
+      expect(links, scheme).toEqual([]);
     }
   });
 
@@ -230,48 +225,32 @@ describe('every diagram type', () => {
     for (const [name, template] of LINKS) {
       for (const url of ['https://example.com/a', './a/b.html', 'a.png', 'Note name']) {
         const src = template.replace('URL', url);
-        const drawn = render(src, options);
-        const { svg, links } = render(src, { ...options, links: false, images: false });
-        expect(svg, `${name}: ${url}`).not.toMatch(/<a\b|<image\b| href=/);
-        expect(links, `${name}: ${url}`).toEqual([]);
-        expect([render(src, { ...options, links: false }).width, render(src, { ...options, links: false }).height], `${name}: ${url}`).toEqual([drawn.width, drawn.height]);
+        const drawn = drawAt(src);
+        const none = drawAt(src, { links: false, images: false });
+        expect(none.links, `${name}: ${url}`).toEqual([]);
+        expect(none.scene.skipped.image, `${name}: ${url}`).toBeUndefined();
+        const linksOff = drawAt(src, { links: false });
+        expect([linksOff.width, linksOff.height], `${name}: ${url}`).toEqual([drawn.width, drawn.height]);
       }
-    }
-  });
-
-  it('writes the rel the host sets on every link', () => {
-    const rels = (svg: string): (string | undefined)[] => (svg.match(/<a [^>]*>/g) ?? []).map((a) => / rel="([^"]*)"/.exec(a)?.[1]);
-    for (const [name, template] of LINKS) {
-      if (name.endsWith('image')) continue;
-      const src = template.replace('URL', 'https://example.com/a');
-      expect(rels(render(src, options).svg), name).toEqual(['noopener']);
-      expect(rels(render(src, { ...options, linkRel: 'noopener nofollow' }).svg), name).toEqual(['noopener nofollow']);
-      expect(rels(render(src, { ...options, linkRel: '' }).svg), name).toEqual([undefined]);
-      const { svg } = render(src, { ...options, linkRel: 'a"><script>' });
-      expect(svg, name).toContain(' rel="a&quot;&gt;&lt;script&gt;"');
-      assertInert(svg, name);
     }
   });
 
   it('stops at the output limit', () => {
     const src = 'flowchart LR\n' + Array.from({ length: 200 }, (_, i) => `  n${i} --> n${i + 1}`).join('\n');
-    const { svg } = render(src, options);
-    expect(() => render(src, { ...options, outputLimit: svg.length })).not.toThrow();
+    expect(() => drawAt(src)).not.toThrow();
     let error: unknown;
     try {
-      render(src, { ...options, outputLimit: svg.length - 1 });
+      drawAt(src, { outputLimit: 1000 });
     } catch (e) {
       error = e;
     }
     expect(error).toBeInstanceOf(PeleError);
-    expect((error as PeleError).code).toBe('limit');
-    expect((error as PeleError).type).toBe('flowchart');
-    expect(() => render('mindmap\nroot\n' + ' a\n'.repeat(16000), options)).toThrow(/output is longer than the limit/);
+    expect(error).toMatchObject({ code: 'limit', type: 'flowchart' });
+    expect(() => drawAt('mindmap\nroot\n' + ' a\n'.repeat(200), { outputLimit: 1000 })).toThrow(/output is larger than the limit/);
   });
 
   it('turns entity codes into characters wherever text is read as text', { timeout: 300000 }, () => {
-    // A value that is checked before it is written (a style, a colour, a URL) keeps a code as it is.
-    const checked = new Set(['style', 'fill', 'stroke', 'href']);
+    const placeholder = /\ufb02\u00b0|\u00b6\u00df/;
     let rendered = 0;
     for (const { name, sources } of corpora) {
       for (const src of sources) {
@@ -284,38 +263,37 @@ describe('every diagram type', () => {
         ];
         for (const variant of variants) {
           if (variant === src) continue;
-          let result: ReturnType<typeof render>;
+          let result: SceneResult;
           try {
-            result = render(variant, options);
+            result = drawAt(variant);
           } catch (error) {
             if (error instanceof PeleError) continue;
             throw error;
           }
           rendered++;
           const at = where(name, variant);
-          for (const m of result.svg.matchAll(/>[^<]*(?:\ufb02\u00b0|\u00b6\u00df)[^<]*</g)) expect.fail(`${at}: text ${m[0].slice(0, 60)}`);
-          for (const m of result.svg.matchAll(/ ([\w:-]+)="[^"]*(?:\ufb02\u00b0|\u00b6\u00df)[^"]*"/g)) {
-            expect(checked.has(m[1]), `${at}: attribute ${m[0].slice(0, 60)}`).toBe(true);
-          }
-          for (const link of result.links) expect(link.id, at).not.toMatch(/\ufb02\u00b0|\u00b6\u00df/);
-          assertInert(result.svg, at);
+          // A value that is checked before it is written (a colour, an address) may keep a code as it is.
+          const text = result.scene.texts.map(lineOf).find((line) => placeholder.test(line));
+          if (text !== undefined) expect.fail(`${at}: text ${text.slice(0, 60)}`);
+          const item = result.scene.items.find((i) => placeholder.test(i.id) || placeholder.test(i.kind));
+          if (item !== undefined) expect.fail(`${at}: item ${item.id.slice(0, 60)}`);
+          for (const link of result.links) expect(link.id, at).not.toMatch(placeholder);
+          assertSafe(result, at);
         }
       }
     }
     expect(rendered).toBeGreaterThan(600);
   });
 
-  it('shows an entity code the same way in a label, a tooltip, an id and an accessible name', () => {
-    const flow = render('flowchart LR\n  accTitle: Issue #35; list\n  A["Issue #35; fixed"]\n  click A "https://example.com" "Issue #35; fixed"', options);
-    expect(flow.svg).toContain('>Issue # fixed<');
-    expect(flow.svg).toContain('<title>Issue # fixed</title>');
-    expect(flow.svg).toContain('>Issue # list</title>');
-    const pie = render('pie\n  "Issue #35;": 1\n  "A #amp; B": 2', options);
-    expect(pie.svg).toContain('data-id="Issue #"');
-    expect(pie.svg).toContain('data-id="A &amp; B"');
-    const quoted = render('pie\n  "#34; onload=#34;alert(1)": 1', options);
-    expect(quoted.svg).toContain('data-id="&quot; onload=&quot;alert(1)"');
-    assertInert(quoted.svg, 'quoted id');
+  it('shows an entity code the same way in a label and an id', () => {
+    const flow = drawAt('flowchart LR\n  A["Issue #35; fixed"]');
+    expect(lines(flow.scene)).toContain('Issue # fixed');
+    const pie = drawAt('pie\n  "Issue #35;": 1\n  "A #amp; B": 2');
+    expect(pie.scene.items.map((i) => i.id)).toContain('Issue #');
+    expect(pie.scene.items.map((i) => i.id)).toContain('A & B');
+    const quoted = drawAt('pie\n  "#34; onload=#34;alert(1)": 1');
+    expect(quoted.scene.items.map((i) => i.id)).toContain('" onload="alert(1)');
+    assertSafe(quoted, 'quoted id');
   });
 
   it('leaves room for an icon only when the host has it', () => {
@@ -325,18 +303,14 @@ describe('every diagram type', () => {
       ['kanban', 'kanban\n  todo[Todo]\n    a[Call]@{ icon: phone }', 'kanban\n  todo[Todo]\n    a[Call]'],
     ];
     for (const [name, withIcon, without] of cases) {
-      const plain = render(withIcon, options);
-      expect(plain.svg, name).not.toContain('pele-icon');
-      expect(plain.svg, name).toBe(render(without, options).svg);
-      expect(render(withIcon, { ...options, icons: () => null }).svg, name).toBe(plain.svg);
-      expect(render(withIcon, { ...options, icons: () => '' }).svg, name).toBe(plain.svg);
-      const drawn = render(withIcon, { ...options, icons: () => '<path d="M1,1H9"/>' });
-      expect(drawn.svg, name).toMatch(/<svg class="pele-icon" data-icon="[^"]+"[^>]*><path d="M1,1H9"\/><\/svg>/);
+      const plain = drawAt(withIcon);
+      expect(shown(plain), name).toEqual(shown(drawAt(without)));
+      expect(drawAt(withIcon, { icons: () => null }).scene, name).toEqual(plain.scene);
+      expect(drawAt(withIcon, { icons: () => '' }).scene, name).toEqual(plain.scene);
+      const drawn = drawAt(withIcon, { icons: () => '<path d="M1,1H9"/>' });
+      expect(drawn.scene.shapes.length, name).toBeGreaterThan(plain.scene.shapes.length);
       expect(drawn.width, name).toBeGreaterThanOrEqual(plain.width);
-      // It is drawn in the diagram's text color, not in whatever color the page gives the container.
-      expect(drawn.svg, name).toMatch(/^<svg[^>]* style="[^"]*color:var\(--_fg\);/);
-      expect(drawn.svg, name).toMatch(/<svg class="pele-icon"[^>]* stroke="currentColor"/);
-      assertInert(drawn.svg.replace(/<svg class="pele-icon"[^>]*>.*?<\/svg>/g, ''), name);
+      assertSafe(drawn, name);
     }
   });
 
@@ -346,11 +320,9 @@ describe('every diagram type', () => {
       asked.push(icon);
       return '';
     };
-    const { svg, links } = render('flowchart LR\n  A@{ icon: "fa:user#35;", label: "x" }\n  B --> A\n  click A "https://example.com"', { ...options, icons });
+    const { links } = drawAt('flowchart LR\n  A@{ icon: "fa:user#35;", label: "x" }\n  B --> A\n  click A "https://example.com"', { icons });
     expect(asked).toContain('fa:user#');
-    expect(svg).toContain('data-icon="fa:user#"');
     expect(links.map((link) => link.id)).toEqual(['A']);
-    expect(svg).not.toMatch(/\ufb02\u00b0|\u00b6\u00df/);
   });
 
   it('survives hostile values for every config key a renderer reads', { timeout: 300000 }, () => {
@@ -365,7 +337,7 @@ describe('every diagram type', () => {
     };
     const folders = readdirSync('src/diagrams').filter((f) => f !== 'common' && !f.endsWith('.ts'));
     for (const { name, sources } of corpora) {
-      const type = render(sources[0], options).type;
+      const type = drawAt(sources[0]).type;
       const diagram = all.find((d) => d.type === type)!;
       const folder = folders.find((f) => readFileSync(`src/diagrams/${f}/index.ts`, 'utf8').includes(`type: '${type}'`))!;
       const keys = new Set([...literals(`src/diagrams/${folder}`), ...literals('src/diagrams/flowchart')]);
@@ -374,19 +346,18 @@ describe('every diagram type', () => {
         const config = { ...section, [diagram.section ?? type]: section, flowchart: section, themeVariables: section };
         for (const src of sources.slice(0, 2)) {
           const at = `${where(name, src)} with ${JSON.stringify(value)}`;
-          let svg: string;
+          let result: SceneResult;
           const started = performance.now();
           try {
-            const result = render(src, { ...options, config: config as never });
-            svg = result.svg;
+            result = drawAt(src, { config: config as never });
             expect(Number.isFinite(result.width) && Number.isFinite(result.height), at).toBe(true);
           } catch (error) {
             expect(error, at).toBeInstanceOf(PeleError);
             continue;
           }
           expect(performance.now() - started, at).toBeLessThan(3000);
-          expect(svg, at).not.toMatch(/NaN|Infinity|undefined/);
-          assertInert(svg, at);
+          expect(textOf(result.scene), at).not.toMatch(/NaN|Infinity|undefined/);
+          assertSafe(result, at);
         }
       }
     }
@@ -403,15 +374,15 @@ describe('every diagram type', () => {
         for (const [word] of words) {
           for (const key of ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
             const variant = src.replace(new RegExp(`\\b${word}\\b`, 'g'), key);
-            let svg: string;
+            let result: SceneResult;
             try {
-              svg = render(variant, options).svg;
+              result = drawAt(variant);
             } catch (error) {
               if (error instanceof PeleError) continue;
               throw new Error(`${where(name, variant)}: ${(error as Error).name}: ${(error as Error).message}`);
             }
-            assertInert(svg, where(name, variant));
-            expect(svg, where(name, variant)).not.toMatch(/NaN|Infinity|undefined|\[object |function /);
+            assertSafe(result, where(name, variant));
+            expect(textOf(result.scene), where(name, variant)).not.toMatch(/NaN|Infinity|undefined|\[object |function /);
             rendered++;
           }
         }
@@ -433,15 +404,15 @@ describe('every diagram type', () => {
           ];
           for (const variant of variants) {
             if (variant === src) continue;
-            let svg: string;
+            let result: SceneResult;
             try {
-              svg = render(variant, options).svg;
+              result = drawAt(variant);
             } catch (error) {
               if (error instanceof PeleError) continue;
               throw new Error(`${where(name, variant)}: ${(error as Error).name}: ${(error as Error).message}`);
             }
-            assertInert(svg, where(name, variant));
-            expect(svg, where(name, variant)).not.toMatch(/NaN|Infinity/);
+            assertSafe(result, where(name, variant));
+            expect(textOf(result.scene), where(name, variant)).not.toMatch(/NaN|Infinity/);
             rendered++;
           }
         }

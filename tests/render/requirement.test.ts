@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, parse, render, supports } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
+import { PeleError, parse, supports } from '../../src/index.js';
+import type { Scene, SceneItem } from '../../src/draw/scene.js';
 import { loadCorpus } from '../support/corpus.js';
-import { assertWellFormed } from '../support/xml.js';
+import { assertSafe, draw, itemById, items, lineOf, lines, shapesOf, textOf, textsOf, tryDraw } from '../support/scene.js';
 
-const options = { measurer: metricsMeasurer };
 const corpus = loadCorpus('requirement', /requirementDiagram/i);
 
 const BASIC = `requirementDiagram
@@ -24,45 +23,41 @@ docRef: reqs/test_entity
 test_entity - satisfies -> test_req
 `;
 
-function count(svg: string, pattern: RegExp): number {
-  return svg.match(pattern)?.length ?? 0;
-}
+const same = (a: string, b: string): boolean => JSON.stringify(draw(a).scene) === JSON.stringify(draw(b).scene);
+
+// A box's rules between its header, and its fields: a flat path, drawn with a stroke.
+const dividers = (scene: Scene, item: SceneItem) => shapesOf(scene, item).filter((s) => s.kind === 'stroke' && s.cmds.length === 6);
+const dividersIn = (scene: Scene): number => items(scene, 'pele-node').reduce((n, item) => n + dividers(scene, item).length, 0);
+// The circle that marks where a containment starts.
+const circleOf = (scene: Scene, edge: SceneItem) => shapesOf(scene, edge).filter((s) => s.cmds.length === 20);
 
 describe('requirement rendering', () => {
-  it('renders every documentation example as well-formed SVG', () => {
+  it('renders every documentation example as a safe scene, the same way each time', () => {
     let rendered = 0;
     for (const src of corpus) {
-      let svg: string;
-      try {
-        svg = render(src, options).svg;
-      } catch (error) {
-        expect(error).toBeInstanceOf(PeleError);
-        continue;
-      }
+      const result = tryDraw(src);
+      if (result === undefined) continue;
       rendered++;
       const where = JSON.stringify(src).slice(0, 120);
-      expect(() => assertWellFormed(svg), where).not.toThrow();
-      expect(svg, where).not.toContain('NaN');
-      expect(svg, where).not.toContain('undefined');
-      expect(render(src, options).svg, where).toBe(svg);
+      assertSafe(result, where);
+      expect(JSON.stringify(draw(src).scene), where).toBe(JSON.stringify(result.scene));
     }
     expect(rendered).toBeGreaterThan(9);
   });
 
   it('draws a box per requirement and element, with a header and fields', () => {
-    const { svg, type } = render(BASIC, options);
+    const { scene, type } = draw(BASIC);
     expect(type).toBe('requirement');
     expect(supports('requirementDiagram\n')).toBe(true);
-    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" class="pele pele-requirement"/);
-    expect(count(svg, /class="pele-node pele-requirement"/g)).toBe(1);
-    expect(count(svg, /class="pele-node pele-element"/g)).toBe(1);
-    expect(svg).toContain('data-id="test_req"');
-    expect(svg).toContain('>«Requirement»<');
-    expect(svg).toContain('>«Element»<');
+    expect(items(scene, 'pele-requirement').length).toBe(1);
+    expect(items(scene, 'pele-element').length).toBe(1);
+    expect(itemById(scene, 'test_req')).toBeDefined();
+    expect(lines(scene)).toContain('«Requirement»');
+    expect(lines(scene)).toContain('«Element»');
     for (const text of ['ID', 'Text', 'Risk', 'Verification', 'Type', 'Doc Ref', '1', 'the test text.', 'High', 'Test', 'simulation', 'reqs/test_entity']) {
-      expect(svg, text).toContain(`>${text}<`);
+      expect(lines(scene), text).toContain(text);
     }
-    expect(count(svg, /class="pele-divider"/g)).toBe(2);
+    expect(dividersIn(scene)).toBe(2);
   });
 
   it('names each requirement type', () => {
@@ -75,77 +70,79 @@ describe('requirement rendering', () => {
       ['designConstraint', 'Design Constraint'],
     ];
     for (const [keyword, name] of types) {
-      expect(render(`requirementDiagram\n${keyword} r {\n}\n`, options).svg).toContain(`>«${name}»<`);
+      expect(lines(draw(`requirementDiagram\n${keyword} r {\n}\n`).scene)).toContain(`«${name}»`);
     }
   });
 
   it('leaves out empty fields and the divider of an empty body', () => {
-    const { svg } = render('requirementDiagram\nrequirement r {\nid: 7\n}\nelement e {\n}\n', options);
-    expect(svg).toContain('>ID<');
-    expect(svg).not.toContain('>Text<');
-    expect(svg).not.toContain('>Type<');
-    expect(count(svg, /class="pele-divider"/g)).toBe(1);
+    const { scene } = draw('requirementDiagram\nrequirement r {\nid: 7\n}\nelement e {\n}\n');
+    expect(lines(scene)).toContain('ID');
+    expect(lines(scene)).not.toContain('Text');
+    expect(lines(scene)).not.toContain('Type');
+    expect(dividersIn(scene)).toBe(1);
   });
 
   it('draws contains with a circled plus at its source and the rest as dashed arrows', () => {
-    const contains = render('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - contains -> b\n', options).svg;
-    expect(contains).toContain('class="pele-edge pele-relationship-contains" data-id="a-b-0"');
-    expect(count(contains, /<circle class="pele-marker"/g)).toBe(1);
-    expect(contains).not.toContain('stroke-dasharray');
-    expect(contains).toContain('>«contains»<');
+    const { scene } = draw('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - contains -> b\n');
+    const edge = items(scene, 'pele-relationship-contains')[0];
+    expect(edge.id).toBe('a-b-0');
+    expect(circleOf(scene, edge).length).toBe(1);
+    expect(shapesOf(scene, edge).every((s) => !s.dash)).toBe(true);
+    expect(lines(scene)).toContain('«contains»');
     // The mark sits under the source, which is the upper node.
-    const cy = Number(/<circle class="pele-marker" cx="[\d.]+" cy="([\d.]+)"/.exec(contains)![1]);
-    const [ay, by] = ['a', 'b'].map((id) => Number(new RegExp(`data-id="${id}" transform="translate\\([\\d.]+,([\\d.]+)\\)"`).exec(contains)![1]));
-    expect(ay).toBeLessThan(by);
-    expect(Math.abs(cy - ay)).toBeLessThan(Math.abs(cy - by));
+    const cy = (circleOf(scene, edge)[0].box.y0 + circleOf(scene, edge)[0].box.y1) / 2;
+    const a = itemById(scene, 'a')!.box!;
+    const b = itemById(scene, 'b')!.box!;
+    expect(a.y0).toBeLessThan(b.y0);
+    expect(Math.abs(cy - a.y1)).toBeLessThan(Math.abs(cy - b.y0));
 
     for (const kind of ['copies', 'derives', 'satisfies', 'verifies', 'refines', 'traces']) {
-      const svg = render(`requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - ${kind} -> b\n`, options).svg;
-      expect(svg, kind).toContain('class="pele-edge pele-relationship-arrow"');
-      expect(svg, kind).toContain('stroke-dasharray="5 4"');
-      expect(svg, kind).toContain(`>«${kind}»<`);
-      expect(svg, kind).not.toContain('<circle');
+      const arrow = draw(`requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - ${kind} -> b\n`).scene;
+      const [only] = items(arrow, 'pele-relationship-arrow');
+      expect(only, kind).toBeDefined();
+      expect(shapesOf(arrow, only).some((s) => s.dash?.join(' ') === '5 4'), kind).toBe(true);
+      expect(lines(arrow), kind).toContain(`«${kind}»`);
+      expect(circleOf(arrow, only), kind).toEqual([]);
     }
   });
 
   it('reads a left arrow as the same relationship written the other way round', () => {
-    const forward = render('requirementDiagram\nrequirement a {\n}\nelement b {\n}\nb - satisfies -> a\n', options).svg;
-    const backward = render('requirementDiagram\nrequirement a {\n}\nelement b {\n}\na <- satisfies - b\n', options).svg;
-    expect(backward).toBe(forward);
+    expect(same('requirementDiagram\nrequirement a {\n}\nelement b {\n}\na <- satisfies - b\n', 'requirementDiagram\nrequirement a {\n}\nelement b {\n}\nb - satisfies -> a\n')).toBe(true);
   });
 
   it('lays out along the declared direction', () => {
     const body = 'requirement a {\n}\nrequirement b {\n}\nrequirement c {\n}\na - contains -> b\nb - contains -> c\n';
-    const tall = render(`requirementDiagram\n${body}`, options);
-    const wide = render(`requirementDiagram\ndirection LR\n${body}`, options);
+    const tall = draw(`requirementDiagram\n${body}`);
+    const wide = draw(`requirementDiagram\ndirection LR\n${body}`);
     expect(tall.height).toBeGreaterThan(tall.width);
     expect(wide.width).toBeGreaterThan(wide.height);
-    expect(render(`requirementDiagram\ndirection BT\n${body}`, options).svg).not.toBe(tall.svg);
-    expect(render(`requirementDiagram\ndirection RL\n${body}`, options).svg).not.toBe(wide.svg);
+    const flip = (direction: string): boolean => same(`requirementDiagram\ndirection ${direction}\n${body}`, `requirementDiagram\n${body}`);
+    expect(flip('BT')).toBe(false);
+    expect(same(`requirementDiagram\ndirection RL\n${body}`, `requirementDiagram\ndirection LR\n${body}`)).toBe(false);
   });
 
   it('draws self relationships and parallel relationships', () => {
-    const { svg } = render('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - contains -> a\na - traces -> b\na - refines -> b\n', options);
-    expect(count(svg, /class="pele-edge /g)).toBe(3);
-    expect(count(svg, /class="pele-edge-label"/g)).toBe(3);
-    expect(svg).toContain('data-id="a-a-0"');
+    const { scene } = draw('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\na - contains -> a\na - traces -> b\na - refines -> b\n');
+    expect(items(scene, 'pele-edge').length).toBe(3);
+    expect(items(scene, 'pele-edge-label').length).toBe(3);
+    expect(itemById(scene, 'a-a-0', 'pele-edge')).toBeDefined();
   });
 
   it('keeps the ends of edges that share a side apart', () => {
-    const { svg } = render('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\nrequirement c {\n}\na - contains -> b\na - contains -> c\n', options);
-    const xs = [...svg.matchAll(/<circle class="pele-marker" cx="([\d.]+)"/g)].map((m) => Number(m[1]));
+    const { scene } = draw('requirementDiagram\nrequirement a {\n}\nrequirement b {\n}\nrequirement c {\n}\na - contains -> b\na - contains -> c\n');
+    const xs = items(scene, 'pele-edge').flatMap((edge) => circleOf(scene, edge).map((s) => (s.box.x0 + s.box.x1) / 2));
     expect(xs.length).toBe(2);
     expect(Math.abs(xs[0] - xs[1])).toBeGreaterThan(12);
   });
 
   it('does not draw a relationship whose end is not defined', () => {
-    const { svg } = render('requirementDiagram\nrequirement a {\n}\na - contains -> missing\n', options);
-    expect(svg).not.toContain('pele-edge');
-    expect(svg).not.toContain('missing');
+    const { scene } = draw('requirementDiagram\nrequirement a {\n}\na - contains -> missing\n');
+    expect(items(scene, 'pele-edge')).toEqual([]);
+    expect(textOf(scene)).not.toContain('missing');
   });
 
   it('applies style, classDef, class and the ::: shorthand', () => {
-    const { svg } = render(
+    const { scene } = draw(
       `requirementDiagram
 requirement a:::hot {
 id: 1
@@ -160,51 +157,53 @@ classDef cold color:blue
 class b cold
 c:::hot,cold
 style c stroke:#0a0
-`,
-      options
+`
     );
-    expect(svg).toMatch(/class="pele-node pele-requirement hot" data-id="a"[^>]*><rect[^>]*style="rx:var\(--_r\);fill:#f96;stroke:#333;stroke-width:4px;"/);
-    expect(svg).toMatch(/class="pele-node pele-element cold" data-id="b"/);
-    expect(svg).toMatch(/class="pele-node pele-element hot cold" data-id="c"[^>]*><rect[^>]*style="rx:var\(--_r\);fill:#f96;stroke:#0a0;stroke-width:4px;"/);
-    expect(svg).toContain('style="fill:blue;"');
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => itemById(scene, id)!);
+    expect(a.kind).toBe('pele-node pele-requirement hot');
+    expect(shapesOf(scene, a).slice(0, 2).map((s) => [s.kind, s.paint, s.width ?? 0])).toEqual([['fill', '#f96', 0], ['stroke', '#333', 4]]);
+    expect(b.kind).toBe('pele-node pele-element cold');
+    expect(c.kind).toBe('pele-node pele-element hot cold');
+    expect(shapesOf(scene, c).map((s) => [s.kind, s.paint, s.width ?? 0])).toEqual([['fill', '#f96', 0], ['stroke', '#0a0', 4]]);
+    expect(textsOf(scene, b).every((t) => t.paint === 'blue')).toBe(true);
     // The divider takes the stroke but not the fill.
-    expect(svg).toMatch(/class="pele-divider"[^>]*style="stroke:#333;stroke-width:4px;"/);
+    expect(dividers(scene, a).map((s) => [s.paint, s.width])).toEqual([['#333', 4]]);
+    expect(shapesOf(scene, a).filter((s) => s.kind === 'fill').map((s) => s.paint)).not.toContain('#333');
   });
 
   it('picks a contrasting text color on fills a style sets', () => {
-    const { svg } = render('requirementDiagram\nrequirement a {\nid: 1\ntext: words\n}\nelement b {\ntype: t\n}\nelement c {\n}\nstyle a fill:#1f3a5f\nstyle b fill:#1f3a5f,color:#eee\n', options);
-    const node = (id: string): string => new RegExp(`data-id="${id}"[^>]*>(.*?)</g></g>`).exec(svg)![1];
-    for (const part of ['pele-stereotype', 'pele-label', 'pele-field', 'pele-value']) {
-      expect(node('a')).toMatch(new RegExp(`<text class="${part}"[^>]* fill="var\\(--pele-fg-on-dark,#fff\\)"`));
-    }
-    expect(node('b')).toMatch(/<text class="pele-label"[^>]* style="fill:#eee;"/);
-    expect(node('b')).not.toContain('--pele-fg-on');
-    expect(node('c')).toMatch(/<text class="pele-stereotype"[^>]* fill="var\(--_m\)"/);
+    const { scene } = draw('requirementDiagram\nrequirement a {\nid: 1\ntext: words\n}\nelement b {\ntype: t\n}\nelement c {\n}\nstyle a fill:#1f3a5f\nstyle b fill:#1f3a5f,color:#eee\n');
+    const paintsOf = (id: string): string[] => textsOf(scene, itemById(scene, id)!).map((t) => t.paint);
+    expect(new Set(paintsOf('a'))).toEqual(new Set(['var(--pele-fg-on-dark,#fff)']));
+    expect(new Set(paintsOf('b'))).toEqual(new Set(['#eee']));
+    expect(paintsOf('c')).toEqual(['var(--_m)', 'var(--_fg)']);
   });
 
   it('reads markdown emphasis in names and text', () => {
-    const { svg } = render('requirementDiagram\nrequirement "__name__" {\ntext: "*slanted* and **heavy** words"\n}\n', options);
-    expect(svg).toContain('data-id="__name__"');
-    expect(svg).toMatch(/<text[^>]* font-weight="var\(--_hw\)"[^>]*><tspan[^>]*>name<\/tspan>/);
-    expect(svg).toMatch(/<tspan[^>]*font-style="italic">slanted<\/tspan>/);
-    expect(svg).toMatch(/<tspan[^>]*font-weight="var\(--_w\)">heavy<\/tspan>/);
-    expect(svg).not.toContain('*');
-    expect(svg).not.toContain('__name__<');
+    const { scene } = draw('requirementDiagram\nrequirement "__name__" {\ntext: "*slanted* and **heavy** words"\n}\n');
+    expect(itemById(scene, '__name__')).toBeDefined();
+    const [name] = scene.texts.filter((t) => lineOf(t) === 'name');
+    expect(name.weight).toBeGreaterThan(400);
+    const words = scene.texts.find((t) => lineOf(t) === 'slanted and heavy words')!;
+    expect(words.spans.map((s) => [s.text, s.italic ?? false, (s.weight ?? 400) > 400])).toEqual([
+      ['slanted', true, false],
+      [' and ', false, false],
+      ['heavy', false, true],
+      [' words', false, false],
+    ]);
+    expect(textOf(scene)).not.toMatch(/[*_]/);
   });
 
   it('wraps long text and grows the box to hold it', () => {
-    const short = render('requirementDiagram\nrequirement a {\ntext: short\n}\n', options);
-    const long = render(`requirementDiagram\nrequirement a {\ntext: "${'many words in a row '.repeat(12)}"\n}\n`, options);
+    const short = draw('requirementDiagram\nrequirement a {\ntext: short\n}\n');
+    const long = draw(`requirementDiagram\nrequirement a {\ntext: "${'many words in a row '.repeat(12)}"\n}\n`);
     expect(long.height).toBeGreaterThan(short.height + 60);
     expect(long.width).toBeLessThan(420);
   });
 
-  it('draws the front matter title and names the diagram for assistive technology', () => {
-    const { svg } = render('---\ntitle: Checkout\n---\nrequirementDiagram\naccTitle: Short name\naccDescr: Longer text\nrequirement a {\n}\n', options);
-    expect(svg).toContain('class="pele-title"');
-    expect(svg).toContain('>Checkout<');
-    expect(svg).toContain('<title id="pele-title">Short name</title>');
-    expect(svg).toContain('<desc id="pele-desc">Longer text</desc>');
+  it('draws the front matter title', () => {
+    const { scene } = draw('---\ntitle: Checkout\n---\nrequirementDiagram\naccTitle: Short name\naccDescr: Longer text\nrequirement a {\n}\n');
+    expect(scene.texts.filter((t) => t.item === -1).map(lineOf)).toEqual(['Checkout']);
   });
 
   it('exposes the model', () => {
@@ -235,17 +234,19 @@ style c stroke:#0a0
       'requirementDiagram\ntitle My diagram\n',
       'requirement a {\n}\n',
     ]) {
-      expect(() => render(src, options), src).toThrow(PeleError);
+      expect(() => draw(src), src).toThrow(PeleError);
     }
-    expect(() => render('requirementDiagram\nrequirement a {\nid: REQ-1\n}\n', options)).toThrow(/Expecting 'NEWLINE', got 'LINE'/);
+    expect(() => draw('requirementDiagram\nrequirement a {\nid: REQ-1\n}\n')).toThrow(/Expecting 'NEWLINE', got 'LINE'/);
   });
 
   it('refuses a diagram that copies class styles without bound', () => {
     const src = 'requirementDiagram\nrequirement a {\n}\nclassDef c ' + 'a:b,'.repeat(2000) + 'a:b\n' + 'class a c\n'.repeat(600);
-    expect(() => render(src, options)).toThrow(/too many style declarations/);
+    expect(() => draw(src)).toThrow(/too many style declarations/);
   });
 
   it('renders an empty diagram', () => {
-    expect(render('requirementDiagram\n', options).svg).toContain('<svg');
+    const { scene } = draw('requirementDiagram\n');
+    expect(scene.shapes).toEqual([]);
+    expect(scene.texts).toEqual([]);
   });
 });

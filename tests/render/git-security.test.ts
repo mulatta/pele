@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, lines, tryDraw } from '../support/scene.js';
 
 function check(src: string): boolean {
-  let svg: string;
-  try {
-    svg = render(src, options).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -57,11 +49,11 @@ describe('git graph output is inert', () => {
     expect(rendered).toBeGreaterThan(300);
   }, 120_000);
 
-  it('keeps payload text out of markup', () => {
-    const { svg } = render('gitGraph\n commit id: "<script>alert(1)</script>" tag: "\\"><img src=x onerror=alert(1)>"\n branch "</text><script>"\n commit', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  it('shows payload text as text', () => {
+    const { scene } = draw('gitGraph\n commit id: "<script>alert(1)</script>" tag: "\\"><img src=x onerror=alert(1)>"\n branch "</text><script>"\n commit');
+    expect(lines(scene)).toContain('<script>alert(1)</script>');
+    expect(lines(scene)).toContain('"><img src=x onerror=alert(1)>');
+    expect(lines(scene)).toContain('</text><script>');
   });
 
   it('stays inert for corpus and mutated inputs', () => {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
+import { PeleError, renderScene } from '../../src/index.js';
 import { tokenize } from '../../src/diagrams/timeline/lexer.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 
 const N = 50000;
 const big = { measurer: metricsMeasurer, limit: Infinity };
-const draw = (body: string) => (): unknown => render('timeline\n' + body, big);
-const drawTD = (body: string) => (): unknown => render('timeline TD\n' + body, big);
+const draw = (body: string) => (): unknown => renderScene('timeline\n' + body, big);
+const drawTD = (body: string) => (): unknown => renderScene('timeline TD\n' + body, big);
 
 const CASES: [string, () => unknown][] = [
   ['8,000 periods with one event each', draw('p : e\n'.repeat(N / 6))],

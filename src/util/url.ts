@@ -1,6 +1,5 @@
-import { RE_INVALID_XML, esc } from '../svg/builder.js';
 import { decodeEntities } from '../text/entities.js';
-import type { LinkInfo, RenderOptions } from '../types.js';
+import type { RenderOptions } from '../types.js';
 
 const BLANK = 'about:blank';
 const RE_INVALID_PROTOCOL = /^([^\w]*)(javascript|data|vbscript)/im;
@@ -104,27 +103,4 @@ export function linkUrl(url: string, options: RenderOptions): string | undefined
 
 export function imageUrl(url: string, options: RenderOptions): string | undefined {
   return options.images === false ? undefined : allow(url, options.imageSchemes ?? IMAGE_SCHEMES);
-}
-
-const RE_DROPPED = new RegExp(RE_INVALID_XML.source, 'gu');
-
-// The href keeps the original name, so sanitizing alone is not enough.
-export function internalLink(name: string, options: RenderOptions): boolean {
-  const url = sanitizeUrl(name);
-  if (url === BLANK || linkUrl(url, options) === undefined) return false;
-  // Match character removal by esc() and the browser.
-  const seen = name.replace(RE_DROPPED, '').replace(/[\t\n\r]/g, '').replace(/^[\x00-\x20]+/, '');
-  return linkUrl(seen, options) !== undefined;
-}
-
-export function linked(body: string, url: string, id: string, links: LinkInfo[], options: RenderOptions, attrs = ''): string {
-  const href = linkUrl(url, options);
-  if (href === undefined) return body;
-  links.push({ id, href, internal: false });
-  return `<a href="${esc(href)}"${attrs}${relAttr(options)}>${body}</a>`;
-}
-
-export function relAttr(options: RenderOptions): string {
-  const rel = options.linkRel ?? 'noopener';
-  return rel ? ` rel="${esc(rel)}"` : '';
 }

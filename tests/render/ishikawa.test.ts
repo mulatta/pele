@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, detectType, parse, render, supports } from '../../src/index.js';
+import { PeleError, detectType, parse, supports, type SceneResult } from '../../src/index.js';
+import type { Scene, SceneText } from '../../src/draw/scene.js';
 import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus } from '../support/corpus.js';
-import { assertWellFormed } from '../support/xml.js';
+import { assertSafe, draw, itemById, items, lineOf, shapesOf, textOf, textsOf } from '../support/scene.js';
 
 const corpus = loadCorpus('ishikawa', /ishikawa/i).filter((src) => /^\s*ishikawa/i.test(src));
-const options = { measurer: metricsMeasurer };
 const DOC = corpus.find((src) => src.includes('Beautification'))!;
 
-const svgOf = (src: string): string => render('ishikawa-beta\n' + src, options).svg;
-const count = (svg: string, needle: string): number => svg.split(needle).length - 1;
+const drawOf = (src: string): SceneResult => draw('ishikawa-beta\n' + src);
 
 interface Box {
   left: number;
@@ -19,42 +18,61 @@ interface Box {
   text: string;
 }
 
-// The box of every one-line text in the picture, from its anchor, its size and the measurer.
-function textBoxes(svg: string): Box[] {
+// The box of every line of a cause's text, from its anchor, its size and the measurer. The
+// causes are the texts of a category that are smaller than its name.
+function textBoxes(scene: Scene): Box[] {
   const out: Box[] = [];
-  for (const group of svg.matchAll(/<g class="pele-ishikawa-causes" font-size="(\d+)">(.*?)<\/g>/g)) {
-    const size = Number(group[1]);
-    for (const m of group[2].matchAll(/<text[^>]* x="([-\d.]+)" y="([-\d.]+)" text-anchor="middle">([^<]*)<\/text>/g)) {
-      const text = m[3].replace(/&amp;/g, '&');
-      const half = metricsMeasurer.width(text, size, 0) / 2;
-      const y = Number(m[2]) - size * 0.35;
-      out.push({ left: Number(m[1]) - half, right: Number(m[1]) + half, top: y - size / 2, bottom: y + size / 2, text });
+  for (const category of items(scene, 'pele-ishikawa-category')) {
+    for (const t of textsOf(scene, category)) {
+      if (t.size >= 16) continue;
+      const text = lineOf(t);
+      const width = metricsMeasurer.width(text, t.size, 0);
+      const left = t.anchor === 'middle' ? t.x - width / 2 : t.anchor === 'end' ? t.x - width : t.x;
+      const y = t.y - t.size * 0.35;
+      out.push({ left, right: left + width, top: y - t.size / 2, bottom: y + t.size / 2, text });
     }
   }
   return out;
 }
 
-function categories(svg: string): { id: string; body: string; bones: string; box: { x: number; y: number; w: number; h: number } }[] {
-  return [...svg.matchAll(/<g class="pele-ishikawa-category" data-id="([^"]*)"><path class="pele-ishikawa-bones" d="([^"]+)"[^>]*\/>(.*?)<\/g>(?=<g class="pele-ishikawa-(?:category|head)")/g)].map((m) => {
-    const rect = /<rect x="([-\d.]+)" y="([-\d.]+)" width="([\d.]+)" height="([\d.]+)"/.exec(m[3])!;
-    return { id: m[1], bones: m[2], body: m[3], box: { x: Number(rect[1]), y: Number(rect[2]), w: Number(rect[3]), h: Number(rect[4]) } };
+interface Category {
+  id: string;
+  // The bone of the category, then the bones of its causes and twigs: one move and one line each.
+  bones: number[][];
+  // The box holding its name.
+  box: { x: number; y: number; w: number; h: number };
+  texts: SceneText[];
+}
+
+// Each segment of a path of straight lines, as [x0, y0, x1, y1].
+function segments(cmds: number[]): number[][] {
+  const out: number[][] = [];
+  for (let i = 0; i < cmds.length; i += 6) out.push([cmds[i + 1], cmds[i + 2], cmds[i + 4], cmds[i + 5]]);
+  return out;
+}
+
+function categories(scene: Scene): Category[] {
+  return items(scene, 'pele-ishikawa-category').map((item) => {
+    const own = shapesOf(scene, item);
+    const bones = own.find((sh) => sh.kind === 'stroke' && sh.paint === 'var(--_l)')!;
+    const { box } = own.find((sh) => sh.kind === 'fill' && sh.paint === 'var(--_s)')!;
+    return { id: item.id, bones: segments(bones.cmds), box: { x: box.x0, y: box.y0, w: box.x1 - box.x0, h: box.y1 - box.y0 }, texts: textsOf(scene, item) };
   });
 }
 
-function spine(svg: string): { from: number; to: number; y: number } {
-  const m = /<path class="pele-ishikawa-spine" d="M([-\d.]+),([-\d.]+)H([-\d.]+)"/.exec(svg)!;
-  return { from: Number(m[1]), y: Number(m[2]), to: Number(m[3]) };
+function spine(scene: Scene): { from: number; to: number; y: number } {
+  const line = scene.shapes.find((sh) => sh.item < 0 && sh.kind === 'stroke' && sh.paint === 'var(--_l)')!;
+  return { from: line.cmds[1], y: line.cmds[2], to: line.cmds[4] };
 }
 
 describe('Ishikawa diagram rendering', () => {
-  it('renders every corpus input, as well-formed SVG', () => {
+  it('renders every corpus input, as a scene a host can take', () => {
     expect(corpus.length).toBeGreaterThan(0);
     for (const src of corpus) {
-      const { svg } = render(src, options);
-      expect(() => assertWellFormed(svg)).not.toThrow();
-      expect(svg).not.toMatch(/<script|<style|<foreignObject|<defs|<marker|\son\w+=|javascript:/i);
-      expect(svg).not.toMatch(/NaN|undefined|Infinity/);
-      expect(render(src, options).svg).toBe(svg);
+      const result = draw(src);
+      assertSafe(result, src);
+      expect(textOf(result.scene)).not.toMatch(/NaN|undefined|Infinity/);
+      expect(draw(src).scene).toEqual(result.scene);
     }
   });
 
@@ -63,10 +81,7 @@ describe('Ishikawa diagram rendering', () => {
       const src = `${keyword}\n  Effect\n    Cause\n`;
       expect(detectType(src)).toBe('ishikawa');
       expect(supports(src)).toBe(true);
-      const result = render(src, options);
-      expect(result.type).toBe('ishikawa');
-      expect(result.svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" class="pele pele-ishikawa"/);
-      expect(result.svg).toContain(`viewBox="0 0 ${result.width} ${result.height}"`);
+      expect(draw(src).type).toBe('ishikawa');
     }
     const model = parse('ishikawa-beta\n  Effect\n    Cause\n      Sub\n');
     expect(model.type).toBe('ishikawa');
@@ -76,38 +91,39 @@ describe('Ishikawa diagram rendering', () => {
   });
 
   it('puts the effect in a head at the right end of a level spine', () => {
-    const svg = svgOf('  Late delivery\n    People\n    Process\n');
-    const s = spine(svg);
+    const { scene } = drawOf('  Late delivery\n    People\n    Process\n');
+    const s = spine(scene);
     expect(s.to).toBeGreaterThan(s.from);
-    expect(svg).toContain('<g class="pele-ishikawa-head" data-id="Late delivery">');
-    expect(svg).toMatch(/<text class="pele-label" font-weight="var\(--_hw\)"[^>]*><tspan[^>]*>Late delivery<\/tspan>/);
+    const head = itemById(scene, 'Late delivery', 'pele-ishikawa-head')!;
+    expect(head).toBeDefined();
+    expect(textsOf(scene, head).map((t) => [lineOf(t), t.weight])).toEqual([['Late delivery', 700]]);
     // The head starts where the spine's arrowhead ends, and every category is to its left.
-    const head = /<g class="pele-ishikawa-head"[^>]*><path d="M([-\d.]+),/.exec(svg)!;
-    expect(Number(head[1])).toBeCloseTo(s.to + 7, 1);
-    for (const category of categories(svg)) expect(category.box.x + category.box.w).toBeLessThan(Number(head[1]) + 1);
-    expect(count(svg, 'class="pele-marker"')).toBe(3);
+    expect(head.box!.x0).toBeCloseTo(s.to + 7, 1);
+    for (const category of categories(scene)) expect(category.box.x + category.box.w).toBeLessThan(head.box!.x0 + 1);
+    // An arrowhead for the spine and one for each category.
+    expect(scene.shapes.filter((sh) => sh.kind === 'fill' && sh.paint === 'var(--_l)')).toHaveLength(3);
   });
 
   it('draws only the head when the effect has no causes', () => {
-    const svg = svgOf('  Just an effect\n');
-    expect(count(svg, 'pele-ishikawa-category')).toBe(0);
-    expect(svg).toContain('pele-ishikawa-head');
-    expect(svg).toContain('pele-ishikawa-spine');
+    const { scene } = drawOf('  Just an effect\n');
+    expect(items(scene, 'pele-ishikawa-category')).toHaveLength(0);
+    expect(items(scene, 'pele-ishikawa-head')).toHaveLength(1);
+    expect(spine(scene).to).toBeGreaterThan(spine(scene).from);
   });
 
   it('draws nothing but the frame when there is no effect', () => {
-    const result = render('ishikawa-beta%% only a comment', options);
-    expect(result.svg).not.toContain('pele-ishikawa-head');
+    const result = draw('ishikawa-beta%% only a comment');
+    expect(items(result.scene, 'pele-ishikawa-head')).toHaveLength(0);
     expect(result.width).toBeGreaterThan(0);
   });
 
   it('hangs the categories off the spine by turns above and below it, slanting away from the head', () => {
-    const svg = svgOf('  E\n    One\n    Two\n    Three\n    Four\n    Five\n');
-    const s = spine(svg);
-    const all = categories(svg);
+    const { scene } = drawOf('  E\n    One\n    Two\n    Three\n    Four\n    Five\n');
+    const s = spine(scene);
+    const all = categories(scene);
     expect(all.map((c) => c.id)).toEqual(['One', 'Two', 'Three', 'Four', 'Five']);
     all.forEach((category, i) => {
-      const [x0, y0, x1, y1] = category.bones.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+      const [x0, y0, x1, y1] = category.bones[0];
       // It starts at the spine and ends farther from it and farther from the head.
       expect(Math.abs(y0 - s.y)).toBeLessThan(8);
       expect(x1).toBeLessThan(x0);
@@ -119,7 +135,7 @@ describe('Ishikawa diagram rendering', () => {
       else expect(category.box.y).toBeCloseTo(y1, 1);
     });
     // A pair shares its place on the spine, and each pair is farther from the head than the last.
-    const starts = all.map((c) => Number(c.bones.match(/-?\d+(?:\.\d+)?/)![0]));
+    const starts = all.map((c) => c.bones[0][0]);
     expect(starts[0]).toBeCloseTo(starts[1], 1);
     expect(starts[2]).toBeCloseTo(starts[3], 1);
     expect(starts[2]).toBeLessThan(starts[0] - 20);
@@ -128,7 +144,7 @@ describe('Ishikawa diagram rendering', () => {
 
   it('makes the spine longer for more and for larger categories', () => {
     const length = (src: string): number => {
-      const s = spine(svgOf(src));
+      const s = spine(drawOf(src).scene);
       return s.to - s.from;
     };
     const two = length('  E\n    A\n    B\n');
@@ -139,26 +155,23 @@ describe('Ishikawa diagram rendering', () => {
   });
 
   it('draws causes as level bones off their category and sub-causes as slanted twigs off those', () => {
-    const svg = svgOf('  E\n    Cat\n      Cause\n        Sub one\n        Sub two\n      Other\n');
-    const [category] = categories(svg);
-    const segments = category.bones.split('M').slice(1);
+    const { scene } = drawOf('  E\n    Cat\n      Cause\n        Sub one\n        Sub two\n      Other\n');
+    const [category] = categories(scene);
+    const level = category.bones.filter(([, y0, , y1]) => y0 === y1);
     // The category's bone, two level bones and two twigs.
-    expect(segments).toHaveLength(5);
-    expect(segments.filter((s) => s.includes('H'))).toHaveLength(2);
-    expect(segments.filter((s) => s.includes('L'))).toHaveLength(3);
-    expect(category.body).toContain('>Cause</text>');
-    expect(category.body).toMatch(/<text fill="var\(--_m\)"[^>]*>Sub one<\/text>/);
+    expect(category.bones).toHaveLength(5);
+    expect(level).toHaveLength(2);
+    expect(category.bones.length - level.length).toBe(3);
+    expect(category.texts.map(lineOf)).toContain('Cause');
+    expect(category.texts.find((t) => lineOf(t) === 'Sub one')!.paint).toBe('var(--_m)');
     // A cause with sub-causes has a longer bone than one without, to hold their twigs.
-    const lengths = segments.filter((s) => s.includes('H')).map((s) => {
-      const [x, , to] = s.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
-      return x - to;
-    });
+    const lengths = level.map(([x0, , x1]) => x0 - x1);
     expect(Math.max(...lengths)).toBeGreaterThan(Math.min(...lengths) + 20);
   });
 
   it('reads the causes of a category from the top down on both sides of the spine', () => {
-    const svg = svgOf('  E\n    Above\n      first\n      second\n      third\n    Below\n      first\n      second\n      third\n');
-    const boxes = textBoxes(svg);
+    const { scene } = drawOf('  E\n    Above\n      first\n      second\n      third\n    Below\n      first\n      second\n      third\n');
+    const boxes = textBoxes(scene);
     for (const side of [boxes.slice(0, 3), boxes.slice(3)]) {
       const byY = [...side].sort((a, b) => a.top - b.top).map((b) => b.text);
       expect(byY).toEqual(['first', 'second', 'third']);
@@ -172,27 +185,26 @@ describe('Ishikawa diagram rendering', () => {
       'ishikawa-beta\n  E\n' + Array.from({ length: 9 }, (_, c) => `    Category ${c}\n` + Array.from({ length: 1 + (c % 4) }, (_, k) => `      Cause ${c}.${k}\n        Sub ${c}.${k}.a\n        Sub ${c}.${k}.b\n`).join('')).join(''),
     ];
     for (const src of outlines) {
-      const result = render(src, options);
-      const shift = /<g transform="translate\(([-\d.]+),([-\d.]+)\)">/.exec(result.svg)!;
-      const boxes = textBoxes(result.svg);
+      const { scene } = draw(src);
+      const boxes = textBoxes(scene);
       expect(boxes.length).toBeGreaterThan(8);
       for (let i = 0; i < boxes.length; i++) {
         const a = boxes[i];
-        expect(a.left + Number(shift[1])).toBeGreaterThanOrEqual(0);
-        expect(a.bottom + Number(shift[2])).toBeLessThanOrEqual(result.height);
-        expect(a.top + Number(shift[2])).toBeGreaterThanOrEqual(0);
+        expect(a.left).toBeGreaterThanOrEqual(scene.x);
+        expect(a.bottom).toBeLessThanOrEqual(scene.y + scene.h);
+        expect(a.top).toBeGreaterThanOrEqual(scene.y);
         for (let j = i + 1; j < boxes.length; j++) {
           const b = boxes[j];
           const apart = a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top;
           expect(apart, `${a.text} and ${b.text}`).toBe(true);
         }
-        for (const category of categories(result.svg)) {
+        for (const category of categories(scene)) {
           const box = category.box;
           const apart = a.right <= box.x || box.x + box.w <= a.left || a.bottom <= box.y || box.y + box.h <= a.top;
           expect(apart, `${a.text} and the box of ${category.id}`).toBe(true);
         }
       }
-      const all = categories(result.svg);
+      const all = categories(scene);
       for (let i = 0; i < all.length; i++) {
         for (let j = i + 1; j < all.length; j++) {
           const a = all[i].box;
@@ -204,9 +216,9 @@ describe('Ishikawa diagram rendering', () => {
   });
 
   it('wraps long text', () => {
-    const svg = svgOf('  An effect described at such length that it has to be wrapped\n    A category with a name that is long as well\n      A cause that takes a good many words to state in full\n');
-    expect(count(/<g class="pele-ishikawa-head".*$/.exec(svg)![0], '<tspan')).toBeGreaterThan(1);
-    expect(count(/<g class="pele-ishikawa-causes"[^>]*>(.*?)<\/g>/.exec(svg)![1], '<tspan')).toBeGreaterThan(1);
+    const { scene } = drawOf('  An effect described at such length that it has to be wrapped\n    A category with a name that is long as well\n      A cause that takes a good many words to state in full\n');
+    expect(textsOf(scene, items(scene, 'pele-ishikawa-head')[0]).length).toBeGreaterThan(1);
+    expect(textBoxes(scene).length).toBeGreaterThan(1);
   });
 
   it('nests by indentation relative to the first cause', () => {
@@ -217,17 +229,19 @@ describe('Ishikawa diagram rendering', () => {
   });
 
   it('draws the front matter title above the diagram', () => {
-    const { svg } = render('---\ntitle: Root causes\n---\nishikawa-beta\n  Effect\n    Cause\n', options);
-    expect(svg).toContain('<text class="pele-title" font-weight="var(--_tw)"');
-    expect(svg).toContain('>Root causes</tspan>');
+    const { scene } = draw('---\ntitle: Root causes\n---\nishikawa-beta\n  Effect\n    Cause\n');
+    const title = scene.texts.find((t) => lineOf(t) === 'Root causes')!;
+    expect(title).toBeDefined();
+    expect(title.item).toBe(-1);
+    for (const item of items(scene)) expect(item.box!.y0).toBeGreaterThan(title.y);
   });
 
   it('rejects what Mermaid rejects', () => {
     // A blank line between the keyword and an indented effect is one, as is the keyword alone.
     for (const src of ['ishikawa-beta', 'ishikawa-beta\n\n  Effect\n']) {
-      expect(() => render(src, options)).toThrow(PeleError);
+      expect(() => draw(src)).toThrow(PeleError);
     }
-    expect(render('ishikawa-beta\n', options).svg).not.toContain('pele-ishikawa-head');
-    expect(() => render('ishikawa-beta\n  Effect\n  ishikawa again\n', options)).toThrow(/Expecting 'SPACELINE', 'NL', 'EOF', 'TEXT', got 'ISHIKAWA'/);
+    expect(items(draw('ishikawa-beta\n').scene, 'pele-ishikawa-head')).toHaveLength(0);
+    expect(() => draw('ishikawa-beta\n  Effect\n  ishikawa again\n')).toThrow(/Expecting 'SPACELINE', 'NL', 'EOF', 'TEXT', got 'ISHIKAWA'/);
   });
 });

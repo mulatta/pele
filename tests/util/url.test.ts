@@ -1,6 +1,6 @@
 import { sanitizeUrl as reference } from '@braintree/sanitize-url';
 import { describe, expect, it } from 'vitest';
-import { internalLink, linkUrl, sanitizeUrl } from '../../src/util/url.js';
+import { linkUrl, sanitizeUrl } from '../../src/util/url.js';
 
 // Mermaid sanitizes click targets with @braintree/sanitize-url; Pele must give the same answers,
 // apart from keeping percent escapes.
@@ -56,18 +56,6 @@ describe('percent escapes', () => {
     expect(sanitizeUrl('%6A%61%76%61%73%63%72%69%70%74:alert(1)')).toBe('about:blank');
     for (const url of ['fi%6ce:///etc/passwd', '%2F%2Fevil.example/share', 'obs%69dian://open']) {
       expect(linkUrl(sanitizeUrl(url), {}), url).toBeUndefined();
-    }
-  });
-});
-
-describe('internal links', () => {
-  it('link note names as written', () => {
-    for (const name of ['Note', 'Folder\\note', 'Note%23heading', '👩‍💻', 'Note#heading', '  Note  ']) expect(internalLink(name, {}), name).toBe(true);
-  });
-
-  it('refuse names a browser would read as a script or network address', () => {
-    for (const name of ['javascript:alert(1)', 'java\ufffescript:alert(1)', '\\\\nevil.example', '\t/\\nevil.example', '/\t/evil.example']) {
-      expect(internalLink(name, { linkSchemes: ['about'] }), JSON.stringify(name)).toBe(false);
     }
   });
 });

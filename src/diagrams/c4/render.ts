@@ -1,17 +1,17 @@
 import { tighten, titleRoom } from '../common/fit-width.js';
+import type { Out } from '../../draw/out.js';
 import { PeleError } from '../../errors.js';
 import type { Config } from '../../preprocess.js';
-import { esc, escText, labelSvg, num, sourceAttrsFor } from '../../svg/builder.js';
-import { ARROW, casingsSvg, edgeCasing, marker, markerTrim, overFills, type Fill } from '../../svg/edges.js';
+import { esc } from '../../svg/builder.js';
+import { ARROW, CASINGS_ATTRS, drawCasing, drawMarker, markerTrim, overFills, type Fill } from '../../svg/edges.js';
 import { inkFill, paints } from '../../svg/ink.js';
-import { svgDocument } from '../../svg/root.js';
 import { drawShape } from '../../svg/shapes.js';
 import { resolveStyle, rounded, type ResolvedStyle } from '../../svg/theme.js';
 import { layoutLabel } from '../../text/label.js';
 import { Style, defaultMeasurer } from '../../text/measurer.js';
 import type { LinkInfo, RenderOptions, Rendered } from '../../types.js';
-import { linked, sanitizeUrl } from '../../util/url.js';
-import { leftLabelSvg } from '../common/literal-label.js';
+import { linkUrl, sanitizeUrl } from '../../util/url.js';
+import { leftLabel } from '../common/literal-label.js';
 import type { C4Db } from './db.js';
 import { HEAD_LEFT, HEAD_TOP, layoutC4 } from './layout.js';
 import { HEAD, LABEL_PAD, LANE, Lanes, crosses, cylRy, queueRx, route, type Box } from './route.js';
@@ -35,31 +35,50 @@ function userStyle(fill: string | undefined, stroke: string | undefined, color: 
   return resolveStyle(declarations);
 }
 
-function link(body: string, url: string | undefined, id: string, links: LinkInfo[], options: RenderOptions): string {
-  if (!url) return body;
+// Opens a link around what is drawn next, unless the address is refused; the caller ends it.
+function openLink(out: Out, url: string | undefined, id: string, links: LinkInfo[], options: RenderOptions): boolean {
+  if (!url) return false;
   // Entity encoding has hidden any `#name;` in the address. Put it back, so that the check sees what a browser would.
-  return linked(body, sanitizeUrl(url.includes('\u00b6\u00df') ? url.replace(/\ufb02\u00b0\u00b0?/g, '#').replace(/\u00b6\u00df/g, ';') : url), id, links, options);
+  const href = linkUrl(sanitizeUrl(url.includes('\u00b6\u00df') ? url.replace(/\ufb02\u00b0\u00b0?/g, '#').replace(/\u00b6\u00df/g, ';') : url), options);
+  if (href === undefined) return false;
+  links.push({ id, href, internal: false });
+  out.link();
+  return true;
 }
 
-export function renderC4(db: C4Db, _config: Config, options: RenderOptions): Rendered {
-  return tighten(options, (tight) => {
-    if (!tight) return draw(db, _config, options, false)[0];
-    let [best, squeezed] = draw(db, _config, options, true, NARROW_GAP);
-    for (let gap = NARROW_GAP + WIDEN; squeezed > 0 && gap <= NARROW_GAP + 3 * WIDEN; gap += WIDEN) {
-      const [wider, left] = draw(db, _config, options, true, gap);
-      if (left < squeezed) [best, squeezed] = [wider, left];
-    }
-    return best;
-  });
+export function renderC4(db: C4Db, _config: Config, options: RenderOptions, out: Out): Rendered {
+  return tighten(
+    options,
+    (tight, o) => {
+      if (!tight) return draw(o, db, _config, options, false)[0];
+      // Each gap is an attempt of its own; the one that squeezes least is kept.
+      let kept = o.fork();
+      let [best, squeezed] = draw(kept, db, _config, options, true, NARROW_GAP);
+      for (let gap = NARROW_GAP + WIDEN; squeezed > 0 && gap <= NARROW_GAP + 3 * WIDEN; gap += WIDEN) {
+        const attempt = o.fork();
+        const [wider, left] = draw(attempt, db, _config, options, true, gap);
+        if (left < squeezed) [best, squeezed, kept] = [wider, left, attempt];
+      }
+      o.adopt(kept);
+      return best;
+    },
+    out
+  );
 }
 
-function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean, gap = NARROW_GAP): [Rendered, number] {
-  const srcAttrs = sourceAttrsFor(options);
+function draw(out: Out, db: C4Db, _config: Config, options: RenderOptions, tight: boolean, gap = NARROW_GAP): [Rendered, number] {
   const size = options.fontSize ?? 16;
   const small = Math.round(size * 0.8125);
   const measurer = options.measurer ?? defaultMeasurer(options.fontFamily, options.fontFamilyMono);
   const pad = options.padding ?? 8;
   const links: LinkInfo[] = [];
+  // Everything but the title is drawn from the origin and moved into place once the extent is known.
+  out.frame(0, 0);
+  out.section('clusters', ' class="pele-clusters"');
+  out.section('casings', CASINGS_ATTRS);
+  out.section('edges', ' class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round"');
+  out.section('nodes', ' class="pele-nodes"');
+  out.section('edge-labels', ` class="pele-edge-labels" font-size="${small}"`);
   const { order, boxes } = layoutC4(db, measurer, size, small, tight ? Math.max(80, (options.maxWidth ?? 320) - 2 * pad) : undefined, gap);
   const root = order[0];
 
@@ -115,8 +134,6 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
   const offset = (value: number | undefined): number => (value ? Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, value)) : 0);
 
   // Every line is drawn before any label is placed, so that labels can keep off the arrowheads.
-  let casings = '';
-  let edgesOut = '';
   const trim = markerTrim('arrow_point');
   const fills: Fill[] = [];
   for (const group of order) {
@@ -137,14 +154,15 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
     grow(Math.min(r.x0, r.x1), Math.min(r.y0, r.y1), Math.max(r.x0, r.x1), Math.max(r.y0, r.y1));
     if (startArrow && careful) taken.push(r.sx - ARROW, r.sy - ARROW, r.sx + ARROW, r.sy + ARROW);
     if (endArrow && careful) taken.push(r.ex - ARROW, r.ey - ARROW, r.ex + ARROW, r.ey + ARROW);
-    const over = overFills(r.d, [r.sx, r.sy, r.ex, r.ey], fills, style.line);
+    const over = overFills(r.d, [r.sx, r.sy, r.ex, r.ey], fills, style.line, r.tokens);
     const color = over || (style.stroke ? esc(style.stroke) : 'var(--_l)');
-    if (over === '') casings += edgeCasing(r, startArrow ? 'arrow_point' : 'none', endArrow ? 'arrow_point' : 'none', style.line);
-    edgesOut +=
-      `<g class="pele-edge" data-id="${escText(rel.from + '-' + rel.to)}"${srcAttrs(rel.source)}${over ? ` stroke="${over}"` : ''}${style.line}><path d="${r.d}"/>` +
-      (startArrow ? marker('arrow_point', r.sx, r.sy, r.sdx, r.sdy, color) : '') +
-      (endArrow ? marker('arrow_point', r.ex, r.ey, r.edx, r.edy, color) : '') +
-      '</g>';
+    if (over === '') out.into('casings', '', () => drawCasing(out, r, startArrow ? 'arrow_point' : 'none', endArrow ? 'arrow_point' : 'none', style.line));
+    out.section('edges');
+    out.group({ cls: 'pele-edge', id: rel.from + '-' + rel.to, source: rel.source, attrs: (over ? ` stroke="${over}"` : '') + style.line });
+    out.path(r.d, '', r.tokens);
+    if (startArrow) drawMarker(out, 'arrow_point', r.sx, r.sy, r.sdx, r.sdy, color);
+    if (endArrow) drawMarker(out, 'arrow_point', r.ex, r.ey, r.edx, r.edy, color);
+    out.end();
     return r;
   });
 
@@ -166,7 +184,6 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
     taken.push(group.x + group.headX - 4, top, group.x + group.headX + group.headW + 4, bottom);
   }
 
-  let labelsOut = '';
   db.rels.forEach((rel, index) => {
     const r = routes[index];
     const id = rel.from + '-' + rel.to;
@@ -212,23 +229,16 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
     const top = r.y0 + (r.y1 - r.y0) * at + dy - lh / 2;
     if (careful) taken.push(cx - lw / 2, top, cx + lw / 2, top + lh);
     grow(cx - lw / 2, top, cx + lw / 2, top + lh);
-    labelsOut +=
-      `<g class="pele-edge-label" data-id="${escText(id)}"${srcAttrs(rel.source)}>` +
-      (rel.descr ? `<title>${escText(rel.descr)}</title>` : '') +
-      `<rect x="${num(cx - lw / 2)}" y="${num(top)}" width="${num(lw)}" height="${num(lh)}" rx="3" fill="var(--_bg)"/>` +
-      link(
-        labelSvg(label, cx, top + label.height / 2, style.text) +
-          labelSvg(techn, cx, top + label.height + techn.height / 2, ` class="pele-c4-techn" fill="var(--_m)"${style.text}`),
-        rel.link,
-        id,
-        links,
-        options
-      ) +
-      '</g>';
+    out.section('edge-labels');
+    out.group({ cls: 'pele-edge-label', id, source: rel.source });
+    out.rect(cx - lw / 2, top, lw, lh, ' rx="3" fill="var(--_bg)"');
+    const linked = openLink(out, rel.link, id, links, options);
+    out.label(label, cx, top + label.height / 2, style.text);
+    out.label(techn, cx, top + label.height + techn.height / 2, ` class="pele-c4-techn" fill="var(--_m)"${style.text}`);
+    if (linked) out.end();
+    out.end();
   });
 
-  let clusters = '';
-  let nodesOut = '';
   for (const group of order) {
     if (group !== root) {
       const boundary = group.boundary;
@@ -237,18 +247,17 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
       let y = group.y + HEAD_TOP;
       const color = inkFill(style) + style.text;
       const muted = inkFill(style, 'var(--_m)') + style.text;
-      let text = leftLabelSvg(group.labels[0], x, y, ` class="pele-cluster-label" font-weight="var(--_hw)"${color}`);
+      out.section('clusters');
+      out.group({ cls: `pele-cluster pele-c4-${boundary.nodeType ? 'node' : 'boundary'}`, id: boundary.alias, source: boundary.source });
+      out.rect(group.x, group.y, group.w, group.h, ` fill="none" stroke="var(--_b)"${boundary.nodeType ? '' : ' stroke-dasharray="6 4"'}${rounded(style.shape)}`);
+      const linked = openLink(out, boundary.link, boundary.alias, links, options);
+      leftLabel(out, group.labels[0], x, y, ` class="pele-cluster-label" font-weight="var(--_hw)"${color}`);
       y += group.labels[0].height;
-      text += leftLabelSvg(group.labels[1], x, y, ` class="pele-c4-type" font-size="${small}"${muted}`);
+      leftLabel(out, group.labels[1], x, y, ` class="pele-c4-type" font-size="${small}"${muted}`);
       y += group.labels[1].height;
-      text += leftLabelSvg(group.labels[2], x, y, ` class="pele-c4-descr" font-size="${small}"${muted}`);
-      clusters +=
-        `<g class="pele-cluster pele-c4-${boundary.nodeType ? 'node' : 'boundary'}" data-id="${escText(boundary.alias)}"${srcAttrs(boundary.source)}>` +
-        `<rect x="${num(group.x)}" y="${num(group.y)}" width="${num(group.w)}" height="${num(group.h)}" fill="none" stroke="var(--_b)"${
-          boundary.nodeType ? '' : ' stroke-dasharray="6 4"'
-        }${rounded(style.shape)}/>` +
-        link(text, boundary.link, boundary.alias, links, options) +
-        '</g>';
+      leftLabel(out, group.labels[2], x, y, ` class="pele-c4-descr" font-size="${small}"${muted}`);
+      if (linked) out.end();
+      out.end();
     }
     for (const node of group.nodes) {
       const shape = node.shape;
@@ -261,25 +270,25 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
       const color = inkFill(style) + style.text;
       const muted = inkFill(style, 'var(--_m)') + style.text;
       let y = dy - node.textH / 2;
-      let text = labelSvg(labels[0], dx, y + labels[0].height / 2, ` class="pele-c4-type" font-size="${small - 1}"${muted}`);
+      out.section('nodes');
+      out.group({
+        cls: `pele-node pele-shape-${form} pele-c4-${shape.kind}${external ? ' pele-c4-external' : ''}`,
+        id: shape.alias,
+        source: shape.source,
+        x: node.x + w / 2,
+        y: node.y + h / 2,
+      });
+      const linked = openLink(out, shape.link, shape.alias, links, options);
+      drawShape(out, form, w, h, ` fill="var(${external ? '--_bg' : '--_s'})"${stroke}${style.shape}`, stroke + style.line);
+      out.label(labels[0], dx, y + labels[0].height / 2, ` class="pele-c4-type" font-size="${small - 1}"${muted}`);
       y += labels[0].height;
-      text += labelSvg(labels[1], dx, y + labels[1].height / 2, ` class="pele-label" font-weight="var(--_hw)"${color}`);
+      out.label(labels[1], dx, y + labels[1].height / 2, ` class="pele-label" font-weight="var(--_hw)"${color}`);
       y += labels[1].height;
-      text += labelSvg(labels[2], dx, y + labels[2].height / 2, ` class="pele-c4-techn" font-size="${small}"${muted}`);
+      out.label(labels[2], dx, y + labels[2].height / 2, ` class="pele-c4-techn" font-size="${small}"${muted}`);
       y += labels[2].height + 4;
-      text += labelSvg(labels[3], dx, y + labels[3].height / 2, ` class="pele-c4-descr" font-size="${small}"${color}`);
-      nodesOut +=
-        `<g class="pele-node pele-shape-${form} pele-c4-${shape.kind}${external ? ' pele-c4-external' : ''}" data-id="${escText(
-          shape.alias
-        )}"${srcAttrs(shape.source)} transform="translate(${num(node.x + w / 2)},${num(node.y + h / 2)})">` +
-        link(
-          drawShape(form, w, h, ` fill="var(${external ? '--_bg' : '--_s'})"${stroke}${style.shape}`, stroke + style.line) + text,
-          shape.link,
-          shape.alias,
-          links,
-          options
-        ) +
-        '</g>';
+      out.label(labels[3], dx, y + labels[3].height / 2, ` class="pele-c4-descr" font-size="${small}"${color}`);
+      if (linked) out.end();
+      out.end();
     }
   }
 
@@ -291,21 +300,9 @@ function draw(db: C4Db, _config: Config, options: RenderOptions, tight: boolean,
   const ox = pad - minX + (inner - (maxX - minX)) / 2;
   const oy = pad + titleHeight - minY;
 
-  const svg = svgDocument(
-    'c4',
-    width,
-    height,
-    size,
-    options,
-    db,
-    labelSvg(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"') +
-      `<g transform="translate(${num(ox)},${num(oy)})">` +
-      (clusters ? `<g class="pele-clusters">${clusters}</g>` : '') +
-      casingsSvg(casings) +
-      (edgesOut ? `<g class="pele-edges" fill="none" stroke="var(--_l)" stroke-linecap="round">${edgesOut}</g>` : '') +
-      (nodesOut ? `<g class="pele-nodes">${nodesOut}</g>` : '') +
-      (labelsOut ? `<g class="pele-edge-labels" font-size="${small}">${labelsOut}</g>` : '') +
-      '</g>'
-  );
-  return [{ svg, width, height, links }, lanes.squeezed];
+  out.section('main');
+  out.label(title, width / 2, pad + title.height / 2, ' class="pele-title" font-weight="var(--_tw)"');
+  out.frame(ox, oy);
+  out.done(width, height);
+  return [{ width, height, links }, lanes.squeezed];
 }

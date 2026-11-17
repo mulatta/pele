@@ -15,9 +15,9 @@ describe('core without the full entry point', () => {
     expect(core.detectType(FLOW)).toBe('flowchart');
     expect(core.supports(FLOW)).toBe(false);
     expect(core.registered('flowchart')).toBe(false);
-    expect(() => core.render(FLOW)).toThrow(core.PeleError);
+    expect(() => core.renderScene(FLOW)).toThrow(core.PeleError);
     try {
-      core.render(FLOW);
+      core.renderScene(FLOW);
     } catch (error) {
       expect(error).toMatchObject({ code: 'unsupported-diagram', type: 'flowchart', mermaidType: 'flowchart-v2' });
     }
@@ -28,25 +28,41 @@ describe('core without the full entry point', () => {
     const flowchart = (await import('../src/entries/flowchart.js')).default;
     core.register(flowchart);
     expect(core.supports(FLOW)).toBe(true);
-    expect(core.render(FLOW).type).toBe('flowchart');
+    expect(core.renderScene(FLOW).type).toBe('flowchart');
     expect(core.supports(PIE)).toBe(false);
+  });
+
+  it('draws a registered type through its output, and refuses one that draws nothing', async () => {
+    const core = await import('../src/core.js');
+    core.register((await import('../src/entries/flowchart.js')).default);
+    expect(core.sceneSupported(FLOW)).toBe(true);
+    expect(core.sceneSupported(PIE)).toBe(false);
+    // A type that never ends its drawing.
+    const own: Diagram<null> = {
+      type: 'pie',
+      parse: () => null,
+      render: () => ({ width: 1, height: 1, links: [] }),
+    };
+    core.register(own);
+    expect(core.sceneSupported(PIE)).toBe(true);
+    expect(() => core.renderScene(PIE)).toThrow(expect.objectContaining({ code: 'unsupported-diagram', type: 'pie' }));
   });
 
   it('loads a type the first time it is needed', async () => {
     const lazy = await import('../src/lazy.js');
     expect(lazy.supports(PIE)).toBe(false);
-    const result = await lazy.renderAsync(PIE);
+    const result = await lazy.renderSceneAsync(PIE);
     expect(result.type).toBe('pie');
     expect(result.mermaidType).toBe('pie');
     expect(lazy.supports(PIE)).toBe(true);
     expect(lazy.supports(FLOW)).toBe(false);
     expect(await lazy.load('flowchart')).toBe(true);
-    expect(lazy.render(FLOW).type).toBe('flowchart');
+    expect(lazy.renderScene(FLOW).type).toBe('flowchart');
   });
 
   it('loads a type once however often it is asked for', async () => {
     const lazy = await import('../src/lazy.js');
-    const [a, b, c] = await Promise.all([lazy.load('pie'), lazy.load('pie'), lazy.renderAsync(PIE)]);
+    const [a, b, c] = await Promise.all([lazy.load('pie'), lazy.load('pie'), lazy.renderSceneAsync(PIE)]);
     expect(a && b).toBe(true);
     expect(c.type).toBe('pie');
     expect(await lazy.load('pie')).toBe(true);
@@ -55,10 +71,10 @@ describe('core without the full entry point', () => {
   it('reports text it cannot draw the same way with or without loading', async () => {
     const lazy = await import('../src/lazy.js');
     expect(await lazy.load(null)).toBe(false);
-    await expect(lazy.renderAsync('not a diagram')).rejects.toMatchObject({ code: 'unsupported-diagram' });
-    await expect(lazy.renderAsync('zenuml\n  a->b: hi')).rejects.toMatchObject({ code: 'unsupported-diagram' });
-    await expect(lazy.renderAsync('flowchart LR\n  A -->')).rejects.toMatchObject({ code: 'syntax' });
-    await expect(lazy.renderAsync('x'.repeat(60000))).rejects.toMatchObject({ code: 'limit' });
+    await expect(lazy.renderSceneAsync('not a diagram')).rejects.toMatchObject({ code: 'unsupported-diagram' });
+    await expect(lazy.renderSceneAsync('zenuml\n  a->b: hi')).rejects.toMatchObject({ code: 'unsupported-diagram' });
+    await expect(lazy.renderSceneAsync('flowchart LR\n  A -->')).rejects.toMatchObject({ code: 'syntax' });
+    await expect(lazy.renderSceneAsync('x'.repeat(60000))).rejects.toMatchObject({ code: 'limit' });
   });
 
   it('has an entry and a loader for every type, filed under the name it is detected as', async () => {
@@ -82,7 +98,7 @@ describe('the full entry point', () => {
     const { all } = await import('../src/diagrams/registry.js');
     expect(all.length).toBe(33);
     for (const diagram of all) expect(pele.registered(diagram.type)).toBe(true);
-    expect(pele.render(FLOW).type).toBe('flowchart');
-    expect(pele.render(PIE).type).toBe('pie');
+    expect(pele.renderScene(FLOW).type).toBe('flowchart');
+    expect(pele.renderScene(PIE).type).toBe('pie');
   });
 });

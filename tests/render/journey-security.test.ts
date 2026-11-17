@@ -1,21 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, items, textOf, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
-  expect(svg, JSON.stringify(src).slice(0, 160)).not.toMatch(/NaN|Infinity/);
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -46,7 +37,7 @@ const TEMPLATES: ((p: string) => string)[] = [
   (p) => `%%{init: {"journey": {"width": "${p}", "titleColor": "${p}"}, "themeVariables": {"fillType0": "${p}"}}}%%\njourney\n  Task: 5: Me`,
 ];
 
-describe('inert journey output', () => {
+describe('safe journey scenes', () => {
   const corpus = [
     ...loadCorpus('journey', /journey/),
     'journey\n  title Day\n  section Work\n    Make tea: 5: Me\n    Do work: 1: Me, Cat\n  section Home\n    Sit down: 4: Me\n',
@@ -69,14 +60,12 @@ describe('inert journey output', () => {
     expect(rendered).toBeGreaterThan(500);
   });
 
-  it('shows markup as escaped text', () => {
-    const { svg } = render('journey\n  title <script>alert(1)</script>\n  section "><img src=x onerror=alert(1)>\n  <svg onload=alert(1)>: 5: </text><script>x</script>, "onload="alert(1)', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(svg).toContain('data-id="&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"');
-    expect(svg).toContain('<title>&lt;/text&gt;&lt;script&gt;x&lt;/script&gt;</title>');
-    expect(svg).toContain('data-id="&quot;onload=&quot;alert(1)"');
+  it('shows markup as text', () => {
+    const { scene } = draw('journey\n  title <script>alert(1)</script>\n  section "><img src=x onerror=alert(1)>\n  <svg onload=alert(1)>: 5: </text><script>x</script>, "onload="alert(1)');
+    expect(textOf(scene)).toContain('<script>alert(1)</script>');
+    const ids = scene.items.map((i) => i.id);
+    expect(ids).toContain('"><img src=x onerror=alert(1)>');
+    expect(ids).toContain('"onload="alert(1)');
   });
 
   it('holds for hostile option values', () => {
@@ -101,10 +90,10 @@ describe('inert journey output', () => {
   }, 600_000);
 
   it('does not pollute prototypes or trip over inherited names', () => {
-    const { svg } = render('journey\n  section __proto__\n  constructor: 5: __proto__, constructor, toString, hasOwnProperty\n  __proto__: 1: valueOf\n', options);
-    expect(svg.split('class="pele-legend-item"').length - 1).toBe(5);
-    expect(svg).toContain('data-id="__proto__"');
-    render('---\nconfig:\n  journey:\n    __proto__:\n      polluted: true\n---\njourney\n  Task: 5: Me', options);
+    const { scene } = draw('journey\n  section __proto__\n  constructor: 5: __proto__, constructor, toString, hasOwnProperty\n  __proto__: 1: valueOf\n');
+    expect(items(scene, 'pele-legend-item').length).toBe(5);
+    expect(scene.items.map((i) => i.id)).toContain('__proto__');
+    draw('---\nconfig:\n  journey:\n    __proto__:\n      polluted: true\n---\njourney\n  Task: 5: Me');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

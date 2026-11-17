@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { PeleError, render } from '../../src/index.js';
-import { metricsMeasurer } from '../../src/text/measurer.js';
 import { loadCorpus, mutator, random } from '../support/corpus.js';
-import { PAYLOADS, assertInert } from '../support/inert.js';
-
-const options = { measurer: metricsMeasurer };
+import { PAYLOADS } from '../support/payloads.js';
+import { assertSafe, draw, itemById, lines, tryDraw } from '../support/scene.js';
 
 function check(src: string, extra: object = {}): boolean {
-  let svg: string;
-  try {
-    svg = render(src, { ...options, ...extra }).svg;
-  } catch (error) {
-    if (error instanceof PeleError) return false;
-    throw new Error(`Unexpected ${(error as Error).name} for ${JSON.stringify(src).slice(0, 200)}: ${(error as Error).message}`);
-  }
-  assertInert(svg, JSON.stringify(src).slice(0, 160));
+  const result = tryDraw(src, extra);
+  if (result === undefined) return false;
+  assertSafe(result, JSON.stringify(src).slice(0, 160));
   return true;
 }
 
@@ -55,11 +47,14 @@ describe('inert radar output', () => {
     expect(rendered).toBeGreaterThan(200);
   });
 
-  it('escapes names and labels', () => {
-    const { svg } = render('radar-beta\n axis a["<script>x</script>"], b["\\"q\\" & co"]\n curve c["<img src=x>"]{1,2}', options);
-    expect(svg).not.toContain('<script');
-    expect(svg).not.toContain('<img');
-    expect(svg).toContain('&quot;q&quot; &amp; co');
+  it('shows names and labels as text', () => {
+    const result = draw('radar-beta\n axis a["<script>x</script>"], b["\\"q\\" & co"]\n curve c["<img src=x>"]{1,2}');
+    assertSafe(result, 'hostile radar labels');
+    const shown = lines(result.scene);
+    expect(shown.join('\n')).not.toContain('<script');
+    expect(shown.join('\n')).not.toContain('<img');
+    expect(shown).toContain('"q" & co');
+    expect(itemById(result.scene, 'c')).toBeDefined();
   });
 
   it('holds for hostile option values', () => {
